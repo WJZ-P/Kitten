@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Kitten</string>
+    <string name="setup_intro">Kitten 需要下面这些权限，才能帮你读消息、操作 App。一切由你掌控：发送消息等敏感操作，都要经过你确认。</string>
+    <string name="accessibility_service_label">Kitten 无障碍服务</string>
+    <string name="accessibility_service_description">让 Kitten 在你吩咐时读取当前屏幕，并帮你点击、输入和滑动。发送消息等敏感操作始终需要你确认。</string>
+    <string name="notification_listener_label">Kitten 通知使用权</string>
+    <string name="status_enabled">已开启</string>
+    <string name="status_disabled">未开启</string>
+    <string name="action_open_settings">去开启</string>
+</resources>

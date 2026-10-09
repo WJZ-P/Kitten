@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Kitten</string>
+    <string name="setup_intro">Kitten needs the permissions below to read messages and operate apps for you. You stay in control: anything sensitive is sent only after you confirm.</string>
+    <string name="accessibility_service_label">Kitten accessibility service</string>
+    <string name="accessibility_service_description">Lets Kitten read the current screen and tap, type, and scroll for you when you ask it to. Sensitive actions such as sending messages always require your confirmation.</string>
+    <string name="notification_listener_label">Kitten notification access</string>
+    <string name="status_enabled">Enabled</string>
+    <string name="status_disabled">Not enabled</string>
+    <string name="action_open_settings">Open settings</string>
+</resources>
