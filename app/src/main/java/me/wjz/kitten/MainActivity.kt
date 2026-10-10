@@ -27,11 +27,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
+import me.wjz.kitten.privilege.client.WirelessDebugController
 import me.wjz.kitten.ui.theme.KittenTheme
 
 class MainActivity : ComponentActivity() {
 
     private var permissionStatus by mutableStateOf(PermissionStatus(false, false))
+    private val wirelessDebugController by lazy { WirelessDebugController(applicationContext) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -41,6 +43,7 @@ class MainActivity : ComponentActivity() {
                 Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
                     SetupScreen(
                         status = permissionStatus,
+                        controller = wirelessDebugController,
                         onOpenAccessibilitySettings = {
                             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                         },
@@ -67,6 +70,7 @@ private fun SetupScreen(
     onOpenAccessibilitySettings: () -> Unit,
     onOpenNotificationListenerSettings: () -> Unit,
     modifier: Modifier = Modifier,
+    controller: WirelessDebugController? = null,
 ) {
     Column(
         modifier = modifier
@@ -92,6 +96,9 @@ private fun SetupScreen(
             enabled = status.notificationListenerEnabled,
             onOpenSettings = onOpenNotificationListenerSettings,
         )
+        if (controller != null) {
+            PrivilegeCard(controller = controller)
+        }
     }
 }
 
