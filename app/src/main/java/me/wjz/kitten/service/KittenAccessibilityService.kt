@@ -5,10 +5,9 @@ import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 
 /**
- * Reads the UI of the foreground app and performs actions on it.
+ * 读取前台 App 的界面，并在上面执行操作。
  *
- * Skeleton only: it currently logs window changes. Reading and compressing the
- * node tree is the first milestone.
+ * 目前只是骨架：仅记录窗口切换。读取并压缩节点树是第一个里程碑。
  */
 class KittenAccessibilityService : AccessibilityService() {
 

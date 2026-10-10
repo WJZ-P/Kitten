@@ -5,8 +5,7 @@ import android.service.notification.StatusBarNotification
 import android.util.Log
 
 /**
- * Entry point for incoming messages: the official way to learn that a new
- * message arrived without watching the screen.
+ * 新消息的入口：通过官方 API 得知有新消息到来，不需要一直盯着屏幕。
  */
 class KittenNotificationListener : NotificationListenerService() {
 
@@ -15,7 +14,7 @@ class KittenNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        // Log only the source package. Notification content is private and must never go to logcat.
+        // 只记录来源包名。通知内容属于隐私，绝不能写进 logcat。
         Log.d(TAG, "Notification posted by ${sbn.packageName}")
     }
 

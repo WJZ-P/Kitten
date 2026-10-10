@@ -1,3 +1,6 @@
 <resources>
-    <color name="ic_launcher_background">#FFF29BAE</color>
+    <!-- 品牌色：#66CCFF -->
+    <color name="kitten_blue">#FF66CCFF</color>
+    <color name="kitten_blue_deep">#FF3FA9EB</color>
+    <color name="kitten_blue_dark">#FF00668A</color>
 </resources>

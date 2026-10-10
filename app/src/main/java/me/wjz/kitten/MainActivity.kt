@@ -56,7 +56,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // The user may have toggled a permission in system settings while we were paused.
+        // 页面暂停期间，用户可能去系统设置里开关了权限，回来时重新读取一次。
         permissionStatus = PermissionStatus.read(this)
     }
 }

@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kitten 图标编辑器</title>
+<style>
+  :root {
+    --bg: #f4f8fb;
+    --card: #ffffff;
+    --text: #17222b;
+    --muted: #5c6b77;
+    --line: #dbe4ea;
+    --accent: #0a7fb5;
+    --ok: #1d8a4e;
+    --warn: #b7791f;
+    --bad: #c53030;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1417;
+      --card: #182026;
+      --text: #e3eaee;
+      --muted: #97a6b0;
+      --line: #2a353d;
+      --accent: #66ccff;
+      --ok: #5fd08f;
+      --warn: #f0b75a;
+      --bad: #ff7b7b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  main { max-width: 980px; margin: 0 auto; padding: 28px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  header p { margin: 0 0 20px; color: var(--muted); }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 14px; }
+  .previews { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-end; }
+  figure { margin: 0; text-align: center; }
+  figcaption { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .big svg { width: 168px; height: 168px; display: block; }
+  .small-row { display: flex; gap: 14px; align-items: flex-end; }
+  .stats { margin-top: 14px; font-size: 14px; display: grid; gap: 4px; }
+  .stats .ok { color: var(--ok); }
+  .stats .warn { color: var(--warn); }
+  .stats .bad { color: var(--bad); }
+  .control { display: grid; grid-template-columns: 9em 1fr 4.5em; gap: 12px; align-items: center; margin-bottom: 12px; }
+  .control label { font-weight: 600; }
+  .control .hint { grid-column: 2 / 4; margin-top: -10px; color: var(--muted); font-size: 12px; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  output { font-variant-numeric: tabular-nums; text-align: right; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .check { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 14px; margin-right: 8px; }
+  button {
+    font: inherit;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--text);
+    border-radius: 9px;
+    padding: 7px 14px;
+    cursor: pointer;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { button.primary { color: #00344a; } }
+  button:hover { filter: brightness(1.05); }
+  .toast { color: var(--ok); font-size: 13px; min-height: 1.2em; }
+  @media (max-width: 560px) {
+    .control { grid-template-columns: 1fr 4em; }
+    .control label { grid-column: 1 / 3; }
+    .control .hint { grid-column: 1 / 3; margin-top: -8px; }
+    .big svg { width: 132px; height: 132px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Kitten 图标编辑器</h1>
+    <p>拖动滑块实时预览。预览按真机效果只显示自适应图标中间 72×72 的可见区域。</p>
+  </header>
+
+  <section class="card">
+    <h2>预览</h2>
+    <div class="previews">
+      <figure class="big"><svg id="pv-circle" viewBox="18 18 72 72"></svg><figcaption>圆形遮罩</figcaption></figure>
+      <figure class="big"><svg id="pv-squircle" viewBox="18 18 72 72"></svg><figcaption>圆角方形遮罩</figcaption></figure>
+      <figure class="big"><svg id="pv-mono" viewBox="18 18 72 72"></svg><figcaption>单色主题图标</figcaption></figure>
+      <figure>
+        <div class="small-row">
+          <svg id="pv-s72" viewBox="18 18 72 72" width="72" height="72"></svg>
+          <svg id="pv-s48" viewBox="18 18 72 72" width="48" height="48"></svg>
+        </div>
+        <figcaption>桌面实际大小</figcaption>
+      </figure>
+    </div>
+    <div class="stats" id="stats"></div>
+    <div class="row" style="margin-top:10px">
+      <label class="check"><input type="checkbox" id="guides"> 显示安全区参考线</label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>参数</h2>
+    <div class="control">
+      <label for="scale">整体大小</label>
+      <input type="range" id="scale" min="0.6" max="1.1" step="0.01">
+      <output id="scale-out"></output>
+    </div>
+    <div class="control">
+      <label for="eyeSpacing">豆豆眼间距</label>
+      <input type="range" id="eyeSpacing" min="12" max="36" step="0.5">
+      <output id="eyeSpacing-out"></output>
+      <div class="hint">两只眼睛中心之间的距离（缩放前的坐标）</div>
+    </div>
+    <div class="control">
+      <label for="eyeY">豆豆眼上下位置</label>
+      <input type="range" id="eyeY" min="-10" max="10" step="0.5">
+      <output id="eyeY-out"></output>
+      <div class="hint">负数往上，正数往下</div>
+    </div>
+    <div class="control">
+      <label for="stroke">线条粗细</label>
+      <input type="range" id="stroke" min="2" max="7" step="0.1">
+      <output id="stroke-out"></output>
+      <div class="hint">脸部轮廓的线宽；豆豆眼按固定比例跟着变</div>
+    </div>
+
+    <h2 style="margin-top:22px">嘴巴</h2>
+    <div class="control">
+      <label for="mouthWidth">嘴巴宽度</label>
+      <input type="range" id="mouthWidth" min="6" max="24" step="0.5">
+      <output id="mouthWidth-out"></output>
+    </div>
+    <div class="control">
+      <label for="mouthY">嘴巴上下位置</label>
+      <input type="range" id="mouthY" min="-6" max="8" step="0.5">
+      <output id="mouthY-out"></output>
+      <div class="hint">负数往上，正数往下</div>
+    </div>
+    <div class="control">
+      <label for="mouthDepth">弧度深度</label>
+      <input type="range" id="mouthDepth" min="1" max="9" step="0.25">
+      <output id="mouthDepth-out"></output>
+      <div class="hint">两瓣往下弯的深度，越大越圆滚滚</div>
+    </div>
+    <div class="control">
+      <label for="mouthMid">中间尖角高度</label>
+      <input type="range" id="mouthMid" min="-3" max="5" step="0.25">
+      <output id="mouthMid-out"></output>
+      <div class="hint">中间尖角相对两端的高度：0 和两端齐平，负数更高，正数更低</div>
+    </div>
+    <div class="control">
+      <label for="mouthStroke">嘴巴线条粗细</label>
+      <input type="range" id="mouthStroke" min="1.5" max="6" step="0.1">
+      <output id="mouthStroke-out"></output>
+    </div>
+
+    <div class="row">
+      <button id="reset">恢复默认</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>导出</h2>
+    <div class="row" style="margin-bottom:12px">
+      <label class="check"><input type="checkbox" id="exp-bg" checked> 包含蓝色背景</label>
+      <label class="check"><input type="checkbox" id="exp-crop" checked> 只导出 72×72 可见区域</label>
+    </div>
+    <div class="row">
+      <button class="primary" id="dl-svg">下载 SVG</button>
+      <button id="dl-xml">下载 Android 前景 XML</button>
+      <button id="copy-xml">复制 Android XML</button>
+    </div>
+    <p class="hint" style="color:var(--muted);font-size:13px;margin:10px 0 0">
+      Android XML 可直接替换 <code>app/src/main/res/drawable/ic_launcher_foreground.xml</code>，背景层保持不变。
+    </p>
+    <div class="toast" id="toast"></div>
+  </section>
+</main>
+
+<!-- 屏幕外的 SVG，只用来测量路径的几何尺寸。 -->
+<svg id="measure" width="0" height="0" style="position:absolute;visibility:hidden" aria-hidden="true">
+  <path id="m-head"></path>
+</svg>
+
+<script>
+  // 基础几何图形，坐标系是自适应图标的 108x108 画布。
+  const HEAD = "M26,46 C26,37 29.5,28 34,26.6 C37.5,25.6 43.5,32 47,37.5 Q54,35.5 61,37.5 C64.5,32 70.5,25.6 74,26.6 C78.5,28 82,37 82,46 L82,65 A16,16 0 0,1 66,81 L42,81 A16,16 0 0,1 26,65 Z";
+  const MOUTH_TOP_Y = 66.5;
+  const EYE_CENTER_Y = 57.5;
+  const EYE_HALF_LENGTH = 3.5;
+  const EYE_RATIO = 6.4 / 4.4;
+  const CENTER = 54;
+  const VISIBLE_RADIUS = 36;
+  const SAFE_RADIUS = 33;
+
+  const DEFAULTS = {
+    scale: 0.85, eyeSpacing: 27, eyeY: -3, stroke: 4,
+    mouthWidth: 11.5, mouthY: 0, mouthDepth: 5.25, mouthMid: 1.25, mouthStroke: 2.5,
+  };
+  const STORAGE_KEY = "kitten-icon-editor";
+  const params = { ...DEFAULTS, ...loadSaved() };
+
+  function loadSaved() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      return {};
+    }
+  }
+
+  function save() {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(params)); } catch (e) { /* 浏览器存储不可用，忽略 */ }
+  }
+
+  const fmt = (n) => String(+n.toFixed(3));
+
+  function eyesPath(p) {
+    const y1 = EYE_CENTER_Y + p.eyeY - EYE_HALF_LENGTH;
+    const y2 = EYE_CENTER_Y + p.eyeY + EYE_HALF_LENGTH;
+    const xl = CENTER - p.eyeSpacing / 2;
+    const xr = CENTER + p.eyeSpacing / 2;
+    return `M${fmt(xl)},${fmt(y1)} L${fmt(xl)},${fmt(y2)} M${fmt(xr)},${fmt(y1)} L${fmt(xr)},${fmt(y2)}`;
+  }
+
+  // "w" 形嘴巴：两段二次曲线。两端落在顶线上，每一瓣由控制点往下弯 mouthDepth，
+  // 中间的连接点比顶线低 mouthMid。
+  function mouthPath(p) {
+    const half = p.mouthWidth / 2;
+    const top = MOUTH_TOP_Y + p.mouthY;
+    const ctrlY = top + p.mouthDepth;
+    const midY = top + p.mouthMid;
+    return `M${fmt(CENTER - half)},${fmt(top)} Q${fmt(CENTER - half / 2)},${fmt(ctrlY)} ${CENTER},${fmt(midY)} ` +
+      `Q${fmt(CENTER + half / 2)},${fmt(ctrlY)} ${fmt(CENTER + half)},${fmt(top)}`;
+  }
+
+  // 整张脸以画布中心缩放；线宽除以缩放比例，
+  // 保证渲染出来的粗细始终等于滑块上的数值。
+  function strokes(p) {
+    return {
+      head: p.stroke / p.scale,
+      mouth: p.mouthStroke / p.scale,
+      eyes: (p.stroke * EYE_RATIO) / p.scale,
+    };
+  }
+
+  function faceMarkup(p, color) {
+    const w = strokes(p);
+    const t = `translate(${CENTER} ${CENTER}) scale(${fmt(p.scale)}) translate(${-CENTER} ${-CENTER})`;
+    return `<g transform="${t}" fill="none" stroke="${color}" stroke-linecap="round" stroke-linejoin="round">` +
+      `<path d="${HEAD}" stroke-width="${fmt(w.head)}"/>` +
+      `<path d="${eyesPath(p)}" stroke-width="${fmt(w.eyes)}"/>` +
+      `<path d="${mouthPath(p)}" stroke-width="${fmt(w.mouth)}"/>` +
+      `</g>`;
+  }
+
+  function gradientDef(id) {
+    return `<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1">` +
+      `<stop offset="0" stop-color="#66CCFF"/><stop offset="1" stop-color="#3FA9EB"/></linearGradient>`;
+  }
+
+  function guidesMarkup() {
+    return `<g fill="none" stroke-width="0.5" stroke-dasharray="1.5 1.5">` +
+      `<circle cx="${CENTER}" cy="${CENTER}" r="${SAFE_RADIUS}" stroke="#ffe066"/>` +
+      `<circle cx="${CENTER}" cy="${CENTER}" r="${VISIBLE_RADIUS - 0.3}" stroke="#ff6b6b"/></g>`;
+  }
+
+  function previewMarkup(id, mask, mono, guides) {
+    const clip = mask === "circle"
+      ? `<circle cx="${CENTER}" cy="${CENTER}" r="${VISIBLE_RADIUS}"/>`
+      : `<rect x="18" y="18" width="72" height="72" rx="20"/>`;
+    const bg = mono
+      ? `<rect width="108" height="108" fill="#2B3A44"/>`
+      : `<rect width="108" height="108" fill="url(#${id}-g)"/>`;
+    return `<defs>${gradientDef(id + "-g")}<clipPath id="${id}-c">${clip}</clipPath></defs>` +
+      `<g clip-path="url(#${id}-c)">${bg}${faceMarkup(params, mono ? "#CFE3EF" : "#FFFFFF")}</g>` +
+      (guides ? guidesMarkup() : "");
+  }
+
+  // 图形离图标中心最远的渲染点（计入线宽）。
+  function measure(p) {
+    const path = document.getElementById("m-head");
+    path.setAttribute("d", HEAD);
+    const total = path.getTotalLength();
+    const w = strokes(p);
+    let headMax = 0;
+    for (let i = 0; i <= 400; i++) {
+      const pt = path.getPointAtLength((total * i) / 400);
+      const d = Math.hypot(pt.x - CENTER, pt.y - CENTER) * p.scale;
+      if (d > headMax) headMax = d;
+    }
+    headMax += p.stroke / 2;
+
+    const ex = p.eyeSpacing / 2;
+    const ey = Math.max(Math.abs(EYE_CENTER_Y + p.eyeY - EYE_HALF_LENGTH - CENTER),
+                        Math.abs(EYE_CENTER_Y + p.eyeY + EYE_HALF_LENGTH - CENTER));
+    const eyeMax = Math.hypot(ex, ey) * p.scale + (w.eyes * p.scale) / 2;
+
+    const box = path.getBBox();
+    const widthRatio = ((box.width * p.scale) + p.stroke) / 72;
+    const heightRatio = ((box.height * p.scale) + p.stroke) / 72;
+    return { radius: Math.max(headMax, eyeMax), widthRatio, heightRatio };
+  }
+
+  function renderStats() {
+    const m = measure(params);
+    let cls = "ok", msg = "在安全区内，任何遮罩都不会被裁到";
+    if (m.radius > VISIBLE_RADIUS) { cls = "bad"; msg = "超出圆形可见区域，圆形图标上会被裁掉"; }
+    else if (m.radius > SAFE_RADIUS) { cls = "warn"; msg = "超出安全区，圆形图标上会贴边"; }
+    document.getElementById("stats").innerHTML =
+      `<div>占可见区域：宽 ${(m.widthRatio * 100).toFixed(0)}%，高 ${(m.heightRatio * 100).toFixed(0)}%</div>` +
+      `<div class="${cls}">最外缘距中心 ${m.radius.toFixed(1)}（安全区 ${SAFE_RADIUS}，圆形遮罩 ${VISIBLE_RADIUS}）：${msg}</div>`;
+  }
+
+  function render() {
+    const guides = document.getElementById("guides").checked;
+    document.getElementById("pv-circle").innerHTML = previewMarkup("pc", "circle", false, guides);
+    document.getElementById("pv-squircle").innerHTML = previewMarkup("ps", "squircle", false, guides);
+    document.getElementById("pv-mono").innerHTML = previewMarkup("pm", "circle", true, guides);
+    document.getElementById("pv-s72").innerHTML = previewMarkup("p72", "circle", false, false);
+    document.getElementById("pv-s48").innerHTML = previewMarkup("p48", "circle", false, false);
+    for (const key of Object.keys(DEFAULTS)) {
+      document.getElementById(key).value = params[key];
+      document.getElementById(key + "-out").textContent = fmt(params[key]);
+    }
+    renderStats();
+  }
+
+  function buildSvg() {
+    const withBg = document.getElementById("exp-bg").checked;
+    const crop = document.getElementById("exp-crop").checked;
+    const viewBox = crop ? "18 18 72 72" : "0 0 108 108";
+    const bg = withBg ? `<defs>${gradientDef("bg")}</defs><rect width="108" height="108" fill="url(#bg)"/>` : "";
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}" width="512" height="512">` +
+      `${bg}${faceMarkup(params, "#FFFFFF")}</svg>\n`;
+  }
+
+  function buildVectorXml() {
+    const w = strokes(params);
+    const s = fmt(params.scale);
+    const pathAttrs = (d, width, join) =>
+      `        <path\n` +
+      `            android:pathData="${d}"\n` +
+      `            android:strokeWidth="${fmt(width)}"\n` +
+      `            android:strokeColor="#FFFFFFFF"\n` +
+      `            android:strokeLineCap="round"` +
+      (join ? `\n            android:strokeLineJoin="round"` : "") + ` />\n`;
+    return `<vector xmlns:android="http://schemas.android.com/apk/res/android"\n` +
+      `    android:width="108dp"\n` +
+      `    android:height="108dp"\n` +
+      `    android:viewportWidth="108"\n` +
+      `    android:viewportHeight="108">\n` +
+      `    <!-- 由 tools/icon-editor.html 生成：scale=${s}, eyeSpacing=${fmt(params.eyeSpacing)}, ` +
+      `eyeOffsetY=${fmt(params.eyeY)}, stroke=${fmt(params.stroke)}, mouthWidth=${fmt(params.mouthWidth)}, ` +
+      `mouthOffsetY=${fmt(params.mouthY)}, mouthDepth=${fmt(params.mouthDepth)}, mouthMid=${fmt(params.mouthMid)}, ` +
+      `mouthStroke=${fmt(params.mouthStroke)}。全部是描边，所以也能直接用作单色主题图标。 -->\n` +
+      `    <group\n` +
+      `        android:pivotX="54"\n` +
+      `        android:pivotY="54"\n` +
+      `        android:scaleX="${s}"\n` +
+      `        android:scaleY="${s}">\n` +
+      pathAttrs(HEAD, w.head, true) +
+      pathAttrs(eyesPath(params), w.eyes, false) +
+      pathAttrs(mouthPath(params), w.mouth, true) +
+      `    </group>\n` +
+      `</vector>\n`;
+  }
+
+  function download(name, text, type) {
+    const url = URL.createObjectURL(new Blob([text], { type }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function toast(text) {
+    const el = document.getElementById("toast");
+    el.textContent = text;
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(() => { el.textContent = ""; }, 2500);
+  }
+
+  for (const key of Object.keys(DEFAULTS)) {
+    document.getElementById(key).addEventListener("input", (e) => {
+      params[key] = parseFloat(e.target.value);
+      save();
+      render();
+    });
+  }
+  document.getElementById("guides").addEventListener("change", render);
+  document.getElementById("reset").addEventListener("click", () => {
+    Object.assign(params, DEFAULTS);
+    save();
+    render();
+  });
+  document.getElementById("dl-svg").addEventListener("click", () => {
+    download("kitten-icon.svg", buildSvg(), "image/svg+xml");
+    toast("已下载 kitten-icon.svg");
+  });
+  document.getElementById("dl-xml").addEventListener("click", () => {
+    download("ic_launcher_foreground.xml", buildVectorXml(), "application/xml");
+    toast("已下载 ic_launcher_foreground.xml");
+  });
+  document.getElementById("copy-xml").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(buildVectorXml());
+      toast("已复制到剪贴板");
+    } catch (e) {
+      toast("浏览器不允许复制，请改用下载");
+    }
+  });
+
+  render();
+</script>
+</body>
+</html>

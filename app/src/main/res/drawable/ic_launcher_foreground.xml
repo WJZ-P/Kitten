@@ -3,20 +3,28 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Paw print kept inside the 66dp adaptive-icon safe zone. -->
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M41,63 a13,11 0 1,0 26,0 a13,11 0 1,0 -26,0 Z" />
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M32.5,49 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0 Z" />
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M41,41 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0 Z" />
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M55,41 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0 Z" />
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M64.5,49 a5.5,5.5 0 1,0 11,0 a5.5,5.5 0 1,0 -11,0 Z" />
+    <!-- 由 tools/icon-editor.html 生成：scale=0.85, eyeSpacing=27, eyeOffsetY=-3, stroke=4, mouthWidth=11.5, mouthOffsetY=0, mouthDepth=5.25, mouthMid=1.25, mouthStroke=2.5。全部是描边，所以也能直接用作单色主题图标。 -->
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="0.85"
+        android:scaleY="0.85">
+        <path
+            android:pathData="M26,46 C26,37 29.5,28 34,26.6 C37.5,25.6 43.5,32 47,37.5 Q54,35.5 61,37.5 C64.5,32 70.5,25.6 74,26.6 C78.5,28 82,37 82,46 L82,65 A16,16 0 0,1 66,81 L42,81 A16,16 0 0,1 26,65 Z"
+            android:strokeWidth="4.706"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M40.5,51 L40.5,58 M67.5,51 L67.5,58"
+            android:strokeWidth="6.845"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M48.25,66.5 Q51.125,71.75 54,67.75 Q56.875,71.75 59.75,66.5"
+            android:strokeWidth="2.941"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
 </vector>

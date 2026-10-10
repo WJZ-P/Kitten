@@ -9,8 +9,8 @@ android {
 
     defaultConfig {
         applicationId = "me.wjz.kitten"
-        // Android 11: wireless debugging (for a built-in privileged backend later)
-        // and AccessibilityService#takeScreenshot are both available from API 30.
+        // 从 Android 11（API 30）开始才有：无线调试（以后内置特权后端要用）
+        // 和 AccessibilityService#takeScreenshot。
         minSdk = 30
         targetSdk = 37
         versionCode = 1
