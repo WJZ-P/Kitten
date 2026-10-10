@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 连接本机 adbd（走本地网络）需要 INTERNET；mDNS 发现无线调试端口需要组播权限。 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+
+    <application>
+        <!--
+            接收特权进程交回 binder 的 ContentProvider。
+            用 INTERACT_ACROSS_USERS_FULL 保护：普通 App 拿不到这个权限，
+            只有 shell(adb) 或系统能调用它，防止别的 App 冒充特权进程塞假 binder。
+        -->
+        <provider
+            android:name=".ipc.PrivilegeReceiverProvider"
+            android:authorities="${applicationId}.privilege"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+    </application>
+
+</manifest>
