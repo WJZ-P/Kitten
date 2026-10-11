@@ -1,145 +1,104 @@
 package me.wjz.kitten
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.tooling.preview.Preview
-import androidx.compose.ui.unit.dp
-import me.wjz.kitten.privilege.client.WirelessDebugController
+import androidx.activity.result.contract.ActivityResultContracts
+import me.wjz.kitten.privilege.client.AdbPairingService
+import me.wjz.kitten.ui.KittenApp
+import me.wjz.kitten.ui.setup.SetupActions
 import me.wjz.kitten.ui.theme.KittenTheme
 
-class MainActivity : ComponentActivity() {
+/**
+ * App 入口。
+ *
+ * 这里只做两件事：把界面挂上去，以及实现 [SetupActions]——那些只有 Activity 才做得到的
+ * 事情（跳系统设置、申请运行时权限、以前台身份拉起服务）。界面本身在 [KittenApp] 里。
+ */
+class MainActivity : ComponentActivity(), SetupActions {
 
-    private var permissionStatus by mutableStateOf(PermissionStatus(false, false))
-    private val wirelessDebugController by lazy { WirelessDebugController(applicationContext) }
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            beginPairing()
+        } else {
+            // 没有通知就没地方填配对码，整条链路直接走不通。
+            Toast.makeText(this, R.string.setup_privilege_needs_notification, Toast.LENGTH_LONG)
+                .show()
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             KittenTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { innerPadding ->
-                    SetupScreen(
-                        status = permissionStatus,
-                        controller = wirelessDebugController,
-                        onOpenAccessibilitySettings = {
-                            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                        },
-                        onOpenNotificationListenerSettings = {
-                            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                        },
-                        modifier = Modifier.padding(innerPadding),
-                    )
-                }
+                KittenApp(actions = this)
             }
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        // 页面暂停期间，用户可能去系统设置里开关了权限，回来时重新读取一次。
-        permissionStatus = PermissionStatus.read(this)
+    override fun openAccessibilitySettings() {
+        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
-}
 
-@Composable
-private fun SetupScreen(
-    status: PermissionStatus,
-    onOpenAccessibilitySettings: () -> Unit,
-    onOpenNotificationListenerSettings: () -> Unit,
-    modifier: Modifier = Modifier,
-    controller: WirelessDebugController? = null,
-) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .padding(horizontal = 24.dp, vertical = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        Text(
-            text = stringResource(R.string.app_name),
-            style = MaterialTheme.typography.headlineLarge,
-        )
-        Text(
-            text = stringResource(R.string.setup_intro),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-        PermissionCard(
-            title = stringResource(R.string.accessibility_service_label),
-            enabled = status.accessibilityEnabled,
-            onOpenSettings = onOpenAccessibilitySettings,
-        )
-        PermissionCard(
-            title = stringResource(R.string.notification_listener_label),
-            enabled = status.notificationListenerEnabled,
-            onOpenSettings = onOpenNotificationListenerSettings,
-        )
-        if (controller != null) {
-            PrivilegeCard(controller = controller)
+    override fun openNotificationListenerSettings() {
+        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+    }
+
+    override fun startPairing() {
+        val needsPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        if (needsPermission) {
+            // 授权结果回来后再继续，见 notificationPermissionLauncher。
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        beginPairing()
+    }
+
+    /**
+     * 挂上配对通知，然后把用户送到「无线调试」跟前。
+     *
+     * 两步的顺序不能反：API 31+ 只允许处于前台的 App 启动前台服务。先跳设置的话，
+     * Kitten 当场进入后台，再 start 就会被 ForegroundServiceStartNotAllowedException 拒掉。
+     */
+    private fun beginPairing() {
+        AdbPairingService.start(this)
+        openWirelessDebuggingSettings()
+    }
+
+    private fun openWirelessDebuggingSettings() {
+        val intent = Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).apply {
+            // 开发者选项是个很长的列表，直接打开用户还得自己翻。这个 extra 能让设置页
+            // 滚动到并高亮指定的 preference，省掉找的过程（Shizuku 也是这么干的）。
+            //
+            // 注意它不是公开 API——android-37 的 android.jar 里没有 EXTRA_FRAGMENT_ARG_KEY，
+            // 只能写字面量。ROM 不认就当没传，退化成普通地打开开发者选项，不会报错。
+            putExtra(SETTINGS_FRAGMENT_ARG_KEY, PREF_KEY_WIRELESS_DEBUGGING)
+            // 清掉设置已有的任务栈，避免落在用户上次停留的页面上。
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        }
+        runCatching { startActivity(intent) }.onFailure {
+            Toast.makeText(this, R.string.setup_privilege_no_developer_options, Toast.LENGTH_LONG)
+                .show()
         }
     }
-}
 
-@Composable
-private fun PermissionCard(
-    title: String,
-    enabled: Boolean,
-    onOpenSettings: () -> Unit,
-) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(text = title, style = MaterialTheme.typography.titleMedium)
-                Text(
-                    text = stringResource(
-                        if (enabled) R.string.status_enabled else R.string.status_disabled,
-                    ),
-                    style = MaterialTheme.typography.bodySmall,
-                )
-            }
-            Spacer(modifier = Modifier.padding(8.dp))
-            Button(onClick = onOpenSettings) {
-                Text(text = stringResource(R.string.action_open_settings))
-            }
-        }
-    }
-}
+    private companion object {
+        /** AOSP 设置用来"滚动到并高亮某个 preference"的 extra，非公开 API。 */
+        const val SETTINGS_FRAGMENT_ARG_KEY = ":settings:fragment_args_key"
 
-@Preview(showBackground = true)
-@Composable
-private fun SetupScreenPreview() {
-    KittenTheme {
-        SetupScreen(
-            status = PermissionStatus(accessibilityEnabled = true, notificationListenerEnabled = false),
-            onOpenAccessibilitySettings = {},
-            onOpenNotificationListenerSettings = {},
-        )
+        /** 开发者选项里「无线调试」那一项的 preference key。 */
+        const val PREF_KEY_WIRELESS_DEBUGGING = "toggle_adb_wireless"
     }
 }

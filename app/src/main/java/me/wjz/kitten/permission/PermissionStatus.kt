@@ -1,4 +1,4 @@
-package me.wjz.kitten
+package me.wjz.kitten.permission
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context

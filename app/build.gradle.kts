@@ -41,6 +41,8 @@ dependencies {
     implementation(project(":privilege"))
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    // LifecycleResumeEffect：让界面自己感知"回到前台"，不用再把逻辑放进 Activity。
+    implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
