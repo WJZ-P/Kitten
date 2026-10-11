@@ -1,6 +1,5 @@
 package me.wjz.kitten.ui.theme
 
-import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -60,7 +59,8 @@ fun KittenTheme(
     content: @Composable () -> Unit,
 ) {
     val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+        // 动态配色是 API 31 起的能力，minSdk 已经是 33，不用再判版本。
+        dynamicColor -> {
             val context = LocalContext.current
             if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }

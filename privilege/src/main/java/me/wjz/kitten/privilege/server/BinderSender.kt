@@ -1,9 +1,7 @@
 package me.wjz.kitten.privilege.server
 
-import android.annotation.SuppressLint
 import android.content.AttributionSource
 import android.os.Binder
-import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.os.Process
@@ -20,8 +18,10 @@ import me.wjz.kitten.privilege.ipc.PrivilegeContract
  * 这里用到 getContentProviderExternal / IContentProvider.call 等隐藏 API。
  * 特权进程不是正常的 App 进程，没有 non-SDK 接口限制，可以直接反射调用。
  *
- * 签名在不同 Android 版本上差异很大，目前只实现 API 31+（AttributionSource）路径。
- * API 30（R）以后再补。
+ * IContentProvider.call 的签名在不同 Android 版本上差异很大，这里只实现 API 31+
+ * 带 AttributionSource 的那一版。这也是 minSdk 必须 ≥ 31 的直接原因——低于 31
+ * 这条交回 binder 的路走不通，整个特权链路就是空的。minSdk 实际定在 33，
+ * 理由见 app/build.gradle.kts。
  */
 internal object BinderSender {
 
@@ -35,10 +35,6 @@ internal object BinderSender {
     private const val USER_ID = 0
 
     fun send(service: IBinder, token: String?): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            Log.e(TAG, "目前只支持 Android 12(API 31) 及以上")
-            return false
-        }
         return try {
             sendViaContentProvider(service, token)
             true
@@ -48,7 +44,6 @@ internal object BinderSender {
         }
     }
 
-    @SuppressLint("NewApi")
     private fun sendViaContentProvider(service: IBinder, token: String?) {
         val am = activityManager()
         val externalToken: IBinder = Binder()
@@ -114,7 +109,6 @@ internal object BinderSender {
     }
 
     /** API 31+: IContentProvider.call(AttributionSource, String authority, String method, String arg, Bundle) */
-    @SuppressLint("NewApi")
     private fun callProvider(provider: Any, extras: Bundle): Bundle? {
         val attributionSource = AttributionSource.Builder(Process.myUid())
             .setPackageName(TARGET_PACKAGE)
