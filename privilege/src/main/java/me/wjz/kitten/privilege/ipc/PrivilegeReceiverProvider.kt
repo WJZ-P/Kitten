@@ -23,14 +23,17 @@ class PrivilegeReceiverProvider : ContentProvider() {
     }
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
-        if (method == PrivilegeContract.METHOD_SEND_BINDER && extras != null) {
-            extras.classLoader = BinderContainer::class.java.classLoader
-            @Suppress("DEPRECATION")
-            val container = extras.getParcelable<BinderContainer>(PrivilegeContract.EXTRA_BINDER)
-            val token = extras.getString(PrivilegeContract.EXTRA_TOKEN)
-            container?.binder?.let { PrivilegeManager.onBinderReceived(it, token) }
-        }
-        return null
+        if (method != PrivilegeContract.METHOD_SEND_BINDER || extras == null) return null
+
+        extras.classLoader = BinderContainer::class.java.classLoader
+        @Suppress("DEPRECATION")
+        val container = extras.getParcelable<BinderContainer>(PrivilegeContract.EXTRA_BINDER)
+        val token = extras.getString(PrivilegeContract.EXTRA_TOKEN)
+        val accepted = container?.binder?.let { PrivilegeManager.onBinderReceived(it, token) } == true
+
+        // 必须把结果回给特权进程：被拒绝的话它要自己退出，
+        // 否则就成了一个 App 不认识、却还占着 shell 权限的孤儿进程。
+        return Bundle().apply { putBoolean(PrivilegeContract.KEY_ACCEPTED, accepted) }
     }
 
     override fun query(

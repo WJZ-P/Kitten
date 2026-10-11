@@ -31,11 +31,9 @@ object PrivilegeManager {
     @Volatile
     private var expectedToken: String? = null
 
-    private val deathRecipient = IBinder.DeathRecipient {
-        Log.w(TAG, "特权进程已断开")
-        service = null
-        _state.value = PrivilegeState.Idle
-    }
+    /** 当前这条连接的 binder，用来识别死讯来自新进程还是被替换掉的旧进程。 */
+    @Volatile
+    private var currentBinder: IBinder? = null
 
     /** 由 PrivilegeReceiverProvider 在创建时调用。 */
     fun attach(context: Context) {
@@ -53,24 +51,45 @@ object PrivilegeManager {
         return token
     }
 
-    /** 由 PrivilegeReceiverProvider 调用：收到特权进程交回的 binder。 */
-    fun onBinderReceived(binder: IBinder, token: String?) {
+    /**
+     * 由 PrivilegeReceiverProvider 调用：收到特权进程交回的 binder。
+     *
+     * @return 是否接受。返回 false 时特权进程会自行退出，不留孤儿进程。
+     */
+    fun onBinderReceived(binder: IBinder, token: String?): Boolean {
         val expected = expectedToken
         if (expected != null && token != expected) {
             Log.w(TAG, "token 不匹配，拒绝此 binder")
-            return
+            return false
         }
         try {
-            binder.linkToDeath(deathRecipient, 0)
+            // 每条连接一个 recipient：Starter 每次启动前会 pkill 掉上一个特权进程，
+            // 旧进程的死讯可能晚于新进程的 Ready 才到，不能让它把新状态冲掉。
+            val recipient = IBinder.DeathRecipient {
+                if (currentBinder !== binder) {
+                    Log.d(TAG, "被替换掉的特权进程退出，忽略")
+                } else {
+                    Log.w(TAG, "特权进程已断开")
+                    currentBinder = null
+                    service = null
+                    _state.value = PrivilegeState.Idle
+                }
+            }
+            binder.linkToDeath(recipient, 0)
             val proxy = IPrivilegeService.Stub.asInterface(binder)
             val uid = proxy.uid
             val version = proxy.version
+            currentBinder = binder
             service = proxy
             _state.value = PrivilegeState.Ready(uid)
             Log.i(TAG, "特权已就绪，uid=$uid, version=$version")
+            return true
         } catch (t: Throwable) {
             Log.e(TAG, "握手失败", t)
-            _state.value = PrivilegeState.Error(t.message ?: "握手失败")
+            // 异常自带的 message 通常已经够具体了；没有就退回类名，
+            // 总比一句笼统的"握手失败"更有助于定位。
+            _state.value = PrivilegeState.Error(t.message ?: t.javaClass.simpleName)
+            return false
         }
     }
 
@@ -80,6 +99,7 @@ object PrivilegeManager {
     /** 主动停止特权进程。 */
     fun stop() {
         runCatching { service?.destroy() }
+        currentBinder = null
         service = null
         _state.value = PrivilegeState.Idle
     }

@@ -15,6 +15,14 @@ object PrivilegeContract {
     /** Bundle 里存放一次性 token 的 key，用于校验 binder 确实来自本次启动。 */
     const val EXTRA_TOKEN = "me.wjz.kitten.privilege.extra.TOKEN"
 
+    /**
+     * call 返回的 Bundle 里表示"App 是否接受了这个 binder"的 key。
+     *
+     * 必须有这个回执：call 本身不会因为 App 拒绝而抛异常，特权进程收不到否定答复
+     * 就会一直活着，变成一个谁也不认识的孤儿特权进程。
+     */
+    const val KEY_ACCEPTED = "me.wjz.kitten.privilege.key.ACCEPTED"
+
     /** 特权进程的入口类，由 app_process 启动。 */
     const val SERVER_MAIN_CLASS = "me.wjz.kitten.privilege.server.ServerMain"
 

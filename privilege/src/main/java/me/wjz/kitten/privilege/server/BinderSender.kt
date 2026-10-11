@@ -65,7 +65,11 @@ internal object BinderSender {
                 putParcelable(PrivilegeContract.EXTRA_BINDER, BinderContainer(service))
                 putString(PrivilegeContract.EXTRA_TOKEN, token)
             }
-            callProvider(provider, extras)
+            // call 不会因为 App 拒绝而抛异常，必须看回执，否则被拒了还傻等着。
+            val result = callProvider(provider, extras)
+            if (result?.getBoolean(PrivilegeContract.KEY_ACCEPTED) != true) {
+                throw IllegalStateException("App 没有接受这个 binder（token 不匹配或握手失败）")
+            }
         } finally {
             // 走到这里时 binder 可能已经送达，归还失败只记日志，
             // 不能让它把成功变成失败，也不能盖掉 try 里抛出的原始异常。
@@ -111,7 +115,7 @@ internal object BinderSender {
 
     /** API 31+: IContentProvider.call(AttributionSource, String authority, String method, String arg, Bundle) */
     @SuppressLint("NewApi")
-    private fun callProvider(provider: Any, extras: Bundle) {
+    private fun callProvider(provider: Any, extras: Bundle): Bundle? {
         val attributionSource = AttributionSource.Builder(Process.myUid())
             .setPackageName(TARGET_PACKAGE)
             .build()
@@ -120,13 +124,13 @@ internal object BinderSender {
                 m.parameterTypes.size == 5 &&
                 m.parameterTypes[0] == AttributionSource::class.java
         } ?: throw NoSuchMethodException("找不到 IContentProvider.call(AttributionSource, ...)")
-        call.invoke(
+        return call.invoke(
             provider,
             attributionSource,
             AUTHORITY,
             PrivilegeContract.METHOD_SEND_BINDER,
             null,
             extras,
-        )
+        ) as? Bundle
     }
 }
