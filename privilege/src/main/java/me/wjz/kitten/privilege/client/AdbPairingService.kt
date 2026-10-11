@@ -9,7 +9,6 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.drawable.Icon
-import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import io.github.muntashirakon.adb.android.AdbMdns
@@ -112,9 +111,12 @@ class AdbPairingService : Service() {
         // 所以不能用成员变量，必须用这条通知当时带的那个。
         val port = intent.getIntExtra(EXTRA_PORT, -1)
         if (code.isNullOrEmpty() || port <= 0) {
+            Log.w(TAG, "通知回复里没拿到可用的配对码（位数=${code?.length ?: 0}，端口=$port）")
             notify(retryNotification(getString(R.string.privilege_notif_no_code)))
             return
         }
+        // 日志里只留位数和端口，配对码本身绝不记录。
+        Log.i(TAG, "收到配对码（${code.length} 位），端口=$port")
         // 配对码是一次性的，停掉 mDNS，免得又把通知刷回「等待中」。
         stopSearch()
         scope.launch { pairAndLaunch(port, code) }
@@ -124,6 +126,7 @@ class AdbPairingService : Service() {
         controller.pairAndLaunch(port, code)
         val step = controller.step.value
         if (step is WirelessDebugController.Step.Failed) {
+            Log.w(TAG, "配对流程失败：${step.message}，重新开始搜索配对服务")
             notify(retryNotification(step.message))
             startSearch()
             return
@@ -137,13 +140,20 @@ class AdbPairingService : Service() {
         }
         when (state) {
             is PrivilegeState.Ready -> {
+                Log.i(TAG, "配对流程全部完成，uid=${state.uid}，配对服务退出")
                 notifyDone(getString(R.string.privilege_notif_ready, state.uid))
                 stopSelf()
             }
 
-            is PrivilegeState.Error -> notify(retryNotification(state.message))
+            is PrivilegeState.Error -> {
+                Log.w(TAG, "特权进程握手失败：${state.message}")
+                notify(retryNotification(state.message))
+            }
 
-            else -> notifyDone(getString(R.string.privilege_notif_no_binder))
+            else -> {
+                Log.w(TAG, "等了 ${HANDSHAKE_TIMEOUT_MS}ms 也没等到 binder 交回")
+                notifyDone(getString(R.string.privilege_notif_no_binder))
+            }
         }
     }
 
@@ -260,9 +270,12 @@ class AdbPairingService : Service() {
         // FLAG_MUTABLE 是必须的：系统要把用户输入的内容填进这个 Intent，不可变就收不到。
         // FLAG_UPDATE_CURRENT 保证重开配对弹窗换了端口后，Intent 里的端口也跟着刷新
         //（PendingIntent 判等不看 extras，不加这个标志就会一直用第一次那个旧端口）。
-        var flags = PendingIntent.FLAG_UPDATE_CURRENT
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) flags = flags or PendingIntent.FLAG_MUTABLE
-        val pending = PendingIntent.getForegroundService(this, REQUEST_REPLY, intent, flags)
+        val pending = PendingIntent.getForegroundService(
+            this,
+            REQUEST_REPLY,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
+        )
         // 图标传 null：Android 7 起手机通知栏就不画 action 图标了，Shizuku 也是传 null。
         return Notification.Action.Builder(
             null as Icon?,

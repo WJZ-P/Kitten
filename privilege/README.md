@@ -72,7 +72,130 @@
 
 依赖：libadb-android、sun-security-android、conscrypt-android（均走 JitPack，settings 里已加仓库）。
 
-## 已知待实测
+## 版本下限
 
-- `BinderSender` 目前只实现 API 31+（AttributionSource）路径，API 30 待补。
-- 特权进程的 binder 线程池是否自动启动、`ServerMain` 保活方式，需在 2b 能真正启动后验证。
+minSdk = 33（Android 13），由三条约束叠出来：
+
+- **API 30**：无线调试本身才出现。我们不支持 root、也不碰电脑，手机内无线 ADB
+  是唯一的提权路径，没有更低的退路。
+- **API 31**：`BinderSender` 交回 binder 走的是 `IContentProvider.call` 的
+  `AttributionSource` 签名，API 30 上签名不同。低于 31 整条链路跑不通。
+- **API 33**：开机自动恢复特权进程要靠系统记住"受信任的 WiFi 网络"，而
+  `adb_temp_keys.xml` 的解析 bug 到 Android 13 才修（AOSP change 2128832，
+  Bug 236299256）。在那之前每次重启都会被当成陌生网络、弹框等用户确认。
+  Shizuku 的开机自启也卡在同一刀上。
+
+## 配一次，以后全自动
+
+ADB 只需要人工走一次。之后即使重启，Kitten 也能自己把特权链路重建起来。
+
+支点是 **WRITE_SECURE_SETTINGS**：它的 protectionLevel 带 `development` 标志，
+所以能用 `pm grant` 授给普通应用，而且**授给的是 App 自己的 uid，永久有效**——
+扛重启，也不需要特权进程在场。
+
+```
+首次（人工一次）
+  配对 → 连接 → pm grant WRITE_SECURE_SETTINGS → 拉起特权进程
+                        ↓
+              App 自己开无障碍 / 通知使用权
+
+重启后（零交互，BootCompletedReceiver）
+  自己打开无线调试 → mDNS 发现端口 → 用本地密钥连上 → 重新拉起特权进程
+```
+
+能这样闭环，是因为配对状态两边都持久化了：我们的私钥和证书在 `filesDir`，
+公钥在系统的已授权列表里。连接只校验公钥，不需要配对码。
+
+注意能力分两层：
+
+- **一次性授权就够的**：`WRITE_SECURE_SETTINGS`（带 `development`）
+- **必须有活着的特权进程**：`INJECT_EVENTS`、`CAPTURE_VIDEO_OUTPUT`、
+  `INTERNAL_SYSTEM_WINDOW`、`REAL_GET_TASKS` —— 全是纯 signature 级，
+  `pm grant` 授不了，所以每次开机都要重建进程
+
+### 实测记录（HyperOS / Android 16，2026-10-11）
+
+重启后全自动恢复**跑通**，关键日志：
+
+```
+KittenBoot:       开机自动恢复开始，action=android.intent.action.BOOT_COMPLETED
+KittenSelfConfig: 打开无线调试：adb_wifi_enabled 0 -> 1，adb_enabled=1，回读正常
+KittenWirelessAdb: 开始自动连接
+```
+
+结果：特权进程 Uid=2000、PPid=1、fd 指向 /dev/null，无 shell 泄漏。
+
+两点 ROM 差异要知道：
+
+- **小米的自启动管控会拦开机广播**，日志为
+  `BroadcastQueueInjector: ... process is not permitted to auto start`。
+  我们能收到，是因为无障碍服务先把进程拉起来了（系统拉起的服务不受管控），
+  广播才搭上车——代价是比开机晚了约 50 秒。
+- **通知使用权可能扛不住重启**（实测重启后又变回未开启）。`applyAll` 每次回到
+  前台都跑，正好自愈；只在首次配置跑一遍的话这里会悄悄失效。
+
+### 为什么不支持 direct boot
+
+ADB 密钥存在 `filesDir`，属于凭据加密存储，**用户解锁前读不到**。所以开机接收器
+不标 `directBootAware`、也不听 `LOCKED_BOOT_COMPLETED`——解锁前跑只会误报
+"从没配对过"然后白跑一趟。
+
+Shizuku 的做法是把密钥放进 `createDeviceProtectedStorageContext()`，于是解锁前
+也能恢复。我们不跟：ADB 私钥等同于设备的 shell 权限，不该为了早几秒就放进
+"无需用户凭据即可解密"的存储里。
+
+## 看日志
+
+所有 tag 都以 `Kitten` 开头，一条命令全抓：
+
+```
+adb logcat -s KittenWirelessAdb:V KittenAdbShell:V KittenAdbPairing:V \
+              KittenPrivilege:V KittenPrivServer:V KittenPrivSender:V \
+              KittenSelfConfig:V KittenBoot:V
+```
+
+| tag | 负责哪一段 |
+|---|---|
+| `KittenAdbPairing` | 配对通知：mDNS 发现端口、收到配对码 |
+| `KittenWirelessAdb` | 连接 adbd、自助授权、拉起特权进程 |
+| `KittenAdbShell` | ADB shell 的原始回显（`pm grant` 的输出在这里） |
+| `KittenPrivServer` | 特权进程自己（uid 应为 2000） |
+| `KittenPrivSender` | 交回 binder 的反射调用 |
+| `KittenPrivilege` | App 侧收到 binder、最终就绪状态 |
+| `KittenSelfConfig` | 自助开无障碍 / 通知使用权 / 无线调试 |
+| `KittenBoot` | 开机自动恢复的起止和耗时 |
+
+首次配对成功时，关键几行长这样：
+
+```
+KittenWirelessAdb: 已连上 adbd
+KittenWirelessAdb: 尚未取得 WRITE_SECURE_SETTINGS，执行一次性自助授权
+KittenWirelessAdb: 自助授权成功：已取得 WRITE_SECURE_SETTINGS，之后可开机自动恢复
+KittenWirelessAdb: 正在拉起特权进程…
+KittenPrivServer:  privilege server starting, uid=2000
+KittenPrivilege:   特权已就绪，uid=2000, version=1
+KittenSelfConfig:  自助配置：无障碍=TURNED_ON 通知使用权=TURNED_ON ADB授权超时=TURNED_ON
+```
+
+重启后应该看到（全程无人操作）：
+
+```
+KittenBoot:        开机自动恢复开始，action=android.intent.action.LOCKED_BOOT_COMPLETED
+KittenSelfConfig:  打开无线调试：adb_wifi_enabled 0 -> 1，adb_enabled=1，回读正常
+KittenWirelessAdb: 开始自动连接
+KittenPrivilege:   特权已就绪，uid=2000, version=1
+KittenBoot:        开机自动恢复结束，耗时 3421ms，特权状态=Ready(uid=2000)
+```
+
+排查要点：
+
+- **`自助授权未生效`** → 去 `KittenAdbShell` 看 `pm grant` 的原始输出
+- **`回读异常，这个 ROM 可能不认这个设置项`** → 该 ROM 写了 `adb_wifi_enabled`
+  但没真的启动 adbd 监听，开机自动恢复在这台设备上走不通
+- **特权进程起不来** → `adb shell cat /data/local/tmp/kitten_privilege.log`，
+  ServerMain 启动**之前**的崩溃只会出现在那里
+
+## 已验证
+
+- 特权进程的 binder 线程池会自动启动，`Looper.prepareMainLooper()` + `loop()`
+  的保活方式有效（真机日志：`特权已就绪，uid=2000, version=1`）。

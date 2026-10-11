@@ -15,9 +15,10 @@
 
         <!--
             配对通知的宿主。用 specialUse 而不是 Shizuku 那样的 shortService：
-            shortService 在 API 34+ 有 3 分钟硬超时，到点不停会抛
-            ForegroundServiceDidNotStopInTimeException，而用户在设置里摸索配对弹窗
-            很可能超过 3 分钟。specialUse 没有超时，代价是上架 Play 要写理由——
+            shortService 在 API 34+ 有 3 分钟硬超时，到点不停会 ANR，而用户在设置里
+            摸索配对弹窗很可能超过 3 分钟（实测 Shizuku 就会因此 ANR）。
+            specialUse 没有超时。代价是若要上架 Google Play 需提交使用理由说明；
+            以 GitHub / F-Droid 方式分发不受影响。
         -->
         <service
             android:name=".client.AdbPairingService"
