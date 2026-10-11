@@ -1,10 +1,38 @@
 <resources>
-    <string name="app_name">Kitten</string>
-    <string name="setup_intro">Kitten needs the permissions below to read messages and operate apps for you. You stay in control: anything sensitive is sent only after you confirm.</string>
-    <string name="accessibility_service_label">Kitten accessibility service</string>
-    <string name="accessibility_service_description">Lets Kitten read the current screen and tap, type, and scroll for you when you ask it to. Sensitive actions such as sending messages always require your confirmation.</string>
-    <string name="notification_listener_label">Kitten notification access</string>
-    <string name="status_enabled">Enabled</string>
-    <string name="status_disabled">Not enabled</string>
-    <string name="action_open_settings">Open settings</string>
+    <!-- 中文是默认语言；英文在 values-en/strings.xml。 -->
+
+    <!-- 品牌名，各语言一致，不参与翻译。 -->
+    <string name="app_name" translatable="false">Kitten</string>
+    <string name="setup_intro">Kitten 需要下面这些权限，才能帮你读消息、操作 App。一切由你掌控：发送消息等敏感操作，都要经过你确认。</string>
+
+    <!-- 系统服务，名称会显示在系统设置里 -->
+    <string name="accessibility_service_label">Kitten 无障碍服务</string>
+    <string name="accessibility_service_description">让 Kitten 在你吩咐时读取当前屏幕，并帮你点击、输入和滑动。发送消息等敏感操作始终需要你确认。</string>
+    <string name="notification_listener_label">Kitten 通知使用权</string>
+
+    <!-- 通用 -->
+    <string name="status_enabled">已开启</string>
+    <string name="status_disabled">未开启</string>
+    <string name="action_open_settings">去开启</string>
+
+    <!-- 引导页 · 增强模式卡片 -->
+    <string name="setup_privilege_title">增强模式（ADB · 可选）</string>
+    <string name="setup_privilege_guide">配对码只在系统的配对弹窗打开时有效，切回 Kitten 就会作废，\n所以配对码要填在通知里，不要回到这个页面：\n\n1. 点『开始配对』，Kitten 会挂一条可直接输入的通知，并跳到开发者选项\n2. 打开高亮的『无线调试』→ 点『使用配对码配对设备』\n3. 弹窗一出现，通知会自动弹出来，点『输入配对码』填 6 位数字\n4. 全程别关那个弹窗</string>
+    <string name="setup_privilege_status">状态：%1$s</string>
+    <string name="setup_privilege_action_pair">开始配对</string>
+    <string name="setup_privilege_needs_notification">配对码要填在通知里，请允许通知权限</string>
+    <string name="setup_privilege_no_developer_options">打不开开发者选项，请手动进入『设置 → 开发者选项 → 无线调试』</string>
+
+    <!-- 引导页 · 特权连接状态 -->
+    <string name="setup_privilege_state_idle">未连接</string>
+    <string name="setup_privilege_state_connecting">等待握手</string>
+    <string name="setup_privilege_state_ready">已就绪（uid=%1$d）</string>
+    <string name="setup_privilege_state_error">错误：%1$s</string>
+
+    <!-- 引导页 · ADB 链路进度 -->
+    <string name="setup_privilege_step_pairing">配对中</string>
+    <string name="setup_privilege_step_connecting">连接中</string>
+    <string name="setup_privilege_step_launching">启动特权进程中</string>
+    <string name="setup_privilege_step_launched">已启动，等待交回 binder</string>
+    <string name="setup_privilege_step_failed">失败：%1$s</string>
 </resources>

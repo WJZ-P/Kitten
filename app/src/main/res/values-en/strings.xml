@@ -1,0 +1,31 @@
+<resources>
+    <!-- English. Default (Chinese) lives in values/strings.xml. -->
+
+    <string name="setup_intro">Kitten needs the permissions below to read messages and operate apps for you. You stay in control: anything sensitive is sent only after you confirm.</string>
+
+    <string name="accessibility_service_label">Kitten accessibility service</string>
+    <string name="accessibility_service_description">Lets Kitten read the current screen and tap, type, and scroll for you when you ask it to. Sensitive actions such as sending messages always require your confirmation.</string>
+    <string name="notification_listener_label">Kitten notification access</string>
+
+    <string name="status_enabled">Enabled</string>
+    <string name="status_disabled">Not enabled</string>
+    <string name="action_open_settings">Open settings</string>
+
+    <string name="setup_privilege_title">Enhanced mode (ADB, optional)</string>
+    <string name="setup_privilege_guide">The pairing code is only valid while the system pairing dialog is open — switching back to Kitten voids it. So type the code into the notification instead of returning to this page:\n\n1. Tap “Start pairing”. Kitten posts a notification you can type into and jumps to Developer options.\n2. Turn on the highlighted “Wireless debugging” → tap “Pair device with pairing code”.\n3. When the dialog appears the notification pops up. Tap “Enter pairing code” and type the 6 digits.\n4. Keep that dialog open the whole time.</string>
+    <string name="setup_privilege_status">Status: %1$s</string>
+    <string name="setup_privilege_action_pair">Start pairing</string>
+    <string name="setup_privilege_needs_notification">The pairing code goes in a notification — please allow notifications</string>
+    <string name="setup_privilege_no_developer_options">Can\'t open Developer options — go to Settings → Developer options → Wireless debugging manually</string>
+
+    <string name="setup_privilege_state_idle">Not connected</string>
+    <string name="setup_privilege_state_connecting">Waiting for handshake</string>
+    <string name="setup_privilege_state_ready">Ready (uid=%1$d)</string>
+    <string name="setup_privilege_state_error">Error: %1$s</string>
+
+    <string name="setup_privilege_step_pairing">pairing</string>
+    <string name="setup_privilege_step_connecting">connecting</string>
+    <string name="setup_privilege_step_launching">starting privileged process</string>
+    <string name="setup_privilege_step_launched">started, waiting for binder</string>
+    <string name="setup_privilege_step_failed">failed: %1$s</string>
+</resources>
