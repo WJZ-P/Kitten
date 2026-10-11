@@ -51,7 +51,21 @@ import io.github.muntashirakon.adb.AbsAdbConnectionManager;
 /** 持有 ADB 用的 RSA 密钥对和自签证书，首次生成后存到 App 私有目录，之后复用。 */
 public class KittenAdbManager extends AbsAdbConnectionManager {
 
+    private static final String PRIVATE_KEY_FILE = "adb_private.key";
+    private static final String CERTIFICATE_FILE = "adb_cert.pem";
+
     private static AbsAdbConnectionManager INSTANCE;
+
+    /**
+     * 本地是否已经有密钥对。
+     * <p>
+     * 配对的产物就是"我们的公钥进了系统的已授权列表"，而我们这边对应的凭证就是这个
+     * 密钥对。有它才值得去尝试自动连接；没有就说明从没走过配对流程，直接跳过——
+     * 否则光是 getInstance 就会白生成一对 RSA 2048，几百毫秒的 CPU 全浪费。
+     */
+    public static boolean hasKeyPair(Context context) {
+        return new File(context.getApplicationContext().getFilesDir(), PRIVATE_KEY_FILE).exists();
+    }
 
     public static AbsAdbConnectionManager getInstance(Context context) throws Exception {
         if (INSTANCE == null) {
@@ -122,7 +136,7 @@ public class KittenAdbManager extends AbsAdbConnectionManager {
 
     private static Certificate readCertificateFromFile(Context context)
             throws IOException, CertificateException {
-        File certFile = new File(context.getFilesDir(), "adb_cert.pem");
+        File certFile = new File(context.getFilesDir(), CERTIFICATE_FILE);
         if (!certFile.exists()) return null;
         try (InputStream cert = new FileInputStream(certFile)) {
             return CertificateFactory.getInstance("X.509").generateCertificate(cert);
@@ -131,7 +145,7 @@ public class KittenAdbManager extends AbsAdbConnectionManager {
 
     private static void writeCertificateToFile(Context context, Certificate certificate)
             throws CertificateEncodingException, IOException {
-        File certFile = new File(context.getFilesDir(), "adb_cert.pem");
+        File certFile = new File(context.getFilesDir(), CERTIFICATE_FILE);
         BASE64Encoder encoder = new BASE64Encoder();
         try (OutputStream os = new FileOutputStream(certFile)) {
             os.write(X509Factory.BEGIN_CERT.getBytes(StandardCharsets.UTF_8));
@@ -144,7 +158,7 @@ public class KittenAdbManager extends AbsAdbConnectionManager {
 
     private static PrivateKey readPrivateKeyFromFile(Context context)
             throws IOException, NoSuchAlgorithmException, InvalidKeySpecException {
-        File privateKeyFile = new File(context.getFilesDir(), "adb_private.key");
+        File privateKeyFile = new File(context.getFilesDir(), PRIVATE_KEY_FILE);
         if (!privateKeyFile.exists()) return null;
         byte[] privKeyBytes = new byte[(int) privateKeyFile.length()];
         try (InputStream is = new FileInputStream(privateKeyFile)) {
@@ -158,7 +172,7 @@ public class KittenAdbManager extends AbsAdbConnectionManager {
 
     private static void writePrivateKeyToFile(Context context, PrivateKey privateKey)
             throws IOException {
-        File privateKeyFile = new File(context.getFilesDir(), "adb_private.key");
+        File privateKeyFile = new File(context.getFilesDir(), PRIVATE_KEY_FILE);
         try (OutputStream os = new FileOutputStream(privateKeyFile)) {
             os.write(privateKey.getEncoded());
         }

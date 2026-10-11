@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    通知栏小图标：Kitten 猫头。
+
+    为什么不直接用 @mipmap/ic_launcher：
+    通知小图标只有 alpha 通道会被使用，系统会按状态栏前景色整体重新着色，
+    颜色信息全部丢弃。把带蓝色渐变背景的自适应图标塞进来，只会渲染成一个纯白方块。
+    所以通知图标必须单独做一份"白色剪影 + 透明底"的资源。
+
+    形状和 app 的 ic_launcher_foreground.xml 是同一只猫，路径直接复用，只改了两处：
+      1. group 的 scale 从 0.85 提到 1.55 —— 自适应图标要留安全区，猫只占画布 44%；
+         通知图标是 24dp 的小画布，必须让猫基本占满，否则缩下去就看不清了。
+      2. 嘴的描边从 2.941 加粗到 3.6 —— 原值在 24dp 下会细到几乎消失。
+    改启动图标时记得一并更新这里。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="1.55"
+        android:scaleY="1.55">
+        <path
+            android:pathData="M26,46 C26,37 29.5,28 34,26.6 C37.5,25.6 43.5,32 47,37.5 Q54,35.5 61,37.5 C64.5,32 70.5,25.6 74,26.6 C78.5,28 82,37 82,46 L82,65 A16,16 0 0,1 66,81 L42,81 A16,16 0 0,1 26,65 Z"
+            android:strokeWidth="4.706"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M40.5,51 L40.5,58 M67.5,51 L67.5,58"
+            android:strokeWidth="6.845"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round" />
+        <path
+            android:pathData="M48.25,66.5 Q51.125,71.75 54,67.75 Q56.875,71.75 59.75,66.5"
+            android:strokeWidth="3.6"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round" />
+    </group>
+</vector>

@@ -6,7 +6,27 @@
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
 
+    <!-- 配对码只能在通知里收，所以必须能发通知；配对期间 App 在后台，要靠前台服务活着。 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <application>
+
+        <!--
+            配对通知的宿主。用 specialUse 而不是 Shizuku 那样的 shortService：
+            shortService 在 API 34+ 有 3 分钟硬超时，到点不停会抛
+            ForegroundServiceDidNotStopInTimeException，而用户在设置里摸索配对弹窗
+            很可能超过 3 分钟。specialUse 没有超时，代价是上架 Play 要写理由——
+        -->
+        <service
+            android:name=".client.AdbPairingService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="adb_pairing" />
+        </service>
         <!--
             接收特权进程交回 binder 的 ContentProvider。
             用 INTERACT_ACROSS_USERS_FULL 保护：普通 App 拿不到这个权限，

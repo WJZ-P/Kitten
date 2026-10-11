@@ -1,0 +1,8 @@
+<resources>
+    <!--
+        通知的强调色。Android 12+ 会用它给小图标底下的圆形底衬上色，
+        是除图标之外让用户认出"这是 Kitten"的另一个线索。
+        取值跟 app 的 kitten_blue 一致，改品牌色时两边一起改。
+    -->
+    <color name="privilege_notification_color">#FF66CCFF</color>
+</resources>

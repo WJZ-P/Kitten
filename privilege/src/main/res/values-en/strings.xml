@@ -1,0 +1,26 @@
+<resources>
+    <!-- English. Default (Chinese) lives in values/strings.xml. -->
+
+    <string name="privilege_channel_name">ADB pairing</string>
+    <string name="privilege_channel_description">Type the wireless debugging pairing code right in the notification</string>
+
+    <string name="privilege_notif_searching_title">Waiting for the pairing dialog</string>
+    <string name="privilege_notif_searching_text">Open “Wireless debugging → Pair device with pairing code”</string>
+    <string name="privilege_notif_input_title">Pairing service found — tap below to enter the code</string>
+    <string name="privilege_notif_pairing">Pairing…</string>
+    <string name="privilege_notif_stopping">Stopping…</string>
+    <string name="privilege_notif_waiting_binder">Waiting for the privileged process to hand back its binder…</string>
+    <string name="privilege_notif_failed_title">Pairing failed</string>
+    <string name="privilege_notif_no_code">No pairing code received</string>
+    <string name="privilege_notif_ready">Enhanced mode ready (uid=%1$d)</string>
+    <string name="privilege_notif_no_binder">Privileged process started, but it never handed back its binder — check Logcat</string>
+
+    <string name="privilege_error_no_host_ip">Cannot determine this device\'s IP address</string>
+    <string name="privilege_error_pair_failed">Pairing failed — check the pairing code</string>
+    <string name="privilege_error_connect_failed">Connection failed — make sure wireless debugging is on</string>
+
+    <string name="privilege_action_input_code">Enter pairing code</string>
+    <string name="privilege_action_code_hint">6-digit code</string>
+    <string name="privilege_action_cancel">Cancel</string>
+    <string name="privilege_action_retry">Retry</string>
+</resources>

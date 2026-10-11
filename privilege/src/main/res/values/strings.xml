@@ -1,0 +1,33 @@
+<resources>
+    <!--
+        中文是默认语言；英文在 values-en/strings.xml。
+        库模块的资源会和 app 的合并进同一个命名空间，所以统一加 privilege_ 前缀防重名。
+    -->
+
+    <!-- 通知渠道 -->
+    <string name="privilege_channel_name">ADB 配对</string>
+    <string name="privilege_channel_description">在通知里直接填入无线调试的配对码</string>
+
+    <!-- 配对通知 -->
+    <string name="privilege_notif_searching_title">等待配对弹窗出现</string>
+    <string name="privilege_notif_searching_text">打开『无线调试 → 使用配对码配对设备』</string>
+    <string name="privilege_notif_input_title">已发现配对服务，点下面按钮填配对码</string>
+    <string name="privilege_notif_pairing">正在配对…</string>
+    <string name="privilege_notif_stopping">正在停止…</string>
+    <string name="privilege_notif_waiting_binder">等待特权进程交回 binder…</string>
+    <string name="privilege_notif_failed_title">配对失败</string>
+    <string name="privilege_notif_no_code">没收到配对码</string>
+    <string name="privilege_notif_ready">增强模式已就绪（uid=%1$d）</string>
+    <string name="privilege_notif_no_binder">特权进程已启动，但没等到它交回 binder，请查看 Logcat</string>
+
+    <!-- 会显示在界面上的失败原因。注意：意料之外的异常仍会直接展示异常信息，无法本地化。 -->
+    <string name="privilege_error_no_host_ip">拿不到本机 IP</string>
+    <string name="privilege_error_pair_failed">配对失败，请检查配对码</string>
+    <string name="privilege_error_connect_failed">连接失败，请确认无线调试已开启</string>
+
+    <!-- 通知上的操作按钮 -->
+    <string name="privilege_action_input_code">输入配对码</string>
+    <string name="privilege_action_code_hint">6 位配对码</string>
+    <string name="privilege_action_cancel">取消</string>
+    <string name="privilege_action_retry">重试</string>
+</resources>
