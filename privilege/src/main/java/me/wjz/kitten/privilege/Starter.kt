@@ -2,8 +2,26 @@ package me.wjz.kitten.privilege
 
 import me.wjz.kitten.privilege.ipc.PrivilegeContract
 
-/** 构造在 shell 里启动特权进程的命令。 */
+/** 构造在 shell 里执行的命令。 */
 object Starter {
+
+    /**
+     * 一次性自助授权，是整套"免手动"方案的地基。
+     *
+     * WRITE_SECURE_SETTINGS 的 protectionLevel 带 `development` 标志，所以能用
+     * `pm grant` 授给普通应用。关键在于**它授给的是 App 自己的 uid，永久有效**：
+     * 扛重启、也不需要特权进程在场。拿到之后 App 自己就能开无障碍、开通知使用权、
+     * 重新打开无线调试——于是开机后能自动把特权进程重建起来，用户再不用碰 ADB。
+     *
+     * 对比之下，INJECT_EVENTS / CAPTURE_VIDEO_OUTPUT / INTERNAL_SYSTEM_WINDOW
+     * 这些都是纯 signature 级，没有 development 标志，`pm grant` 授不了，
+     * 只能靠活着的特权进程去用。
+     *
+     * 电池白名单是附带的尽力而为项：失败也不影响主流程，所以用 `;` 串联而不是 `&&`。
+     */
+    fun buildSelfGrantCommand(packageName: String): String =
+        "pm grant $packageName android.permission.WRITE_SECURE_SETTINGS; " +
+            "cmd deviceidle whitelist +$packageName"
 
     private const val NICE_NAME = "me.wjz.kitten:privilege"
 

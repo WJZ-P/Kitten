@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import me.wjz.kitten.R
 import me.wjz.kitten.permission.PermissionStatus
+import me.wjz.kitten.permission.SelfConfigurator
 import me.wjz.kitten.privilege.client.WirelessDebugController
 import me.wjz.kitten.ui.theme.KittenTheme
 
@@ -38,6 +39,9 @@ fun SetupScreen(
     var status by remember { mutableStateOf(PermissionStatus.read(context)) }
 
     LifecycleResumeEffect(context) {
+        // 拿到 WRITE_SECURE_SETTINGS 之后，无障碍和通知使用权由 Kitten 自己开。
+        // 放在读取状态之前，这样下面读到的就是刚配好的结果。
+        SelfConfigurator.applyAll(context)
         status = PermissionStatus.read(context)
         // 配对过之后就不该再让用户点按钮连接了。放在"回到前台"而不是"首次进入"，
         // 是因为重启后无线调试默认关着：用户去设置里打开再切回来，这里正好接上。

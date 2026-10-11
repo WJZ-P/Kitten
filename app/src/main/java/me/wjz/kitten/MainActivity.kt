@@ -3,7 +3,6 @@ package me.wjz.kitten
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
@@ -55,8 +54,8 @@ class MainActivity : ComponentActivity(), SetupActions {
     }
 
     override fun startPairing() {
-        val needsPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+        // POST_NOTIFICATIONS 是 API 33 引入的运行时权限，minSdk 就是 33，不用再判版本。
+        val needsPermission = checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         if (needsPermission) {
             // 授权结果回来后再继续，见 notificationPermissionLauncher。
