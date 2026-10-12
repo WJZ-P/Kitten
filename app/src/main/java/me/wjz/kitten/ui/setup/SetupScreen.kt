@@ -1,5 +1,7 @@
 package me.wjz.kitten.ui.setup
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -63,6 +65,8 @@ private fun SetupContent(
     Column(
         modifier = modifier
             .fillMaxSize()
+            // 内容已经超过一屏，不滚动的话底部的卡片会被直接截断。
+            .verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp, vertical = 32.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
@@ -85,6 +89,8 @@ private fun SetupContent(
             onOpenSettings = actions::openNotificationListenerSettings,
         )
         PrivilegeCard(onStartPairing = actions::startPairing)
+        // 临时：验证副屏可用性，验完连同 DebugCard.kt 一起删。
+        DebugCard()
     }
 }
 
