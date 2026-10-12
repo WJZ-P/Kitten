@@ -123,12 +123,18 @@ object SelfConfigurator {
     /**
      * 打开无线调试。
      *
-     * 只在开机恢复流程里调用，不放进 [applyAll]：无线调试常开会多出一个对外端口，
-     * 对要分发的 App 来说是实打实的攻击面，需要时再开更稳妥。重启后系统会把它关掉，
-     * 所以每次开机都要重新打开一次，否则 mDNS 根本发现不了连接端口。
+     * **只在开机恢复流程里调用**，不要放进 [applyAll]。两个原因：
      *
-     * 这里会**回读确认**。部分 ROM（尤其 MIUI / HyperOS）改过开发者选项，有可能
-     * 只是收下了这个值、却没真的启动 adbd 的监听，回读能第一时间暴露出来。
+     * 1. 无线调试常开会多出一个对外端口，对要分发的 App 是实打实的攻击面。
+     * 2. 更要命的是，写这类设置会触发 `AdbService.setAdbEnabled()`，**adbd 会整个重启**，
+     *    所有 ADB 连接当场被掐断——包括开发者正在用的那条。实测踩过：Android Studio
+     *    的安装在传输途中被打断，装不上去却又没有明显报错，排查了很久。
+     *
+     * 所以这里只写 `adb_wifi_enabled`，**绝不碰 `ADB_ENABLED`**——USB 调试开不开是
+     * 用户自己的事，和我们无关，动它纯属越界。
+     *
+     * 回读是为了确认：部分 ROM（尤其 MIUI / HyperOS）改过开发者选项，可能只是收下了
+     * 这个值却没真的启动 adbd 的监听。
      */
     fun enableWirelessDebugging(context: Context): Boolean {
         if (!hasPermission(context)) {
@@ -136,14 +142,12 @@ object SelfConfigurator {
             return false
         }
         val before = readGlobal(context, ADB_WIFI_ENABLED)
-        putGlobal(context, Settings.Global.ADB_ENABLED, "1")
         putGlobal(context, ADB_WIFI_ENABLED, "1")
-        val adb = readGlobal(context, Settings.Global.ADB_ENABLED)
-        val wifi = readGlobal(context, ADB_WIFI_ENABLED)
-        val ok = wifi == "1"
+        val after = readGlobal(context, ADB_WIFI_ENABLED)
+        val ok = after == "1"
         Log.i(
             TAG,
-            "打开无线调试：adb_wifi_enabled $before -> $wifi，adb_enabled=$adb，" +
+            "打开无线调试：adb_wifi_enabled $before -> $after，" +
                 if (ok) "回读正常" else "回读异常，这个 ROM 可能不认这个设置项",
         )
         return ok
@@ -171,8 +175,21 @@ object SelfConfigurator {
             .onFailure { Log.e(TAG, "写入 Secure.$key 失败", it) }
             .getOrDefault(false)
 
-    private fun putGlobal(context: Context, key: String, value: String): Boolean =
-        runCatching { Settings.Global.putString(context.contentResolver, key, value) }
+    /**
+     * 写 Global 设置，**值没变就不写**。
+     *
+     * 这不是省事，是必需：SettingsProvider 的 observer 认的是"写入"这个动作，
+     * 不是"值发生了变化"。拿 adb 相关的设置来说，哪怕写进去的值和原来一模一样，
+     * 也会触发 `AdbService.setAdbEnabled()` 把 adbd 重启一遍，顺带掐断所有
+     * 现存的 ADB 连接。而 [applyAll] 每次回到前台都会跑。
+     */
+    private fun putGlobal(context: Context, key: String, value: String): Boolean {
+        if (readGlobal(context, key) == value) {
+            Log.d(TAG, "Global.$key 已经是 $value，跳过写入")
+            return true
+        }
+        return runCatching { Settings.Global.putString(context.contentResolver, key, value) }
             .onFailure { Log.e(TAG, "写入 Global.$key 失败", it) }
             .getOrDefault(false)
+    }
 }
