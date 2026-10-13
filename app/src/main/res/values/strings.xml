@@ -8,6 +8,8 @@
     <!-- 系统服务，名称会显示在系统设置里 -->
     <string name="accessibility_service_label">Kitten 无障碍服务</string>
     <string name="accessibility_service_description">让 Kitten 在你吩咐时读取当前屏幕，并帮你点击、输入和滑动。发送消息等敏感操作始终需要你确认。</string>
+    <!-- summary 显示在系统设置的服务名下方，一行就够，详细说明走 description。 -->
+    <string name="accessibility_service_summary">读取屏幕内容并代你操作</string>
     <string name="notification_listener_label">Kitten 通知使用权</string>
 
     <!-- 通用 -->

@@ -5,6 +5,7 @@
 
     <string name="accessibility_service_label">Kitten accessibility service</string>
     <string name="accessibility_service_description">Lets Kitten read the current screen and tap, type, and scroll for you when you ask it to. Sensitive actions such as sending messages always require your confirmation.</string>
+    <string name="accessibility_service_summary">Reads the screen and acts on your behalf</string>
     <string name="notification_listener_label">Kitten notification access</string>
 
     <string name="status_enabled">Enabled</string>

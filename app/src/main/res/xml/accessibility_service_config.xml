@@ -1,9 +1,57 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+    无障碍是 Kitten 读取屏幕的唯一通道。
+
+    实测过的另外两条路都走不通：
+    - `dumpsys activity top` 有完整 View 树，但 TextView.toString() 不输出文本
+      （AOSP 的隐私设计），对看不见画面的模型等于没有内容；
+    - `uiautomator dump` 底层也是无障碍，而且注册 UiAutomation 时 flags=0x0，
+      会把其它无障碍服务整个挂起——每 dump 一次我们自己的服务就被断开重连一次；
+      它还写死了 DEFAULT_DISPLAY，副屏读不到。
+
+    所以能读到多少，全看下面这几个开关。逐项说明：
+
+    accessibilityEventTypes
+        只订阅窗口变化两类，不用 typeAllMask。要分清的是：事件类型只决定"系统回调
+        我们多少次"，**不决定我们能读到什么**——能读到多少节点由 canRetrieveWindowContent
+        和 accessibilityFlags 决定，和这里无关。Kitten 的感知是快照式的（模型要的时候
+        才去抓一次树），不靠事件流驱动，而 typeAllMask 会把 typeViewScrolled、
+        typeViewTextChanged 这类高频事件全量推过来，每条都是一次跨进程回调，对常驻
+        服务是纯粹的负担。将来真需要哪类，再按需加哪类。
+
+    flagIncludeNotImportantViews
+        这里最关键的一个。不加它，凡是被标成 importantForAccessibility="no"（或被系统
+        判定为不重要）的 View，**连同它整棵子树**都不会出现在节点树里。应用里大量布局
+        容器都是这种，缺了它拿到的树会凭空少掉一整块，模型没法理解页面结构。
+
+    flagReportViewIds
+        带上 viewIdResourceName，节点才有稳定的身份可供回指。
+
+    flagRetrieveInteractiveWindows
+        能拿到所有可交互窗口（含弹窗、输入法），而不只是当前聚焦的那个。
+
+    isAccessibilityTool
+        声明这是无障碍工具类服务（API 30+），系统据此把它归到设置里的工具分组。
+        Kitten 确实是靠无障碍 API 代替用户操作界面的工具，如实声明。
+
+    有三类属性是刻意不加的：
+    - canRequestTouchExplorationMode：触摸探索是给视障用户的交互模式，一旦启用，
+      单指触摸变成"朗读探索"、要双击才能激活控件，整台手机的操作方式都会变。
+      Kitten 不需要它也能读节点和执行手势，加了只会把用户的手机弄难用。
+    - canRequestFilterKeyEvents：拦截物理按键，Kitten 用不到，且要用户额外授权。
+    - flagRequestEnhancedWebAccessibility / canRequestEnhancedWebAccessibility：
+      API 26 起已废弃且无实际作用，现在 WebView 的无障碍是自动的。
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+    android:accessibilityFlags="flagIncludeNotImportantViews|flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
+    android:isAccessibilityTool="true"
+    android:settingsActivity="me.wjz.kitten.MainActivity"
     android:description="@string/accessibility_service_description"
-    android:notificationTimeout="100" />
+    android:summary="@string/accessibility_service_summary"
+    android:notificationTimeout="100"
+    tools:ignore="AccessibilityPolicy" />
