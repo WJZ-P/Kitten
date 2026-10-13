@@ -1,5 +1,6 @@
 package me.wjz.kitten.ui.setup
 
+import android.util.Log
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +37,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import me.wjz.kitten.a11y.ScreenReader
 import me.wjz.kitten.privilege.PrivilegeManager
 import me.wjz.kitten.privilege.PrivilegeState
 import me.wjz.kitten.privilege.VirtualDisplayManager
@@ -90,6 +92,32 @@ fun DebugCard(modifier: Modifier = Modifier) {
                 "失败，看 KittenPrivDisplay / KittenPrivLauncher 日志"
             } else {
                 "成功：displayId=$id（屏幕不可见，用 dumpsys 或无障碍日志确认）"
+            }
+        }
+    }
+
+    /**
+     * 抓副屏的节点树，完整内容打到 logcat。
+     *
+     * 不往界面上显示：一个真实页面几百个节点，几万字符，塞进 Card 里既看不清也滚不动。
+     * 界面上只留一行统计，细节去 `logcat -s KittenNodeDump` 看。
+     */
+    fun dumpNodes() {
+        result = "抓取中…"
+        scope.launch {
+            // 节点遍历是成百上千次阻塞的跨进程调用，绝不能放主线程。
+            val snapshot = withContext(Dispatchers.IO) { ScreenReader.capture(displayId) }
+            result = if (snapshot == null) {
+                "抓取失败：无障碍服务没就绪"
+            } else {
+                // Logcat 单条有长度上限，整棵树会被截断，所以按行分批打。
+                Log.i(DUMP_TAG, "==== 副屏 $displayId 节点树开始 ====")
+                snapshot.toDebugString().lineSequence().forEach { Log.i(DUMP_TAG, it) }
+                Log.i(DUMP_TAG, "==== 副屏 $displayId 节点树结束 ====")
+                "已抓取：${snapshot.windows.size} 窗口 / ${snapshot.nodeCount} 节点 / " +
+                    "${snapshot.elapsedMillis}ms" +
+                    (if (snapshot.truncated) "（已截断）" else "") +
+                    "，详见 logcat -s $DUMP_TAG"
             }
         }
     }
@@ -159,6 +187,16 @@ fun DebugCard(modifier: Modifier = Modifier) {
                 }
             }
             val hasDisplay = displayId != VirtualDisplayManager.INVALID_DISPLAY_ID
+
+            // 抓的是副屏，所以得先有副屏。主屏抓取走 ScreenReader.capture() 不传参即可。
+            Button(
+                onClick = { dumpNodes() },
+                enabled = hasDisplay,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(if (hasDisplay) "抓取副屏节点树（display=$displayId）" else "抓取副屏节点树（先拉起应用）")
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -264,3 +302,6 @@ private val TARGET_APPS = listOf(
 )
 private const val WIDTH = 1080
 private const val HEIGHT = 1920
+
+/** 节点树单独一个 tag，免得被链路日志淹掉：`adb logcat -s KittenNodeDump`。 */
+private const val DUMP_TAG = "KittenNodeDump"
