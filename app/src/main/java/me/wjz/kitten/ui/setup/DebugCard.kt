@@ -30,6 +30,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Dispatchers
@@ -44,8 +45,10 @@ import me.wjz.kitten.privilege.VirtualDisplayManager
  *
  * **这是一次性的验证工具，验完就删**，所以文案直接硬编码、没走 strings 资源。
  *
- * 要验证的是我们自己创建的**非 trusted** 副屏。之前用 `overlay_display_devices`
- * 测过的那块屏是系统造的、带 FLAG_TRUSTED，属于最理想情况，不能代表这里。
+ * 副屏现在是 trusted 的，和当初拿 `overlay_display_devices` 测的那块屏在
+ * `isCallerAllowedToLaunchOnDisplay` 的判断上等价，所以那批结论这里也成立。
+ * 重点看**应用内部的 Activity 跳转还会不会被退回主屏**——淘宝、QQ 这种带
+ * splash 的最容易暴露问题，单 Activity 的计算器看不出来。
  *
  * 两个按钮的区别（真机实测过的行为差异）：
  * - 共用实例：目标应用已经在主屏开着时，系统会把它整个 task **搬**到副屏，
@@ -59,6 +62,8 @@ import me.wjz.kitten.privilege.VirtualDisplayManager
 fun DebugCard(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val state by PrivilegeManager.state.collectAsState()
+    // 副屏的 density 必须跟主屏一致，不能写死（见 VirtualDisplayManager 的类注释）。
+    val density = LocalContext.current.resources.displayMetrics.densityDpi
     var displayId by remember { mutableIntStateOf(VirtualDisplayManager.INVALID_DISPLAY_ID) }
     var result by remember { mutableStateOf("尚未操作") }
     var previewing by remember { mutableStateOf(false) }
@@ -76,7 +81,7 @@ fun DebugCard(modifier: Modifier = Modifier) {
                     packageName = target.packageName,
                     width = WIDTH,
                     height = HEIGHT,
-                    densityDpi = DENSITY,
+                    densityDpi = density,
                     forceNewInstance = forceNewInstance,
                 )
             }
@@ -259,4 +264,3 @@ private val TARGET_APPS = listOf(
 )
 private const val WIDTH = 1080
 private const val HEIGHT = 1920
-private const val DENSITY = 320

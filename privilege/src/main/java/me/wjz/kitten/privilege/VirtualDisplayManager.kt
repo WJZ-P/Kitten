@@ -20,11 +20,37 @@ import android.view.Surface
  * 真正独立的实例（独立数据、独立登录）只能靠多用户或应用分身，那是另一个 uid，
  * 不在这套机制的能力范围内。
  *
+ * ## densityDpi 必须跟主屏一致
+ *
+ * 建副屏时传 `context.resources.displayMetrics.densityDpi`，**不要写死**。
+ *
+ * 原因是应用侧的：App 的 Application Configuration 跟着"当前主要的 display"走，
+ * 在副屏上起一个 Activity 会触发 `Application.onConfigurationChanged`，
+ * 而其中的 `densityDpi` 就是副屏的值。不少应用把这个变化当成"用户在系统设置里
+ * 改了显示大小"，进而做激烈处理。
+ *
+ * 实测 QQ（主屏 480dpi，副屏给 320dpi）：
+ *
+ * ```
+ * GlobalDisplayMetricsManager.checkChangeOfSysDensity(...)
+ *   ← BaseApplicationImpl.onConfigurationChanged(...)
+ *   ← ActivityThread.handleLaunchActivity(...)
+ * → GlobalDisplayMetricsManager.killProcess(...) → SIG: 9
+ * ```
+ *
+ * 它直接把自己整个进程 SIGKILL 了。进程一死，它名下**所有** Activity 都会被判
+ * `proc died without state saved` 强制 finish——不只是副屏上新建的那个，连用户
+ * 正在主屏用的那个 task 也一起没，副屏则因为没有壁纸兜底而变成纯黑。
+ *
+ * 同样条件下把副屏 density 改成 480，QQ 就安然无恙。宽高不一致没有这个问题，
+ * 多屏本来尺寸就可以不同；density 才是会被误读成"系统设置变了"的那个。
+ *
  * ## 这块副屏是"裸"的
  *
- * 我们拿不到 `ADD_TRUSTED_DISPLAY`（protectionLevel 为 `signature|role`，三个持有它的
- * role 全是 systemOnly），所以创建出来的屏没有系统装饰：**没有桌面、没有导航栏、
- * 没有输入法**。只能用 [launchApp] 直接把目标应用扔上去。
+ * 屏上没有系统装饰：**没有桌面、没有导航栏、没有输入法**，只能用 [launchApp]
+ * 直接把目标应用扔上去。这是我们**没加** `SHOULD_SHOW_SYSTEM_DECORATIONS` 的结果，
+ * 不是能力不足——它的前提 `TRUSTED` 已经拿到了（见 `VirtualDisplayHost` 的类注释），
+ * 以后要让副屏能弹输入法，把那个 flag 补上就行。
  */
 object VirtualDisplayManager {
 

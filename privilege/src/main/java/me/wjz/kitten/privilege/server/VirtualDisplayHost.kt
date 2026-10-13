@@ -14,18 +14,48 @@ import java.util.concurrent.ConcurrentHashMap
  * 为什么由特权进程持有：虚拟屏幕的生命周期绑在创建者身上，创建者进程一死屏幕立刻消失。
  * 特权进程常驻、比 App 进程稳定得多，放这里副屏才活得住。
  *
- * **拿不到 TRUSTED 标志**。`ADD_TRUSTED_DISPLAY` 的 protectionLevel 是 `signature|role`，
- * 三个持有它的 role 全是 systemOnly，shell 身份也没有。后果是系统会剥掉
- * `SHOULD_SHOW_SYSTEM_DECORATIONS`，这块屏上**没有桌面、没有导航栏、没有输入法**——
- * 只能用 [AppLauncher] 直接把目标应用扔上去，没法让用户在上面自己点。
+ * ## 为什么必须是 trusted display
  *
- * 好在往非 trusted 屏上启动任意应用是可以的：`isCallerAllowedToLaunchOnDisplay` 里
- * `INTERNAL_SYSTEM_WINDOW` 的判断排在 trusted 检查之前，而 shell 持有这个权限。
+ * 一块屏是不是 trusted，决定了**应用自己**能不能在上面启动 Activity。
+ * `ActivityTaskSupervisor.isCallerAllowedToLaunchOnDisplay` 里：
+ *
+ * ```java
+ * if (!display.isTrusted()) {
+ *     if ((aInfo.flags & FLAG_ALLOW_EMBEDDED) == 0) return false;  // 挡住绝大多数应用
+ *     ...
+ * }
+ * ```
+ *
+ * 我们自己调 `am start` 不受影响——shell 持有 `INTERNAL_SYSTEM_WINDOW`，在上面那段之前
+ * 就直接放行了。但应用的**第一个 Activity 跳到第二个**时，发起方变成了应用自己，
+ * 它既没有 `INTERNAL_SYSTEM_WINDOW`，目标 Activity 也几乎不会声明
+ * `android:allowEmbedded="true"`，于是被判 false，系统把它退回主屏。
+ *
+ * 实测现象（淘宝，非 trusted 屏）：`Welcome` 正确落在副屏，1 秒后跳 `TBMainActivity` 时
+ * logcat 打出 `disallow launch on virtual display for not-embedded activity`，主页跑去了主屏。
+ * 对只有一个 Activity 的应用（计算器）看不出问题，一旦有 splash 跳转就露馅。
+ *
+ * ## TRUSTED 能拿到
+ *
+ * `ADD_TRUSTED_DISPLAY` 的 protectionLevel 是 `signature|role`，Kitten 自己的 uid 确实拿不到，
+ * 但特权进程跑在 uid 2000 / `com.android.shell` 下，而它**已经被授予了这个权限**
+ * （`dumpsys package com.android.shell` 可见 `granted=true`）。
+ * 服务端只校验这一个权限（`DisplayManagerService.createVirtualDisplayInternal`），所以通得过。
+ *
+ * 仍然做降级：定制 ROM 可能删掉 shell 的这条授权，拿不到就退回非 trusted——
+ * 单 Activity 的应用照旧能用，总比整个功能挂掉好。
  */
 internal object VirtualDisplayHost {
 
     private const val TAG = "KittenPrivDisplay"
     private const val DISPLAY_NAME = "KittenVirtualDisplay"
+
+    /**
+     * `DisplayManager.VIRTUAL_DISPLAY_FLAG_TRUSTED`。
+     *
+     * 它是 `@SystemApi @hide`，编译期取不到，只能写字面量。值从 Android 10 引入起没变过。
+     */
+    private const val FLAG_TRUSTED = 1 shl 10   //  所以这个其实是API里面没有暴露的，写的一个魔法数
 
     /**
      * 画面缓冲区的张数。
@@ -54,6 +84,18 @@ internal object VirtualDisplayHost {
             Log.e(TAG, "副屏参数不合法：${width}x$height @${densityDpi}dpi")
             return INVALID_DISPLAY_ID
         }
+        // density 和主屏不一致是个很难自己查出来的坑：应用会在 onConfigurationChanged 里
+        // 看到 densityDpi 变化，有的（实测 QQ）直接把自己的进程 SIGKILL 掉，连带主屏上
+        // 正在用的 task 一起消失。不拦，只是把话说在日志里——宽高不一致倒是没关系。
+        val mainDensity = runCatching { context.resources.configuration.densityDpi }.getOrNull()
+        if (mainDensity != null && mainDensity != densityDpi) {
+            Log.w(
+                TAG,
+                "副屏 density=$densityDpi 与主屏 $mainDensity 不一致。部分应用会把这当成" +
+                    "系统显示设置被改动，进而杀掉自己的进程（连带主屏的 task 一起消失）。" +
+                    "建议传 context.resources.displayMetrics.densityDpi",
+            )
+        }
         return runCatching {
             val displayManager = context.getSystemService(DisplayManager::class.java)
                 ?: error("取不到 DisplayManager")
@@ -65,27 +107,54 @@ internal object VirtualDisplayHost {
             )
             // PUBLIC：别的应用的 Activity 才能被放到这块屏上。
             // OWN_CONTENT_ONLY：只显示扔上来的内容，不镜像主屏。
-            // 不加 TRUSTED —— 加了会因为缺 ADD_TRUSTED_DISPLAY 直接抛 SecurityException。
-            val flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
+            val baseFlags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
-            val display = displayManager.createVirtualDisplay(
-                DISPLAY_NAME,
-                width,
-                height,
-                densityDpi,
-                reader.surface,
-                flags,
-            ) ?: error("createVirtualDisplay 返回 null")
+
+            // 先按 trusted 建，这是应用内部跳转能留在副屏的前提（见类注释）。
+            var trusted = true
+            val display = runCatching {
+                newDisplay(displayManager, width, height, densityDpi, reader, baseFlags or FLAG_TRUSTED)
+            }.getOrElse { error ->
+                trusted = false
+                Log.w(
+                    TAG,
+                    "建 trusted 副屏失败，退回普通副屏：这个 ROM 大概没给 com.android.shell " +
+                        "授予 ADD_TRUSTED_DISPLAY。后果是应用内部跳转会被退回主屏，" +
+                        "只有单 Activity 的应用能正常用",
+                    error,
+                )
+                newDisplay(displayManager, width, height, densityDpi, reader, baseFlags)
+            }
 
             val id = display.display.displayId
             holders[id] = Holder(display, reader)
-            Log.i(TAG, "副屏已创建：displayId=$id ${width}x$height @${densityDpi}dpi")
+            Log.i(
+                TAG,
+                "副屏已创建：displayId=$id ${width}x$height @${densityDpi}dpi " +
+                    "trusted=$trusted",
+            )
             id
         }.getOrElse {
             Log.e(TAG, "创建副屏失败", it)
             INVALID_DISPLAY_ID
         }
     }
+
+    private fun newDisplay(
+        displayManager: DisplayManager,
+        width: Int,
+        height: Int,
+        densityDpi: Int,
+        reader: ImageReader,
+        flags: Int,
+    ): VirtualDisplay = displayManager.createVirtualDisplay(
+        DISPLAY_NAME,
+        width,
+        height,
+        densityDpi,
+        reader.surface,
+        flags,
+    ) ?: error("createVirtualDisplay 返回 null，flags=$flags")
 
     /**
      * 切换副屏的渲染目标，从而控制它是否可见。
