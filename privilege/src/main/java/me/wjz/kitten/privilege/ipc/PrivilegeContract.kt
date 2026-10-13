@@ -26,6 +26,19 @@ object PrivilegeContract {
     /** 特权进程的入口类，由 app_process 启动。 */
     const val SERVER_MAIN_CLASS = "me.wjz.kitten.privilege.server.ServerMain"
 
-    /** 协议版本，App 更新后与特权进程核对是否一致。 */
-    const val PROTOCOL_VERSION = 1
+    /**
+     * 特权侧代码的版本号。**改动任何跑在特权进程里的代码，就把它 +1。**
+     *
+     * 为什么需要它：特权进程是 `app_process` 拉起来的常驻进程，**不随 App 更新而重启**。
+     * 装上新版 App 后，旧特权进程往往还活着，而且继续执行旧 dex——
+     * 此时 [me.wjz.kitten.privilege.PrivilegeManager.state] 显示的是 Ready，
+     * 看起来一切正常，实际调过去的全是老逻辑。
+     *
+     * 实际踩过：改完 `VirtualDisplayHost` 的 TRUSTED flag，装了新包、重测了好几遍，
+     * 行为却一点没变，最后是靠"新加的日志字段没出现"才发现跑的是旧代码。
+     *
+     * 有了这个号，App 每次连上都会核对一次，不一致就把特权进程重新拉起
+     * （见 [me.wjz.kitten.privilege.PrivilegeManager.isStale]）。
+     */
+    const val PROTOCOL_VERSION = 2
 }

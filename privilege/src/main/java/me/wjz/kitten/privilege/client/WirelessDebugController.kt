@@ -95,8 +95,11 @@ class WirelessDebugController private constructor(private val appContext: Contex
      * 否则系统可能在连接完成前就把进程回收了。
      */
     suspend fun autoConnect() {
-        if (PrivilegeManager.state.value is PrivilegeState.Ready) {
-            Log.d(TAG, "特权进程已就绪，无需自动连接")
+        // 已就绪也要核一下版本：特权进程不随 App 更新重启，装了新包之后它可能
+        // 还在跑旧 dex。isStale() 为真就往下走，connectAndLaunchInternal 里的
+        // pkill 会把旧进程换掉。
+        if (PrivilegeManager.state.value is PrivilegeState.Ready && !PrivilegeManager.isStale()) {
+            Log.d(TAG, "特权进程已就绪且版本一致，无需自动连接")
             return
         }
         if (!KittenAdbManager.hasKeyPair(appContext)) {

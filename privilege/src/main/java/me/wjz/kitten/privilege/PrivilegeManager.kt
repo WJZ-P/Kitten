@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import me.wjz.kitten.privilege.ipc.IPrivilegeService
+import me.wjz.kitten.privilege.ipc.PrivilegeContract
 import java.util.UUID
 
 /**
@@ -63,6 +64,20 @@ object PrivilegeManager {
             return false
         }
         try {
+            val proxy = IPrivilegeService.Stub.asInterface(binder)
+            val uid = proxy.uid
+            val version = proxy.version
+
+            // 版本核对放在 linkToDeath 之前：拒绝的话就当这条连接从没存在过，
+            // 不用再去 unlink。拒绝后特权进程会收到否定回执并自行退出（见 BinderSender），
+            // 紧接着的 autoConnect 会拉起一个版本正确的。
+            val expectedVersion = PrivilegeContract.PROTOCOL_VERSION
+            if (version != expectedVersion) {
+                Log.w(TAG, "特权进程版本不符：它是 $version，App 要的是 $expectedVersion，拒绝这个 binder")
+                _state.value = PrivilegeState.Error("特权进程版本不符（$version ≠ $expectedVersion）")
+                return false
+            }
+
             // 每条连接一个 recipient：Starter 每次启动前会 pkill 掉上一个特权进程，
             // 旧进程的死讯可能晚于新进程的 Ready 才到，不能让它把新状态冲掉。
             val recipient = IBinder.DeathRecipient {
@@ -76,9 +91,6 @@ object PrivilegeManager {
                 }
             }
             binder.linkToDeath(recipient, 0)
-            val proxy = IPrivilegeService.Stub.asInterface(binder)
-            val uid = proxy.uid
-            val version = proxy.version
             currentBinder = binder
             service = proxy
             _state.value = PrivilegeState.Ready(uid)
@@ -95,6 +107,34 @@ object PrivilegeManager {
 
     /** 已连接时返回特权服务代理，否则 null。 */
     fun get(): IPrivilegeService? = service
+
+    /**
+     * 当前连着的特权进程是不是在跑旧代码。
+     *
+     * 握手时的那道校验挡不住这种情况：特权进程**不随 App 更新而重启**，
+     * App 装了新版、而旧进程还活着时，它根本不会再交回一次 binder，
+     * 于是 [state] 一直停在 Ready，没有任何地方会去复核。所以需要主动问一次。
+     *
+     * 这是个同步 binder 调用，别放主线程。
+     *
+     * @return true 表示该把特权进程重新拉起了。没有连接时返回 false——
+     *         没连上就谈不上新旧，该不该拉起由 [state] 说。
+     */
+    fun isStale(): Boolean {
+        val proxy = service ?: return false
+        val expected = PrivilegeContract.PROTOCOL_VERSION
+        val actual = try {
+            proxy.version
+        } catch (t: Throwable) {
+            // 进程已经死了但死讯还没到，binder 调用会抛 DeadObjectException。
+            // 这种连接本来就该重建，和版本不符一样处理。
+            Log.w(TAG, "问不出特权进程的版本，当作需要重新拉起", t)
+            return true
+        }
+        if (actual == expected) return false
+        Log.i(TAG, "特权进程跑的是旧代码：它 version=$actual，App 要 version=$expected，需要重新拉起")
+        return true
+    }
 
     /** 主动停止特权进程。 */
     fun stop() {
