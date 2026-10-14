@@ -63,6 +63,19 @@ data class UiNode(
     val checked: Boolean,
     val selected: Boolean,
     val focused: Boolean,
+
+    /**
+     * 当前是否可用。**动作层执行前必须检查它。**
+     *
+     * 视觉状态和实际可用性可以完全不一致：QQ 聊天页输入框为空时，发送按钮看着是
+     * 正常的蓝色、一点没置灰，节点树里却是 `enabled=false`。
+     *
+     * ```
+     * [132] Button label="发送" id=send_btn {click,disabled}
+     * ```
+     *
+     * 这是节点树相对截图不可替代的地方——只看画面的话会点下去然后以为发出去了。
+     */
     val enabled: Boolean,
 
     /**
