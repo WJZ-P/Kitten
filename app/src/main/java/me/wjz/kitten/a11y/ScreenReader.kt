@@ -90,11 +90,15 @@ object ScreenReader {
      * 抓取指定屏幕上的所有窗口和节点。
      *
      * @param displayId 要抓哪块屏。默认主屏；副屏传 `VirtualDisplayManager` 给的 displayId。
+     * @param scope 保留到什么程度，默认 [CaptureScope.ALL]——默认值不做有损变换，
+     *        排查问题时第一步看到的就该是全貌。给模型用的是 [CaptureScope.INTERACTIVE]，
+     *        由上层显式指定，别改这里的默认值。
      * @param maxNodes 本次最多抓多少节点，用于给慢页面兜底。
      * @return 无障碍服务没就绪时返回 null。那和"屏幕上没东西"是两回事，所以不返回空快照。
      */
     fun capture(
         displayId: Int = Display.DEFAULT_DISPLAY,
+        scope: CaptureScope = CaptureScope.ALL,
         maxNodes: Int = MAX_NODES,
     ): UiSnapshot? {
         val service = service ?: run {
@@ -114,17 +118,24 @@ object ScreenReader {
             .sortedByDescending { it.layer }
             .map { readWindow(it, displayId, budget) }
 
+        // 先抓全树再裁剪，而不是边抓边滤：跨进程的遍历开销省不掉——要判断一个节点
+        // 可不可见、能不能点，本来就得先把它读过来。而 INTERACTIVE 还要聚合子树的
+        // 文本，更是非得有完整子树不可。裁剪是本地的纯数据变换，几乎不花时间。
         val snapshot = UiSnapshot(
             displayId = displayId,
+            scope = CaptureScope.ALL,
+            rawNodeCount = budget.used,
             capturedAtMillis = startedAtWall,
             elapsedMillis = SystemClock.elapsedRealtime() - startedAt,
             windows = snapshots,
             nodeCount = budget.used,
             truncated = budget.truncated,
-        )
+        ).filter(scope)
+
         Log.i(
             TAG,
-            "抓取完成：display=$displayId 窗口=${snapshots.size} 节点=${snapshot.nodeCount} " +
+            "抓取完成：display=$displayId scope=$scope 窗口=${snapshot.windows.size} " +
+                "节点=${snapshot.nodeCount}/${snapshot.rawNodeCount} " +
                 "耗时=${snapshot.elapsedMillis}ms 应用=${snapshot.packageName ?: "?"}" +
                 if (snapshot.truncated) " 已截断(上限 $maxNodes)" else "",
         )
@@ -137,8 +148,10 @@ object ScreenReader {
      * 比 [capture] 轻，但会丢掉输入法和弹窗——正好挡在用户面前的对话框往往是独立
      * 窗口，需要完整上下文时还是用 [capture]。
      */
-    fun captureActiveWindow(displayId: Int = Display.DEFAULT_DISPLAY): UiWindow? =
-        capture(displayId)?.activeWindow
+    fun captureActiveWindow(
+        displayId: Int = Display.DEFAULT_DISPLAY,
+        scope: CaptureScope = CaptureScope.ALL,
+    ): UiWindow? = capture(displayId, scope)?.activeWindow
 
     /**
      * 取某块屏上的窗口。
@@ -179,7 +192,7 @@ object ScreenReader {
             focused = window.isFocused,
             layer = window.layer,
             bounds = bounds,
-            root = tree,
+            roots = listOfNotNull(tree),
         )
     }
 
@@ -251,6 +264,8 @@ object ScreenReader {
             password = node.isPassword,
             visibleToUser = node.isVisibleToUser,
             childCount = childCount,
+            // 只在这里判定一次。过滤阶段原样带着走，不重算——否则裁剪会被误报成截断。
+            childrenTruncated = children.size < childCount,
             children = children,
         )
     }

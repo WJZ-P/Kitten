@@ -91,11 +91,43 @@ data class UiNode(
      */
     val childCount: Int,
 
+    /**
+     * **抓取时**有没有因为撞上限而没把子节点抄全。
+     *
+     * 必须是抓取阶段定下的事实，不能用 `children.size < childCount` 现算：
+     * [CaptureScope] 的过滤会主动裁掉子节点，现算的话会把"我有意砍掉的"误报成
+     * "没抄全"。真机实测过——QQ 那页 235 个节点离上限差得远，ALL 档一个截断都没有，
+     * 过滤后却冒出 29 个假截断，模型会以为页面上还藏着东西。
+     */
+    val childrenTruncated: Boolean,
+
     val children: List<UiNode>,
+
+    /**
+     * 从子树聚合上来的可读标签，抓取阶段恒为 null，只有 [CaptureScope.INTERACTIVE] 会填。
+     *
+     * 为什么需要它：**可交互的是容器，有文本的是它的子节点**。真机实测微信聊天列表，
+     * 12 个可见且可交互的节点里，自己带文本的是 0 个：
+     *
+     * ```
+     * [196] LinearLayout id=cj1 {click,longClick}      ← 可点，但自己没有任何文本
+     *   [204] View text="Kitten"                        ← 文本都在子节点上
+     *   [205] TextView text="昨天"
+     *   [208] View text="Miss you!"
+     * ```
+     *
+     * 所以"只返回可交互节点"如果直接照做，给模型的就是 8 个一模一样的 `cj1` 空壳，
+     * 它根本分不出哪个是"Kitten"哪个是"公众号"。必须把子树的文本收上来，变成
+     * `Kitten · 昨天 · 测试123。`，这个模式才有意义。
+     */
+    val label: String? = null,
 ) {
-    /** 子节点有没有因为撞上限而没抄全。 */
-    val childrenTruncated: Boolean
-        get() = children.size < childCount
+    /** 给人看的最佳名称：优先用聚合标签，其次是节点自己的文本。 */
+    val displayLabel: String?
+        get() = label?.takeIf { it.isNotBlank() }
+            ?: text?.takeIf { it.isNotBlank() }
+            ?: contentDescription?.takeIf { it.isNotBlank() }
+            ?: hintText?.takeIf { it.isNotBlank() }
 
     /** 这个节点能不能被操作。动作层挑目标、压缩层决定去留，都看它。 */
     val interactive: Boolean

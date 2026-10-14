@@ -34,8 +34,20 @@ data class UiWindow(
 
     val bounds: Rect,
 
-    /** 节点树的根。拿不到（窗口已销毁、或没有内容）时为 null。 */
-    val root: UiNode?,
+    /**
+     * 节点树的顶层节点。
+     *
+     * 抓取阶段只会有一个（窗口的根），但**过滤之后可能变成多个**：原来的根不符合
+     * 保留条件被砍掉时，它底下那些符合条件的后代就各自成了顶层节点。
+     * QQ 主界面在 [CaptureScope.INTERACTIVE] 下就是这样——根是个不可交互的
+     * FrameLayout，砍掉后会话列表、底部导航、顶部功能区变成三支并列的树。
+     *
+     * 所以这里必须是列表。之前写成单个 `root?`，过滤时用 `firstOrNull()` 取头一个，
+     * 结果除第一支以外的内容整块消失，实测 QQ 丢掉了整个底部导航栏。
+     *
+     * 窗口已销毁或没有内容时为空列表。
+     */
+    val roots: List<UiNode>,
 ) {
     val typeName: String
         get() = when (type) {
@@ -49,7 +61,7 @@ data class UiWindow(
         }
 
     val nodeCount: Int
-        get() = root?.subtreeSize ?: 0
+        get() = roots.sumOf { it.subtreeSize }
 }
 
 /**
@@ -63,6 +75,13 @@ data class UiWindow(
  */
 data class UiSnapshot(
     val displayId: Int,
+
+    /** 这份快照被裁到了哪一档。 */
+    val scope: CaptureScope,
+
+    /** 裁剪之前抓到的节点总数。和 [nodeCount] 一比就知道滤掉了多少。 */
+    val rawNodeCount: Int,
+
 
     /** 抓取开始时的 `System.currentTimeMillis()`。 */
     val capturedAtMillis: Long,
@@ -90,11 +109,11 @@ data class UiSnapshot(
 
     /** 跨所有窗口找节点。 */
     fun findAll(predicate: (UiNode) -> Boolean): List<UiNode> =
-        windows.flatMap { it.root?.findAll(predicate).orEmpty() }
+        windows.flatMap { window -> window.roots.flatMap { it.findAll(predicate) } }
 
     /** 按 [UiNode.id] 跨窗口找回节点，供动作层回指。 */
     fun findById(id: Int): UiNode? {
-        windows.forEach { window -> window.root?.findById(id)?.let { return it } }
+        windows.forEach { window -> window.roots.forEach { r -> r.findById(id)?.let { return it } } }
         return null
     }
 
@@ -109,8 +128,9 @@ data class UiSnapshot(
      */
     fun toDebugString(maxTextLength: Int = 40, visibleOnly: Boolean = false): String = buildString {
         appendLine(
-            "UiSnapshot(display=$displayId, windows=${windows.size}, nodes=$nodeCount, " +
-                "${elapsedMillis}ms${if (truncated) ", TRUNCATED" else ""})",
+            "UiSnapshot(display=$displayId, scope=$scope, windows=${windows.size}, " +
+                "nodes=$nodeCount/$rawNodeCount, ${elapsedMillis}ms" +
+                "${if (truncated) ", TRUNCATED" else ""})",
         )
         windows.forEach { window ->
             appendLine(
@@ -118,17 +138,24 @@ data class UiSnapshot(
                     "${window.packageName ?: "?"} layer=${window.layer}" +
                     (if (window.active) " ACTIVE" else "") +
                     (if (window.focused) " FOCUSED" else "") +
-                    " nodes=${window.nodeCount}",
+                    " nodes=${window.nodeCount}" +
+                    // 过滤后会出现多支并列的树，标出来免得看漏整支。
+                    (if (window.roots.size > 1) " roots=${window.roots.size}" else ""),
             )
-            window.root?.walk { node ->
+            window.roots.forEach { it.walk { node ->
                 if (visibleOnly && !node.visibleToUser) return@walk
                 append("│ ")
                 repeat(node.depth) { append("  ") }
                 append("[${node.id}] ")
                 append(node.className?.substringAfterLast('.') ?: "?")
-                node.text.clip(maxTextLength)?.let { append(" text=\"$it\"") }
-                node.contentDescription.clip(maxTextLength)?.let { append(" desc=\"$it\"") }
-                node.hintText.clip(maxTextLength)?.let { append(" hint=\"$it\"") }
+                // 聚合标签存在时它就是这个节点的全部文本信息，再打原始字段纯属重复。
+                if (node.label != null) {
+                    node.label.clip(maxTextLength * 3)?.let { append(" label=\"$it\"") }
+                } else {
+                    node.text.clip(maxTextLength)?.let { append(" text=\"$it\"") }
+                    node.contentDescription.clip(maxTextLength)?.let { append(" desc=\"$it\"") }
+                    node.hintText.clip(maxTextLength)?.let { append(" hint=\"$it\"") }
+                }
                 (node.vid ?: node.viewId)?.let { append(" id=$it") }
                 buildList {
                     if (node.clickable) add("click")
@@ -139,14 +166,13 @@ data class UiSnapshot(
                     if (node.password) add("PASSWORD")
                     if (!node.enabled) add("disabled")
                     if (!node.visibleToUser) add("invisible")
-                    // 子节点没抄全时必须显式标出来，否则会被误读成"这里本来就是空的"。
-                    if (node.childrenTruncated) {
-                        add("+${node.childCount - node.children.size}个子节点被截断")
-                    }
+                    // 抓取时没抄全要显式标出来，否则会被误读成"这里本来就是空的"。
+                    // 只报事实不报数量：过滤后 children 已被裁剪，再去减得到的是假数字。
+                    if (node.childrenTruncated) add("子节点未抄全(共${node.childCount})")
                 }.takeIf { it.isNotEmpty() }?.let { append(" {${it.joinToString(",")}}") }
                 append(" ${node.bounds.toShortString()}")
                 appendLine()
-            }
+            } }
         }
     }
 }

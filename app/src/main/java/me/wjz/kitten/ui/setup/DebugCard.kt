@@ -37,6 +37,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import me.wjz.kitten.a11y.CaptureScope
 import me.wjz.kitten.a11y.ScreenReader
 import me.wjz.kitten.privilege.PrivilegeManager
 import me.wjz.kitten.privilege.PrivilegeState
@@ -105,19 +106,25 @@ fun DebugCard(modifier: Modifier = Modifier) {
     fun dumpNodes() {
         result = "抓取中…"
         scope.launch {
-            // 节点遍历是成百上千次阻塞的跨进程调用，绝不能放主线程。
-            val snapshot = withContext(Dispatchers.IO) { ScreenReader.capture(displayId) }
-            result = if (snapshot == null) {
+            // 三档各抓一次，直接对比裁剪效果。第一次之后 AccessibilityCache 会命中，
+            // 后两次基本不花时间（实测同页面 336ms → 7ms），所以这么测不亏。
+            val snapshots = withContext(Dispatchers.IO) {
+                // 节点遍历是成百上千次阻塞的跨进程调用，绝不能放主线程。
+                CaptureScope.entries.map { it to ScreenReader.capture(displayId, it) }
+            }
+            result = if (snapshots.all { it.second == null }) {
                 "抓取失败：无障碍服务没就绪"
             } else {
-                // Logcat 单条有长度上限，整棵树会被截断，所以按行分批打。
-                Log.i(DUMP_TAG, "==== 副屏 $displayId 节点树开始 ====")
-                snapshot.toDebugString().lineSequence().forEach { Log.i(DUMP_TAG, it) }
-                Log.i(DUMP_TAG, "==== 副屏 $displayId 节点树结束 ====")
-                "已抓取：${snapshot.windows.size} 窗口 / ${snapshot.nodeCount} 节点 / " +
-                    "${snapshot.elapsedMillis}ms" +
-                    (if (snapshot.truncated) "（已截断）" else "") +
-                    "，详见 logcat -s $DUMP_TAG"
+                snapshots.forEach { (captureScope, snapshot) ->
+                    snapshot ?: return@forEach
+                    // Logcat 单条有长度上限，整棵树会被截断，所以按行分批打。
+                    Log.i(DUMP_TAG, "==== display=$displayId scope=$captureScope 开始 ====")
+                    snapshot.toDebugString().lineSequence().forEach { Log.i(DUMP_TAG, it) }
+                    Log.i(DUMP_TAG, "==== display=$displayId scope=$captureScope 结束 ====")
+                }
+                snapshots.mapNotNull { (captureScope, snapshot) ->
+                    snapshot?.let { "$captureScope=${it.nodeCount}" }
+                }.joinToString(" / ") + " 节点，详见 logcat -s $DUMP_TAG"
             }
         }
     }
