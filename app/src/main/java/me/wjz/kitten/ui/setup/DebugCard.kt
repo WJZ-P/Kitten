@@ -65,8 +65,11 @@ import me.wjz.kitten.privilege.VirtualDisplayManager
 fun DebugCard(modifier: Modifier = Modifier) {
     val scope = rememberCoroutineScope()
     val state by PrivilegeManager.state.collectAsState()
-    // 副屏的 density 必须跟主屏一致，不能写死（见 VirtualDisplayManager 的类注释）。
-    val density = LocalContext.current.resources.displayMetrics.densityDpi
+    // 副屏的尺寸和 density 都必须跟主屏一致，不能写死（见 VirtualDisplayManager 的类注释）。
+    val metrics = LocalContext.current.resources.displayMetrics
+    val density = metrics.densityDpi
+    val width = metrics.widthPixels
+    val height = metrics.heightPixels
     var displayId by remember { mutableIntStateOf(VirtualDisplayManager.INVALID_DISPLAY_ID) }
     var result by remember { mutableStateOf("尚未操作") }
     var previewing by remember { mutableStateOf(false) }
@@ -82,8 +85,8 @@ fun DebugCard(modifier: Modifier = Modifier) {
             val id = withContext(Dispatchers.IO) {
                 VirtualDisplayManager.launchAppOnNewDisplay(
                     packageName = target.packageName,
-                    width = WIDTH,
-                    height = HEIGHT,
+                    width = width,
+                    height = height,
                     densityDpi = density,
                     forceNewInstance = forceNewInstance,
                 )
@@ -121,6 +124,13 @@ fun DebugCard(modifier: Modifier = Modifier) {
                     Log.i(DUMP_TAG, "==== display=$displayId scope=$captureScope 开始 ====")
                     snapshot.toDebugString().lineSequence().forEach { Log.i(DUMP_TAG, it) }
                     Log.i(DUMP_TAG, "==== display=$displayId scope=$captureScope 结束 ====")
+                }
+                // 再打一份模型实际会收到的内容。只有 INTERACTIVE 档有意义——
+                // 另外两档不聚合标签，紧凑输出里会是一堆没有文字的类名。
+                snapshots.firstOrNull { it.first == CaptureScope.INTERACTIVE }?.second?.let {
+                    Log.i(DUMP_TAG, "==== 发给模型的内容 开始 ====")
+                    it.toCompactString().lineSequence().forEach { line -> Log.i(DUMP_TAG, line) }
+                    Log.i(DUMP_TAG, "==== 发给模型的内容 结束 ====")
                 }
                 snapshots.mapNotNull { (captureScope, snapshot) ->
                     snapshot?.let { "$captureScope=${it.nodeCount}" }
@@ -224,7 +234,7 @@ fun DebugCard(modifier: Modifier = Modifier) {
                 AndroidView(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .aspectRatio(WIDTH.toFloat() / HEIGHT),
+                        .aspectRatio(width.toFloat() / height),
                     factory = { context ->
                         SurfaceView(context).apply {
                             // 关键：把缓冲区固定成副屏的真实分辨率。
@@ -232,7 +242,7 @@ fun DebugCard(modifier: Modifier = Modifier) {
                             // 而副屏仍按 1080x1920 渲染——生产者写得比消费者缓冲区大，
                             // 结果是**裁切**而不是缩放，只能看到左上角那一块。
                             // 设成固定尺寸后，由 SurfaceView 在合成阶段把整幅画面缩放到 View 大小。
-                            holder.setFixedSize(WIDTH, HEIGHT)
+                            holder.setFixedSize(width, height)
                             holder.addCallback(object : SurfaceHolder.Callback {
                                 override fun surfaceCreated(h: SurfaceHolder) {
                                     scope.launch(Dispatchers.IO) {
@@ -307,8 +317,6 @@ private val TARGET_APPS = listOf(
     TargetApp("小红书", "com.xingin.xhs"),
     TargetApp("浏览器", "com.android.browser"),
 )
-private const val WIDTH = 1080
-private const val HEIGHT = 1920
 
 /** 节点树单独一个 tag，免得被链路日志淹掉：`adb logcat -s KittenNodeDump`。 */
 private const val DUMP_TAG = "KittenNodeDump"

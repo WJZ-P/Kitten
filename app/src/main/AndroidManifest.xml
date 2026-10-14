@@ -15,6 +15,30 @@
     <!-- 开机后自动重建特权链路，见 BootCompletedReceiver。 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!--
+        看得见设备上装了哪些应用。
+
+        Android 11 起的 package visibility 默认只让应用看到一部分邻居：实测 shell
+        身份能看到 494 个包，Kitten 自己只能看到 472 个，差的那些连
+        `getApplicationInfo()` 都会抛 NameNotFoundException——结果就是节点树的页头
+        里只有 `pkg=tv.danmaku.bili`，拿不到"哔哩哔哩"这个名字。
+
+        为什么用它而不是逐个声明 <queries>：Agent 要操作的是**任意**应用，没法预先
+        列举。后续"列出可启动应用让用户选"、把"打开淘宝"映射到包名，也都是 app 侧
+        UI 的事，为此每次走 AIDL 问特权进程太绕。
+
+        还有一条路是让特权进程代查——它跑在 shell 身份下不受限。留作后备，没有采用。
+
+        需要留意的两点：
+        - 上架 Google Play 要提交使用理由说明，以 GitHub / F-Droid 方式分发不受影响；
+        - lint 默认拦这个权限，所以要 tools:ignore。相比 Kitten 已经持有的
+          WRITE_SECURE_SETTINGS、无障碍（能读任意应用的全部界面内容）和 ADB 特权，
+          "知道装了哪些应用"算不上敏感，但它仍然是个要向用户讲清楚的权限。
+    -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"

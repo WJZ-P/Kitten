@@ -130,6 +130,8 @@ object ScreenReader {
             windows = snapshots,
             nodeCount = budget.used,
             truncated = budget.truncated,
+            appName = resolveAppName(service, snapshots),
+            handles = budget.handles,
         ).filter(scope)
 
         Log.i(
@@ -152,6 +154,26 @@ object ScreenReader {
         displayId: Int = Display.DEFAULT_DISPLAY,
         scope: CaptureScope = CaptureScope.ALL,
     ): UiWindow? = capture(displayId, scope)?.activeWindow
+
+    /**
+     * 把当前应用的包名翻成显示名，比如 com.tencent.mobileqq → QQ。
+     *
+     * 靠 manifest 里的 QUERY_ALL_PACKAGES 才查得到，否则 package visibility 会让
+     * 大部分应用抛 NameNotFoundException。
+     *
+     * 失败就返回 null，调用方退回用包名，不打 error 日志吵人——应用正在卸载、跨用户、
+     * 某些 ROM 的额外限制都会落到这里，而这个名字只是让模型读着舒服，判断逻辑一律
+     * 认包名。
+     */
+    private fun resolveAppName(service: AccessibilityService, windows: List<UiWindow>): String? {
+        val pkg = windows.firstOrNull {
+            it.type == AccessibilityWindowInfo.TYPE_APPLICATION
+        }?.packageName ?: return null
+        return runCatching {
+            val pm = service.packageManager
+            pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString().takeIf { it != pkg }
+        }.getOrNull()
+    }
 
     /**
      * 取某块屏上的窗口。
@@ -210,6 +232,8 @@ object ScreenReader {
     ): UiNode? {
         if (!budget.take()) return null
         val id = budget.nextId()
+        // 留住活节点，动作层按 id 找回来 performAction。见 UiSnapshot.handles。
+        budget.handles[id] = node
 
         val bounds = Rect().also { node.getBoundsInScreen(it) }
         val childCount = node.childCount
@@ -289,6 +313,9 @@ object ScreenReader {
         var used = 0
             private set
         var truncated = false
+
+        /** id → 活节点。和编号器放在一起，保证两者用的是同一套 id。 */
+        val handles = HashMap<Int, AccessibilityNodeInfo>()
 
         /** 还有余额就记一笔并返回 true；超了就标记截断。 */
         fun take(): Boolean {
