@@ -52,4 +52,30 @@ interface IPrivilegeService {
     //   SurfaceView 的 Surface → 正常参与合成 → 用户看得见
     // VirtualDisplay.setSurface 支持运行时切换，所以"显示/隐藏"是免费的。
     boolean setDisplaySurface(int displayId, in Surface surface);
+
+    // ---- 输入注入 ----
+    //
+    // 为什么要走特权进程：INJECT_EVENTS 的 protectionLevel 是纯 signature，
+    // 不带 development 标志，所以 pm grant 也授不了，App 进程永远拿不到；
+    // 而 com.android.shell 本身就持有它（实测 granted=true）。
+    //
+    // 和无障碍通道（performAction / dispatchGesture）的区别：
+    //   - 无障碍派发的触摸事件会被打上 MotionEvent.FLAG_IS_ACCESSIBILITY_EVENT(0x800)，
+    //     应用用公开的 getFlags() 就能认出"这是无障碍生成的"；注入的不带这个标记。
+    //   - 无障碍是作用于节点或坐标的高层 API，注入是直接送进 InputDispatcher。
+    // 两条通道都保留，让上层按目标应用的脾气选。
+    //
+    // 这几个方法只接受坐标和键码，不接受命令行——同样遵守"接口越窄越好"的原则。
+
+    // 在指定屏幕上点一下。成功返回 true。
+    boolean injectTap(int displayId, int x, int y);
+
+    // 在指定屏幕上滑动。durationMs 决定快慢，太短会被识别成甩动（fling）。
+    boolean injectSwipe(int displayId, int x1, int y1, int x2, int y2, int durationMs);
+
+    // 在指定屏幕上长按。
+    boolean injectLongPress(int displayId, int x, int y, int durationMs);
+
+    // 发一个按键事件（KeyEvent.KEYCODE_*），比如返回键、Home。
+    boolean injectKeyEvent(int displayId, int keyCode);
 }

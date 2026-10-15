@@ -42,4 +42,22 @@ class PrivilegeService : IPrivilegeService.Stub() {
         if (packageName.isNullOrEmpty()) return false
         return AppLauncher.launchOnDisplay(packageName, displayId, forceNewInstance)
     }
+
+    override fun injectTap(displayId: Int, x: Int, y: Int): Boolean =
+        InputInjector.tap(displayId, x, y)
+
+    override fun injectSwipe(
+        displayId: Int,
+        x1: Int,
+        y1: Int,
+        x2: Int,
+        y2: Int,
+        durationMs: Int,
+    ): Boolean = InputInjector.swipe(displayId, x1, y1, x2, y2, durationMs)
+
+    override fun injectLongPress(displayId: Int, x: Int, y: Int, durationMs: Int): Boolean =
+        InputInjector.longPress(displayId, x, y, durationMs)
+
+    override fun injectKeyEvent(displayId: Int, keyCode: Int): Boolean =
+        InputInjector.keyEvent(displayId, keyCode)
 }

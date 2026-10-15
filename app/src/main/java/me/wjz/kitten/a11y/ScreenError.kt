@@ -119,6 +119,31 @@ sealed interface ScreenError {
      */
     data class ActionRejected(val nodeId: Int, val action: String) : ScreenError {
         override fun describe(): String =
-            "ERROR action_rejected: 节点 [$nodeId] 拒绝了 $action 操作，该控件可能不支持这个动作。"
+            "ERROR action_rejected: 节点 [$nodeId] 拒绝了 $action 操作，该控件可能不支持这个动作。" +
+                "可以改用坐标点击（按节点的 bounds 中心），或走注入通道。"
+    }
+
+    /**
+     * 基于坐标的手势没能完成。
+     *
+     * 和 [ActionRejected] 的区别：那个是控件不认这个动作，这个是手势压根没派发成功或者
+     * 中途被系统取消（屏幕关了、被别的手势抢占、超时）。
+     */
+    data class GestureFailed(val what: String, val reason: String) : ScreenError {
+        override fun describe(): String =
+            "ERROR gesture_failed: 手势 $what 未能完成（$reason）。可以重试，或改用按节点的操作。"
+    }
+
+    /**
+     * 特权进程没就绪，注入通道用不了。
+     *
+     * 注入要 `INJECT_EVENTS`，那是纯 signature 权限，只有跑在 shell 身份下的特权进程
+     * 才有。这时可以退回无障碍通道（`A11yActuator`），只是事件会带上
+     * `FLAG_IS_ACCESSIBILITY_EVENT` 标记。
+     */
+    data object PrivilegeUnavailable : ScreenError {
+        override fun describe(): String =
+            "ERROR privilege_unavailable: 特权进程未就绪，无法注入输入事件。" +
+                "可以改用无障碍通道操作，或先完成 ADB 配对。"
     }
 }
