@@ -8,6 +8,7 @@ import android.view.Display
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import me.wjz.kitten.service.KittenAccessibilityService
+import androidx.core.util.size
 
 /**
  * 一键抓取屏幕上的全部界面节点。
@@ -93,24 +94,40 @@ object ScreenReader {
      * @param scope 保留到什么程度，默认 [CaptureScope.ALL]——默认值不做有损变换，
      *        排查问题时第一步看到的就该是全貌。给模型用的是 [CaptureScope.INTERACTIVE]，
      *        由上层显式指定，别改这里的默认值。
+     * @param expectedPackage 期望在这块屏上看到的应用。传了就会先核对，不在就直接返回
+     *        [ScreenError.AppOnOtherDisplay] 或 [ScreenError.AppNotRunning]，不再白抓一遍树。
+     *        Agent 操作目标应用时应该一直带着它——单实例应用（微信、QQ、抖音）会被用户
+     *        抢走，这是唯一能及时发现的办法。
      * @param maxNodes 本次最多抓多少节点，用于给慢页面兜底。
-     * @return 无障碍服务没就绪时返回 null。那和"屏幕上没东西"是两回事，所以不返回空快照。
      */
     fun capture(
         displayId: Int = Display.DEFAULT_DISPLAY,
         scope: CaptureScope = CaptureScope.ALL,
+        expectedPackage: String? = null,
         maxNodes: Int = MAX_NODES,
-    ): UiSnapshot? {
+    ): CaptureResult {
         val service = service ?: run {
             Log.w(TAG, "无障碍服务未连接，抓不了屏幕")
-            return null
+            return CaptureResult.Failed(ScreenError.ServiceUnavailable)
         }
         val startedAtWall = System.currentTimeMillis()
         val startedAt = SystemClock.elapsedRealtime()
 
-        val windows = runCatching { windowsOn(service, displayId) }
-            .onFailure { Log.e(TAG, "取 display=$displayId 的窗口列表失败", it) }
-            .getOrDefault(emptyList())
+        val byDisplay = service.windowsOnAllDisplays
+        if (byDisplay.indexOfKey(displayId) < 0) {
+            Log.w(TAG, "display=$displayId 不在窗口列表里，可能已被释放")
+            return CaptureResult.Failed(ScreenError.DisplayGone(displayId))
+        }
+        val windows = byDisplay.get(displayId).orEmpty()
+        if (windows.isEmpty()) {
+            return CaptureResult.Failed(ScreenError.DisplayEmpty(displayId))
+        }
+
+        // 核对目标应用。放在遍历之前：不在这块屏上的话，抓回来的树对调用方毫无用处，
+        // 白花几百毫秒不说，模型还会把别的应用的界面当成目标去推理。
+        expectedPackage?.let { pkg ->
+            locate(service, pkg, displayId)?.let { return CaptureResult.Failed(it) }
+        }
 
         val budget = Budget(maxNodes)
         // layer 降序：最上层的窗口排在最前，上层想要"挡在用户面前的那个"时直接取首个。
@@ -141,7 +158,42 @@ object ScreenReader {
                 "耗时=${snapshot.elapsedMillis}ms 应用=${snapshot.packageName ?: "?"}" +
                 if (snapshot.truncated) " 已截断(上限 $maxNodes)" else "",
         )
-        return snapshot
+        return CaptureResult.Ok(snapshot)
+    }
+
+    /**
+     * 核对 [packageName] 在不在 [expectedDisplayId] 上；在就返回 null，不在就给出原因。
+     *
+     * 失败分两种，对模型意味着完全不同的下一步：在别的屏上找到了（多半是被单实例应用
+     * 抢走了，可以改去操作那块屏），还是哪儿都没有（应用根本没在跑，得先拉起来）。
+     *
+     * 判断一个窗口属于谁要靠 `getRoot().packageName`，而取根节点是跨进程调用——所以
+     * 只在调用方明确传了 expectedPackage 时才做这件事。
+     */
+    private fun locate(
+        service: AccessibilityService,
+        packageName: String,
+        expectedDisplayId: Int,
+    ): ScreenError? {
+        val byDisplay = service.windowsOnAllDisplays
+        val foundOn = mutableListOf<Int>()
+        for (i in 0 until byDisplay.size) {
+            val displayId = byDisplay.keyAt(i)
+            val hit = byDisplay.valueAt(i).orEmpty().any { window ->
+                runCatching { window.root?.packageName?.toString() }.getOrNull() == packageName
+            }
+            if (hit) {
+                if (displayId == expectedDisplayId) return null
+                foundOn += displayId
+            }
+        }
+        return if (foundOn.isEmpty()) {
+            Log.w(TAG, "所有屏幕上都没有 $packageName 的窗口")
+            ScreenError.AppNotRunning(packageName, expectedDisplayId)
+        } else {
+            Log.w(TAG, "$packageName 不在 display=$expectedDisplayId，而在 display=$foundOn")
+            ScreenError.AppOnOtherDisplay(packageName, expectedDisplayId, foundOn)
+        }
     }
 
     /**
@@ -153,7 +205,7 @@ object ScreenReader {
     fun captureActiveWindow(
         displayId: Int = Display.DEFAULT_DISPLAY,
         scope: CaptureScope = CaptureScope.ALL,
-    ): UiWindow? = capture(displayId, scope)?.activeWindow
+    ): UiWindow? = capture(displayId, scope).snapshotOrNull()?.activeWindow
 
     /**
      * 把当前应用的包名翻成显示名，比如 com.tencent.mobileqq → QQ。
@@ -173,25 +225,6 @@ object ScreenReader {
             val pm = service.packageManager
             pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString().takeIf { it != pkg }
         }.getOrNull()
-    }
-
-    /**
-     * 取某块屏上的窗口。
-     *
-     * `getWindows()` 只覆盖默认屏，`getWindowsOnAllDisplays()` 才看得到副屏——
-     * 副屏是 Kitten 的主场，所以统一走后者。
-     */
-    private fun windowsOn(
-        service: AccessibilityService,
-        displayId: Int,
-    ): List<AccessibilityWindowInfo> {
-        val byDisplay = service.windowsOnAllDisplays
-        val index = byDisplay.indexOfKey(displayId)
-        if (index < 0) {
-            Log.w(TAG, "display=$displayId 上没有任何窗口，它可能已经被释放了")
-            return emptyList()
-        }
-        return byDisplay.valueAt(index).orEmpty()
     }
 
     private fun readWindow(

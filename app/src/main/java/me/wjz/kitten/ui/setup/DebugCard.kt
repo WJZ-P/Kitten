@@ -37,6 +37,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import me.wjz.kitten.a11y.CaptureResult
 import me.wjz.kitten.a11y.CaptureScope
 import me.wjz.kitten.a11y.ScreenReader
 import me.wjz.kitten.privilege.PrivilegeManager
@@ -111,15 +112,22 @@ fun DebugCard(modifier: Modifier = Modifier) {
         scope.launch {
             // 三档各抓一次，直接对比裁剪效果。第一次之后 AccessibilityCache 会命中，
             // 后两次基本不花时间（实测同页面 336ms → 7ms），所以这么测不亏。
-            val snapshots = withContext(Dispatchers.IO) {
+            //
+            // 带上 expectedPackage：这样能顺带验证"目标应用被用户抢走"的那条错误路径，
+            // 单实例应用（微信/QQ/抖音）在副屏的实例随时会被干掉。
+            val results = withContext(Dispatchers.IO) {
                 // 节点遍历是成百上千次阻塞的跨进程调用，绝不能放主线程。
-                CaptureScope.entries.map { it to ScreenReader.capture(displayId, it) }
+                CaptureScope.entries.map {
+                    it to ScreenReader.capture(displayId, it, expectedPackage = target.packageName)
+                }
             }
-            result = if (snapshots.all { it.second == null }) {
-                "抓取失败：无障碍服务没就绪"
+            val firstError = results.firstNotNullOfOrNull { (_, r) -> (r as? CaptureResult.Failed)?.error }
+            result = if (firstError != null) {
+                Log.w(DUMP_TAG, firstError.describe())
+                firstError.describe()
             } else {
-                snapshots.forEach { (captureScope, snapshot) ->
-                    snapshot ?: return@forEach
+                results.forEach { (captureScope, r) ->
+                    val snapshot = r.snapshotOrNull() ?: return@forEach
                     // Logcat 单条有长度上限，整棵树会被截断，所以按行分批打。
                     Log.i(DUMP_TAG, "==== display=$displayId scope=$captureScope 开始 ====")
                     snapshot.toDebugString().lineSequence().forEach { Log.i(DUMP_TAG, it) }
@@ -127,13 +135,13 @@ fun DebugCard(modifier: Modifier = Modifier) {
                 }
                 // 再打一份模型实际会收到的内容。只有 INTERACTIVE 档有意义——
                 // 另外两档不聚合标签，紧凑输出里会是一堆没有文字的类名。
-                snapshots.firstOrNull { it.first == CaptureScope.INTERACTIVE }?.second?.let {
+                results.firstOrNull { it.first == CaptureScope.INTERACTIVE }?.second?.let {
                     Log.i(DUMP_TAG, "==== 发给模型的内容 开始 ====")
-                    it.toCompactString().lineSequence().forEach { line -> Log.i(DUMP_TAG, line) }
+                    it.toModelText().lineSequence().forEach { line -> Log.i(DUMP_TAG, line) }
                     Log.i(DUMP_TAG, "==== 发给模型的内容 结束 ====")
                 }
-                snapshots.mapNotNull { (captureScope, snapshot) ->
-                    snapshot?.let { "$captureScope=${it.nodeCount}" }
+                results.mapNotNull { (captureScope, r) ->
+                    r.snapshotOrNull()?.let { "$captureScope=${it.nodeCount}" }
                 }.joinToString(" / ") + " 节点，详见 logcat -s $DUMP_TAG"
             }
         }
