@@ -64,5 +64,8 @@ dependencies {
     // kotlinx.serialization 的 runtime 版本要和 Kotlin 编译器插件对齐，而 LLM 的报文
     // 结构并不复杂，手写解析换一个"不会因为升 Kotlin 而编译失败"更划算。
     implementation(libs.okhttp)
+    // 液体玻璃效果。它是 KMP 库且依赖 org.jetbrains.compose.*，在 Android 上会解析到
+    // 我们已有的 androidx.compose——由 compose-bom 统一版本，不会各拉一份。
+    implementation(libs.backdrop)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

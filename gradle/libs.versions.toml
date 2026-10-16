@@ -11,6 +11,8 @@ sunSecurity = "1.1"
 conscrypt = "2.5.3"
 # OkHttp 4.x 是久经考验的稳定线，且和 Kotlin 版本无耦合，不会因为编译器升级而失配。
 okhttp = "4.12.0"
+# 液体玻璃效果（Kotlin Multiplatform 库，Gradle 会自动解析到 backdrop-android）。
+backdrop = "2.0.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -28,6 +30,7 @@ libadb-android = { group = "com.github.MuntashirAkon", name = "libadb-android", 
 sun-security-android = { group = "com.github.MuntashirAkon", name = "sun-security-android", version.ref = "sunSecurity" }
 conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", version.ref = "conscrypt" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
+backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "backdrop" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
