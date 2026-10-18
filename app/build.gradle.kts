@@ -54,12 +54,15 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     // LifecycleResumeEffect：让界面自己感知"回到前台"，不用再把逻辑放进 Activity。
     implementation(libs.androidx.lifecycle.runtime.compose)
+    // viewModel() ：让每个页面自己持有 ViewModel，不用从 Activity 层层往下传。
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.material.icons.core)
     // 调 LLM 的 HTTP 客户端。JSON 走 Android 内置的 org.json，不额外引库——
     // kotlinx.serialization 的 runtime 版本要和 Kotlin 编译器插件对齐，而 LLM 的报文
     // 结构并不复杂，手写解析换一个"不会因为升 Kotlin 而编译失败"更划算。
