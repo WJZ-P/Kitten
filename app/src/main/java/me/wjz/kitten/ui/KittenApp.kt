@@ -27,6 +27,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -41,6 +42,7 @@ import me.wjz.kitten.ui.settings.SettingsScreen
 import me.wjz.kitten.ui.setup.SetupActions
 import me.wjz.kitten.ui.task.TaskScreen
 import me.wjz.kitten.ui.theme.KittenTheme
+import kotlin.math.abs
 
 /**
  * App 的根容器：底部 tab + 左侧会话抽屉。
@@ -155,21 +157,35 @@ fun KittenApp(actions: SetupActions) {
                         // 只跟着底部 tab 走，不接手指左右滑。原因见类注释。
                         userScrollEnabled = false,
                     ) { page ->
-                        when (tabs[page]) {
-                            KittenTab.Chat -> ChatScreen(
-                                state = chatState,
-                                backdrop = backdrop,
-                                onSend = chatViewModel::send,
-                                onOpenSettings = { currentTab = KittenTab.Settings },
-                            )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                // 预加载的页面只组合、不绘制。不画的话它们的 RenderNode 不在渲染树里，
+                                // 里面的玻璃就不会跟着背景一起重新模糊、折射——实测停在对话页时，背景每
+                                // 推进一次的 RenderThread 耗时从 20ms 降到 13ms。滑动切换的途中两页都露出来，
+                                // 所以按"离视口还差多少"判断，而不是只画当前页。
+                                .drawWithContent {
+                                    val distance = (pagerState.currentPage - page) +
+                                        pagerState.currentPageOffsetFraction
+                                    if (abs(distance) < 1f) drawContent()
+                                },
+                        ) {
+                            when (tabs[page]) {
+                                KittenTab.Chat -> ChatScreen(
+                                    state = chatState,
+                                    backdrop = backdrop,
+                                    onSend = chatViewModel::send,
+                                    onOpenSettings = { currentTab = KittenTab.Settings },
+                                )
 
-                            KittenTab.Task -> TaskScreen()
+                                KittenTab.Task -> TaskScreen()
 
-                            KittenTab.Settings -> SettingsScreen(
-                                backdrop = backdrop,
-                                actions = actions,
-                                onModelConfigChanged = chatViewModel::refreshModelConfig,
-                            )
+                                KittenTab.Settings -> SettingsScreen(
+                                    backdrop = backdrop,
+                                    actions = actions,
+                                    onModelConfigChanged = chatViewModel::refreshModelConfig,
+                                )
+                            }
                         }
                     }
 
