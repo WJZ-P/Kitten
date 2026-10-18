@@ -34,12 +34,17 @@ data class KittenColors(
     val textSecondary: Color,
     val textTertiary: Color,
 
-    /** 背景：上下两端的渐变，加上三团光晕和点阵。 */
+    /** 背景：上下两端的渐变，加上几团缓缓漂移的光晕和点阵。 */
     val backgroundTop: Color,
     val backgroundBottom: Color,
     val backgroundGlowPrimary: Color,
     val backgroundGlowSecondary: Color,
     val backgroundGlowTertiary: Color,
+    /** 白色亮斑：浅色背景上光是蓝色光晕在动不太看得出来，一团游走的白让流动更明显。 */
+    val backgroundGlowHighlight: Color,
+    /** 背景里流动的雾：一层天依蓝的薄雾，上面再浮一层白色的亮雾。透明度由着色器按浓淡算。 */
+    val backgroundMistHaze: Color,
+    val backgroundMistLight: Color,
     val backgroundDots: Color,
 
     /** 玻璃表面的底色：半透明的白，比背景更白一点才"浮"得起来。 */
@@ -92,6 +97,9 @@ val LightKittenColors = KittenColors(
     backgroundGlowPrimary = Tianyi400.copy(alpha = 0.5f),
     backgroundGlowSecondary = Tianyi300.copy(alpha = 0.4f),
     backgroundGlowTertiary = Periwinkle200.copy(alpha = 0.35f),
+    backgroundGlowHighlight = Color.White.copy(alpha = 0.7f),
+    backgroundMistHaze = Tianyi400,
+    backgroundMistLight = Color.White,
     backgroundDots = Ink.copy(alpha = 0.07f),
 
     glassTint = Color.White.copy(alpha = 0.45f),

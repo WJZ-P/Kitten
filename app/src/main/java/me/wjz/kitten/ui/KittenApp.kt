@@ -121,7 +121,12 @@ fun KittenApp(actions: SetupActions) {
             }
         },
     ) {
-        GlassBackground(backdrop = backdrop) {
+        GlassBackground(
+            backdrop = backdrop,
+            // 设置页满屏都是玻璃卡片，背景几乎露不出来，动了也看不见；而玻璃越多，背景每推进
+            // 一次要重算的就越多（实测设置页是对话页的一倍半）。所以只在对话页和任务页动。
+            animate = currentTab != KittenTab.Settings,
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
