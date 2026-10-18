@@ -118,7 +118,7 @@ fun KittenBottomBar(
         // 滑块被拖到某一格之后回调的是序号，这里换回 tab。
         onSelect = { onSelect(tabs[it]) },
         tabCount = tabs.size,
-        modifier = modifier.padding(horizontal = 32.dp, vertical = 12.dp),
+        modifier = modifier.padding(horizontal = 64.dp, vertical = 12.dp),
     ) {
         tabs.forEach { tab ->
             GlassTab(selected = tab == current, onSelect = { onSelect(tab) }) {

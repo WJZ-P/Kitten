@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -48,13 +49,10 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
-import com.kyant.shapes.Capsule
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -87,8 +85,8 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 颜色会在某一帧整格跳变，和连续移动的滑块对不上。真正的做法是叠三层：
  *
  * ```
- * ① 可见层   64dp 胶囊玻璃 + content（图标是白的）
- * ② 隐藏层   56dp，alpha(0)，content 整层染成高亮色，录进 tabsBackdrop
+ * ① 可见层   圆角玻璃栏 + content（图标是正文色）
+ * ② 隐藏层   和滑块一样高，alpha(0)，content 整层染成高亮色，录进 tabsBackdrop
  * ③ 滑块     折射 (背景 + tabsBackdrop)，宽度 1/tabCount，跟着选中项移动
  * ④ 手势层   透明，盖满整条栏
  * ```
@@ -130,7 +128,7 @@ fun GlassTabBar(
         modifier = modifier,
         contentAlignment = Alignment.CenterStart,
     ) {
-        // 每格的宽度。减掉的是胶囊内边距，滑块和内容都排在那块内部区域里。
+        // 每格的宽度。减掉的是栏的内边距，滑块和内容都排在那块内部区域里。
         val tabWidth = (maxWidth - BarPadding * 2) / tabCount
 
         // 手指横向拖动的累计位移（px）。整条栏会朝拖动方向轻轻偏一点，像被推着走。
@@ -163,9 +161,8 @@ fun GlassTabBar(
                 valueRange = 0f..(tabCount - 1).toFloat(),
                 visibilityThreshold = 0.001f,
                 initialScale = 1f,
-                // 按下时滑块从 56dp 鼓到 78dp，会溢出 64dp 的胶囊——这是故意的，
-                // 像一团液体被按得涨出边界。外层留的 8dp 间距正好容得下。
-                pressedScale = PressedSliderHeight / SliderHeight,
+                // 按下时滑块鼓出栏外——这是故意的，像一团液体被按得涨出边界。
+                pressedScale = PressedSliderScale,
                 onDragStarted = { size, position ->
                     downX = position.x
                     following = false
@@ -207,30 +204,19 @@ fun GlassTabBar(
             }
         }
 
-        // ① 可见层：真正承载内容的玻璃胶囊。
+        // ① 可见层：真正承载内容的玻璃栏。
         Row(
             modifier = Modifier
                 .graphicsLayer { translationX = panelShift(dragOffset.value) }
                 .drawBackdrop(
                     backdrop = backdrop,
-                    shape = { Capsule() },
-                    effects = {
-                        vibrancy()
-                        blur(8.dp.toPx())
-                        lens(24.dp.toPx(), 24.dp.toPx())
-                    },
+                    shape = { BarShape },
+                    // 和卡片同一种玻璃（见 glassEffects），只是模糊稍重一点，见 BarBlur。
+                    effects = { glassEffects(GlassRadius.Large, BarBlur) },
                     layerBlock = {
                         // 按下时整条栏也胀一点点，这样滑块的鼓起看着是"顶着"外壳，
                         // 而不是单独一块在动。
-                        //
-                        // 宽度为 0 时必须早退：16/0 得 Inf，而 lerp(1, Inf, 0) 是
-                        // Inf * 0 = NaN，拿 NaN 当 scale 会让整条栏直接不绘制。
-                        val scale =
-                            if (size.width > 0f) {
-                                lerp(1f, 1f + 16.dp.toPx() / size.width, drag.pressProgress)
-                            } else {
-                                1f
-                            }
+                        val scale = lerp(1f, PressedBarScale, drag.pressProgress)
                         scaleX = scale
                         scaleY = scale
                     },
@@ -259,13 +245,10 @@ fun GlassTabBar(
                     .graphicsLayer { translationX = panelShift(dragOffset.value) }
                     .drawBackdrop(
                         backdrop = backdrop,
-                        shape = { Capsule() },
-                        effects = {
-                            vibrancy()
-                            blur(8.dp.toPx())
-                            val p = drag.pressProgress
-                            lens(24.dp.toPx() * p, 24.dp.toPx() * p)
-                        },
+                        shape = { SliderShape },
+                        // 和①一样的玻璃：滑块平时露出的就是这一层，两层透出来的字要接得上，
+                        // 不然滑块边上背后的字会错开一截。
+                        effects = { glassEffects(GlassRadius.Large - BarPadding, BarBlur) },
                         highlight = { Highlight.Default.copy(alpha = drag.pressProgress) },
                         onDrawSurface = { drawRect(colors.glassTintStrong) },
                     )
@@ -290,9 +273,9 @@ fun GlassTabBar(
                 }
                 .drawBackdrop(
                     backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop),
-                    shape = { Capsule() },
+                    shape = { SliderShape },
                     effects = {
-                        // 折射强度跟着按压走：松手时滑块只是一块淡色胶囊，按下去才
+                        // 折射强度跟着按压走：松手时滑块只是一块淡色玻璃，按下去才
                         // 真正变成透镜，把底下的图标掰弯。色散让边缘透出一点彩边。
                         val p = drag.pressProgress
                         lens(10.dp.toPx() * p, 14.dp.toPx() * p, chromaticAberration = true)
@@ -307,7 +290,7 @@ fun GlassTabBar(
                         scaleX = drag.scaleX
                         scaleY = drag.scaleY
                         // 按移动速度横向拉长、纵向压扁，再加上体积守恒的那点手感：
-                        // 这是"液体"而不是"一块胶囊在平移"的全部来源。
+                        // 这是"液体"而不是"一块圆角矩形在平移"的全部来源。
                         // 取绝对值：往左甩和往右甩应该是同一种形变（catalog 里直接用带
                         // 符号的速度，往左甩会变成横向压扁）。
                         val v = abs(drag.velocity) / 10f
@@ -397,7 +380,31 @@ private fun GraphicsLayerScope.panelShift(dragPx: Float): Float {
     return 4.dp.toPx() * fraction.sign * EaseOut.transform(abs(fraction))
 }
 
-private val BarHeight = 64.dp
-private val SliderHeight = 56.dp
-private val PressedSliderHeight = 74.dp
-private val BarPadding = 4.dp
+private val BarHeight = 56.dp
+
+/**
+ * 栏的模糊。液态玻璃的畸变感来自**轻模糊 + 强折射**：背后的字基本看得清，边缘把它们放大、
+ * 掰弯。糊重了（以前是 8dp）字先变成一团团色块，折射掰弯色块是看不出来的，就只剩高斯模糊。
+ */
+private val BarBlur = 2.dp
+
+/** 滑块和栏边缘之间的间距。为 0 时滑块正好贴满栏的边缘。 */
+private val BarPadding = 2.dp
+
+/**
+ * 滑块平时的高度和圆角都从栏推出来，不单独给：高度是栏高减去上下间距，圆角是栏的圆角
+ * 减去间距（两圈边同心）。这样不管栏怎么调，滑块平时最多贴到栏的边缘，不会戳出去——
+ * 单独给的话，滑块和栏一样高、圆角又比栏小，四个角就会从栏的圆角外面露出来。
+ */
+private val SliderHeight = BarHeight - BarPadding * 2
+private val BarShape = LargeShape
+private val SliderShape = RoundedCornerShape(GlassRadius.Large - BarPadding)
+
+/**
+ * 按住时滑块放大到原来的几倍。会鼓出栏外，每边溢出滑块高度的 (倍数 − 1) / 2，
+ * 1.4 就是上下各 20%。外层给栏留的上下间距要容得下这一截。
+ */
+private const val PressedSliderScale = 1.4f
+
+/** 按住时整条栏跟着胀大的倍数。 */
+private const val PressedBarScale = 1.05f
