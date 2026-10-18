@@ -47,7 +47,8 @@ fun GlassSurface(
             effects = {
                 lens(
                     refractionHeight = cornerRadiusPx * 0.5f,
-                    refractionAmount = -cornerRadiusPx,
+                    // 必须是正数：库里 refractionAmount <= 0 会直接 return，什么都不做。
+                    refractionAmount = cornerRadiusPx,
                     depthEffect = true,
                 )
                 blur(radius = blurPx)

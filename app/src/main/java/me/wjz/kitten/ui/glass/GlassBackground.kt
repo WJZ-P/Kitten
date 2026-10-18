@@ -52,8 +52,11 @@ fun GlassBackground(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .drawBehind { drawAurora() }
-                .layerBackdrop(backdrop),
+                // 顺序不能换：layerBackdrop 只录它右边的绘制。写成 drawBehind { }.layerBackdrop()
+                // 的话光晕画在录制范围外面，录下来的是一张空图——所有玻璃都在折射"什么都没有"，
+                // tab 栏的滑块也因此是透明的，盖不住底下那排图标。
+                .layerBackdrop(backdrop)
+                .drawBehind { drawAurora() },
         )
         // 内容是上面那层的兄弟，盖在它上面，不参与录制。
         content()
