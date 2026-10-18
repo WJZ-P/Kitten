@@ -1,5 +1,6 @@
 package me.wjz.kitten.ui
 
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -8,6 +9,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -24,6 +27,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -47,6 +51,19 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 当前 tab 就够了，引一套导航框架只会多一层间接。等真要做"会话详情"这类深层页面时
  * 再引也不迟——那时候才用得上它的返回栈。
  *
+ * ## 三个页面装在 HorizontalPager 里
+ *
+ * 以前是 `when (currentTab)` 直接换页面：切走的页面被整个丢掉，切回来再重新组合。
+ * 设置页一组合就是十几块玻璃加上读配置、读权限状态，每次切过去都卡一下。
+ *
+ * 现在三页放进 [HorizontalPager]，`beyondViewportPageCount` 让三页始终组合着，切换只是
+ * 把它们横向滑过来，自带左滑 / 右滑的过渡。代价是三页的副作用都会在启动时就跑起来——
+ * 比如设置页回到前台时的自动配置和自动连接 ADB，以前要等用户点进设置页才会触发。
+ *
+ * 不接受手指左右滑（`userScrollEnabled = false`）：对话页的左缘右滑是拉出历史会话的
+ * 抽屉，设置页里还有开关、滑条、横向滚动的 chip，都要抢横向手势。页面能被手指拖动的话，
+ * 这几处都得逐个协调谁先谁后，眼下收益抵不上复杂度。真要开，改这一个参数即可。
+ *
  * ## backdrop 为什么建在这里
  *
  * 它是连接"背景"和"玻璃"的句柄，必须在两者**共同的父级**创建。所有页面的玻璃卡片
@@ -62,6 +79,17 @@ fun KittenApp(actions: SetupActions) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val backdrop = rememberLayerBackdrop()
+    val tabs = KittenTab.entries
+    val pagerState = rememberPagerState(initialPage = currentTab.ordinal) { tabs.size }
+    val focusManager = LocalFocusManager.current
+
+    // 选中项一变就滑过去。从对话直接切到设置会滑过中间的任务页，方向和距离都和底部
+    // 滑块一致，用户能看出自己是往哪边走的。
+    LaunchedEffect(currentTab) {
+        // 三页常驻意味着离开的那页还活着：上面的输入框要是还聚焦着，键盘会一直开着。
+        focusManager.clearFocus()
+        pagerState.animateScrollToPage(currentTab.ordinal, animationSpec = PageSlideSpec)
+    }
 
     // 错误用 snackbar 提示完就清掉，否则切走再回来会重复弹。
     LaunchedEffect(chatState.error) {
@@ -113,21 +141,31 @@ fun KittenApp(actions: SetupActions) {
                 )
 
                 Box(modifier = Modifier.weight(1f)) {
-                    when (currentTab) {
-                        KittenTab.Chat -> ChatScreen(
-                            state = chatState,
-                            backdrop = backdrop,
-                            onSend = chatViewModel::send,
-                            onOpenSettings = { currentTab = KittenTab.Settings },
-                        )
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize(),
+                        // 三页全部常驻：不预先组合的话，第一次切到设置页要现场组合十几块玻璃、
+                        // 读配置和权限状态，会卡一下。
+                        beyondViewportPageCount = tabs.size - 1,
+                        // 只跟着底部 tab 走，不接手指左右滑。原因见类注释。
+                        userScrollEnabled = false,
+                    ) { page ->
+                        when (tabs[page]) {
+                            KittenTab.Chat -> ChatScreen(
+                                state = chatState,
+                                backdrop = backdrop,
+                                onSend = chatViewModel::send,
+                                onOpenSettings = { currentTab = KittenTab.Settings },
+                            )
 
-                        KittenTab.Task -> TaskScreen()
+                            KittenTab.Task -> TaskScreen()
 
-                        KittenTab.Settings -> SettingsScreen(
-                            backdrop = backdrop,
-                            actions = actions,
-                            onModelConfigChanged = chatViewModel::refreshModelConfig,
-                        )
+                            KittenTab.Settings -> SettingsScreen(
+                                backdrop = backdrop,
+                                actions = actions,
+                                onModelConfigChanged = chatViewModel::refreshModelConfig,
+                            )
+                        }
                     }
 
                     SnackbarHost(
@@ -148,3 +186,6 @@ fun KittenApp(actions: SetupActions) {
         }
     }
 }
+
+/** 页面滑动：临界阻尼，不回弹。和底部滑块的位置弹簧同一种性格，两者一起动时不会各走各的。 */
+private val PageSlideSpec = spring<Float>(dampingRatio = 1f, stiffness = 400f)
