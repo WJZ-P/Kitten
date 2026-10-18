@@ -38,6 +38,7 @@ import me.wjz.kitten.ui.chat.ChatScreen
 import me.wjz.kitten.ui.chat.ChatViewModel
 import me.wjz.kitten.ui.chat.SessionDrawer
 import me.wjz.kitten.ui.component.GlassBackground
+import me.wjz.kitten.ui.component.GlassOverlayHost
 import me.wjz.kitten.ui.settings.SettingsScreen
 import me.wjz.kitten.ui.setup.SetupActions
 import me.wjz.kitten.ui.task.TaskScreen
@@ -129,80 +130,85 @@ fun KittenApp(actions: SetupActions) {
             // 一次要重算的就越多（实测设置页是对话页的一倍半）。所以只在对话页和任务页动。
             animate = currentTab != KittenTab.Settings,
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    // 内容避开状态栏和导航栏，但背景依然铺满整屏——这是沉浸式的做法。
-                    .windowInsetsPadding(WindowInsets.systemBars),
-            ) {
-                KittenTopBar(
-                    title = when (currentTab) {
-                        KittenTab.Chat -> chatState.title.ifBlank { "新对话" }
-                        KittenTab.Task -> "任务"
-                        KittenTab.Settings -> "设置"
-                    },
-                    // 两个按钮只在对话页出现：任务页和设置页既没有历史会话也没有"新建"。
-                    showSessionActions = currentTab == KittenTab.Chat,
-                    onOpenDrawer = { scope.launch { drawerState.open() } },
-                    onNewSession = chatViewModel::startNewSession,
-                )
+            // 下拉菜单这类浮层画在这一层上，盖住整个界面（包括顶栏和底部栏）。它必须在
+            // GlassBackground 里面、和背景是兄弟，浮层的玻璃才折射得到背景。见 GlassOverlayHost。
+            GlassOverlayHost(modifier = Modifier.fillMaxSize()) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        // 内容避开状态栏和导航栏，但背景依然铺满整屏——这是沉浸式的做法。
+                        .windowInsetsPadding(WindowInsets.systemBars),
+                ) {
+                    KittenTopBar(
+                        title = when (currentTab) {
+                            KittenTab.Chat -> chatState.title.ifBlank { "新对话" }
+                            KittenTab.Task -> "任务"
+                            KittenTab.Settings -> "设置"
+                        },
+                        icon = currentTab.icon,
+                        // 两个按钮只在对话页出现：任务页和设置页既没有历史会话也没有"新建"。
+                        showSessionActions = currentTab == KittenTab.Chat,
+                        onOpenDrawer = { scope.launch { drawerState.open() } },
+                        onNewSession = chatViewModel::startNewSession,
+                    )
 
-                Box(modifier = Modifier.weight(1f)) {
-                    HorizontalPager(
-                        state = pagerState,
-                        modifier = Modifier.fillMaxSize(),
-                        // 三页全部常驻：不预先组合的话，第一次切到设置页要现场组合十几块玻璃、
-                        // 读配置和权限状态，会卡一下。
-                        beyondViewportPageCount = tabs.size - 1,
-                        // 只跟着底部 tab 走，不接手指左右滑。原因见类注释。
-                        userScrollEnabled = false,
-                    ) { page ->
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                // 预加载的页面只组合、不绘制。不画的话它们的 RenderNode 不在渲染树里，
-                                // 里面的玻璃就不会跟着背景一起重新模糊、折射——实测停在对话页时，背景每
-                                // 推进一次的 RenderThread 耗时从 20ms 降到 13ms。滑动切换的途中两页都露出来，
-                                // 所以按"离视口还差多少"判断，而不是只画当前页。
-                                .drawWithContent {
-                                    val distance = (pagerState.currentPage - page) +
-                                        pagerState.currentPageOffsetFraction
-                                    if (abs(distance) < 1f) drawContent()
-                                },
-                        ) {
-                            when (tabs[page]) {
-                                KittenTab.Chat -> ChatScreen(
-                                    state = chatState,
-                                    backdrop = backdrop,
-                                    onSend = chatViewModel::send,
-                                    onOpenSettings = { currentTab = KittenTab.Settings },
-                                )
+                    Box(modifier = Modifier.weight(1f)) {
+                        HorizontalPager(
+                            state = pagerState,
+                            modifier = Modifier.fillMaxSize(),
+                            // 三页全部常驻：不预先组合的话，第一次切到设置页要现场组合十几块玻璃、
+                            // 读配置和权限状态，会卡一下。
+                            beyondViewportPageCount = tabs.size - 1,
+                            // 只跟着底部 tab 走，不接手指左右滑。原因见类注释。
+                            userScrollEnabled = false,
+                        ) { page ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    // 预加载的页面只组合、不绘制。不画的话它们的 RenderNode 不在渲染树里，
+                                    // 里面的玻璃就不会跟着背景一起重新模糊、折射——实测停在对话页时，背景每
+                                    // 推进一次的 RenderThread 耗时从 20ms 降到 13ms。滑动切换的途中两页都露出来，
+                                    // 所以按"离视口还差多少"判断，而不是只画当前页。
+                                    .drawWithContent {
+                                        val distance = (pagerState.currentPage - page) +
+                                            pagerState.currentPageOffsetFraction
+                                        if (abs(distance) < 1f) drawContent()
+                                    },
+                            ) {
+                                when (tabs[page]) {
+                                    KittenTab.Chat -> ChatScreen(
+                                        state = chatState,
+                                        backdrop = backdrop,
+                                        onSend = chatViewModel::send,
+                                        onOpenSettings = { currentTab = KittenTab.Settings },
+                                    )
 
-                                KittenTab.Task -> TaskScreen()
+                                    KittenTab.Task -> TaskScreen()
 
-                                KittenTab.Settings -> SettingsScreen(
-                                    backdrop = backdrop,
-                                    actions = actions,
-                                    onModelConfigChanged = chatViewModel::refreshModelConfig,
-                                )
+                                    KittenTab.Settings -> SettingsScreen(
+                                        backdrop = backdrop,
+                                        actions = actions,
+                                        onModelConfigChanged = chatViewModel::refreshModelConfig,
+                                    )
+                                }
                             }
                         }
+
+                        SnackbarHost(
+                            hostState = snackbarHostState,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 8.dp),
+                        )
                     }
 
-                    SnackbarHost(
-                        hostState = snackbarHostState,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .padding(bottom = 8.dp),
+                    KittenBottomBar(
+                        backdrop = backdrop,
+                        current = currentTab,
+                        onSelect = { currentTab = it },
+                        modifier = Modifier.fillMaxWidth(),
                     )
                 }
-
-                KittenBottomBar(
-                    backdrop = backdrop,
-                    current = currentTab,
-                    onSelect = { currentTab = it },
-                    modifier = Modifier.fillMaxWidth(),
-                )
             }
         }
     }

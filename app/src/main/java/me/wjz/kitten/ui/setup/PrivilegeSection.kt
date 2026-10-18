@@ -50,12 +50,14 @@ fun PrivilegeSection(
     GlassSection(
         backdrop = backdrop,
         title = stringResource(R.string.setup_privilege_title),
+        icon = Icons.Filled.Build,
         modifier = modifier,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = GlassContentPadding, vertical = 10.dp),
+                .padding(horizontal = GlassContentPadding)
+                .padding(top = 6.dp, bottom = 10.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             // ADB 侧的进度只在还没就绪时才有意义。已经 Ready 了还追加一句

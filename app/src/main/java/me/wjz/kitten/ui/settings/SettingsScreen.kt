@@ -11,8 +11,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.MaterialTheme
@@ -90,7 +92,7 @@ fun SettingsScreen(
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         ModelConfigSection(
             backdrop = backdrop,
@@ -103,7 +105,7 @@ fun SettingsScreen(
             },
         )
 
-        GlassSection(backdrop = backdrop, title = "权限") {
+        GlassSection(backdrop = backdrop, title = "权限", icon = Icons.Filled.Lock) {
             PermissionItem(
                 backdrop = backdrop,
                 icon = Icons.Filled.Face,
@@ -148,6 +150,7 @@ private fun ComponentPreviewSection(backdrop: Backdrop, modifier: Modifier = Mod
     GlassSection(
         backdrop = backdrop,
         title = "组件预览",
+        icon = Icons.Filled.Favorite,
         footer = "mock，不接任何逻辑。按下就有反馈，松手才算数：按住开关拖回原处、" +
             "或者从滑条上开始滚动页面，都会退回原样。",
         modifier = modifier,

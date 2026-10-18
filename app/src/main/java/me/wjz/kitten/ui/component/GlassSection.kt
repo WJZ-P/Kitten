@@ -7,15 +7,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -25,15 +22,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
- * 设置页式的分组：标题在玻璃外面，条目装在一整块玻璃里。
+ * 设置页式的分组：一整块玻璃，表头（图标 + 标题）、条目、脚注都装在里面。
  *
- * 标题前那一小截强调色竖条用来分段；标题文字本身保持次要色，不用粗体去抢内容的注意力。
+ * 标题不放在玻璃外面：卡片之间的空白里飘着两个小字，看着像是多出来的，上轻下重；
+ * 收进卡片做成表头，一块卡片就是一个完整的单元。
  *
  * 条目之间的分隔线由调用方放 [GlassDivider]：有的分组里是一排列表项，有的是一段说明
  * 加一个按钮，自动插分隔线反而会插错地方。
@@ -43,57 +43,62 @@ fun GlassSection(
     backdrop: Backdrop,
     modifier: Modifier = Modifier,
     title: String? = null,
+    icon: ImageVector? = null,
     footer: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(
+    GlassSurface(
+        backdrop = backdrop,
         modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        if (title != null) SectionTitle(title)
-        GlassSurface(
-            backdrop = backdrop,
-            modifier = Modifier.fillMaxWidth(),
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 6.dp),
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 6.dp),
-                content = content,
-            )
-        }
-        if (footer != null) {
-            Text(
-                text = footer,
-                style = MaterialTheme.typography.labelSmall,
-                color = KittenTheme.colors.textTertiary,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
+            if (title != null) SectionHeader(title = title, icon = icon)
+            content()
+            if (footer != null) {
+                Text(
+                    text = footer,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = KittenTheme.colors.textTertiary,
+                    modifier = Modifier.padding(
+                        start = GlassContentPadding,
+                        end = GlassContentPadding,
+                        top = 4.dp,
+                        bottom = 10.dp,
+                    ),
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun SectionTitle(text: String) {
+private fun SectionHeader(title: String, icon: ImageVector?) {
     val colors = KittenTheme.colors
     Row(
-        modifier = Modifier.padding(start = 4.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = GlassContentPadding, end = GlassContentPadding, top = 10.dp, bottom = 4.dp)
+            .semantics { heading() },
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Box(
-            modifier = Modifier
-                .size(width = 3.dp, height = 12.dp)
-                .background(
-                    brush = Brush.verticalGradient(listOf(colors.accentLight, colors.accentDeep)),
-                    shape = RoundedCornerShape(1.5.dp),
-                ),
-        )
-        Spacer(modifier = Modifier.width(8.dp))
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = colors.accentStrong,
+                modifier = Modifier.size(20.dp),
+            )
+        }
         Text(
-            text = text,
-            style = MaterialTheme.typography.labelLarge,
-            color = colors.textSecondary,
-            letterSpacing = 1.sp,
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = colors.textPrimary,
         )
     }
 }

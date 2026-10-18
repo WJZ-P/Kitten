@@ -6,13 +6,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,9 +29,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.shadow.Shadow
 import me.wjz.kitten.ui.theme.KittenTheme
 
@@ -72,8 +67,6 @@ fun GlassButton(
     val glow = rememberGlassGlow { press.pressProgress.coerceIn(0f, 1f) }
     val isPrimary = style == GlassButtonStyle.Primary
     val colors = KittenTheme.colors
-    val radius = if (compact) GlassRadius.Small else GlassRadius.Medium
-    val shape = remember(radius) { RoundedCornerShape(radius) }
     val contentColor = if (isPrimary) colors.onAccent else colors.textPrimary
 
     Box(
@@ -96,13 +89,9 @@ fun GlassButton(
             .alpha(if (enabled) 1f else DisabledAlpha)
             .drawBackdrop(
                 backdrop = backdrop,
-                shape = { shape },
-                effects = {
-                    vibrancy()
-                    blur(4.dp.toPx())
-                    val radiusPx = radius.toPx()
-                    lens(radiusPx * 0.6f, radiusPx * 0.8f)
-                },
+                // 按钮都嵌在卡片里，统一用小一档的圆角，和输入框对齐。
+                shape = { SmallShape },
+                effects = { glassEffects(GlassRadius.Small) },
                 highlight = { GlassRim },
                 shadow = { ButtonShadow },
                 layerBlock = {
@@ -123,7 +112,7 @@ fun GlassButton(
                             ),
                         )
                     } else {
-                        drawRect(colors.glassTint)
+                        drawRect(colors.controlTint)
                     }
                     drawGlassGlow(
                         glow = glow,

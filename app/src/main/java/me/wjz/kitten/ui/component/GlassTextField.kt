@@ -21,8 +21,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -34,20 +32,23 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.shadow.InnerShadow
 import me.wjz.kitten.ui.theme.KittenColors
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
  * 玻璃输入框。
  *
- * ## 为什么是"凹下去的槽"而不是又一块玻璃
+ * 和卡片是同一种玻璃（[glassEffects]）：边缘一样会把背景掰弯、带一点色散。区别在于它是
+ * **凹下去的**——上沿一道很淡的内阴影，不投外阴影，底色比卡片略白一点。浮起来的是可以
+ * 按的，凹下去的是可以填的，一眼就能分清。
  *
- * 输入框总是放在分组卡片里面。卡片已经是一块浮起来的玻璃了，里面再浮一块玻璃会让
- * 层级乱掉——而且玻璃折射不到另一块玻璃（见 [GlassBackground]），叠起来也没有效果。
- * 所以输入框反过来做成往下凹的槽：上沿一道内阴影、一圈细边。浮起来的是可以按的，
- * 凹下去的是可以填的，一眼就能分清。
+ * 玻璃折射不到另一块玻璃（见 [GlassBackground]），所以它透过卡片看到的是背景本身，
+ * 不是卡片——这正好：嵌在卡片里的输入框像是在卡片上开了一扇更清透的窗。
  *
- * 聚焦时底部有一道强调色的线从起始边延伸到整条，标签同时变成强调色。
+ * 聚焦时边框和标签变成强调色，底部一道强调色的线从起始边延伸到整条。
  *
  * Material 的 `TextField` 自带不透明容器，会把玻璃效果整个盖住，所以基于
  * [BasicTextField] 自己画。
@@ -57,6 +58,7 @@ fun GlassTextField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String,
+    backdrop: Backdrop,
     modifier: Modifier = Modifier,
     placeholder: String = "",
     singleLine: Boolean = true,
@@ -96,13 +98,7 @@ fun GlassTextField(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(MediumShape)
-                        .drawBehind { drawWell(focusProgress, colors) }
-                        .border(
-                            width = 1.dp,
-                            color = lerp(colors.hairline, colors.accent.copy(alpha = 0.8f), focusProgress),
-                            shape = MediumShape,
-                        )
+                        .glassWell(backdrop = backdrop, colors = colors, active = focusProgress)
                         .heightIn(min = 44.dp)
                         .padding(start = 14.dp, end = if (trailing != null) 4.dp else 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -129,20 +125,43 @@ fun GlassTextField(
     }
 }
 
-private fun DrawScope.drawWell(focus: Float, colors: KittenColors) {
-    drawRect(colors.inputWell)
-    // 内阴影：上沿一道暗色渐隐，看起来是往下凹的，而不是浮起来的。
-    drawRect(
-        brush = Brush.verticalGradient(
-            colors = listOf(Color.Black.copy(alpha = 0.05f), Color.Transparent),
-            startY = 0f,
-            endY = 6.dp.toPx(),
-        ),
+/**
+ * 输入框那种凹下去的玻璃槽。[GlassTextField] 和 [GlassDropdown] 收起时共用这一个样子。
+ *
+ * @param active 0..1，聚焦（或者菜单展开）的程度：边框变成强调色，底部一道强调色的线
+ *   从起始边延伸到整条。
+ * @param onDrawSurface 画在底色上面、内容下面，比如按压时的光雾。
+ */
+internal fun Modifier.glassWell(
+    backdrop: Backdrop,
+    colors: KittenColors,
+    active: Float,
+    onDrawSurface: DrawScope.() -> Unit = {},
+): Modifier = this
+    .drawBackdrop(
+        backdrop = backdrop,
+        shape = { SmallShape },
+        effects = { glassEffects(GlassRadius.Small) },
+        highlight = { GlassRim },
+        // 凹进卡片里的东西不投外阴影。
+        shadow = null,
+        innerShadow = { WellInnerShadow },
+        onDrawSurface = {
+            drawWell(active, colors)
+            onDrawSurface()
+        },
     )
-    if (focus > 0.001f) {
-        // 聚焦线从起始边延伸出来。
+    .border(
+        width = 1.dp,
+        color = lerp(colors.hairline, colors.accent.copy(alpha = 0.8f), active.coerceIn(0f, 1f)),
+        shape = SmallShape,
+    )
+
+private fun DrawScope.drawWell(active: Float, colors: KittenColors) {
+    drawRect(colors.controlTint)
+    if (active > 0.001f) {
         val lineHeight = 2.dp.toPx()
-        val width = size.width * focus.coerceIn(0f, 1f)
+        val width = size.width * active.coerceIn(0f, 1f)
         val left = if (layoutDirection == LayoutDirection.Ltr) 0f else size.width - width
         drawRect(
             brush = Brush.horizontalGradient(listOf(colors.accentLight, colors.accentDeep)),
@@ -151,3 +170,6 @@ private fun DrawScope.drawWell(focus: Float, colors: KittenColors) {
         )
     }
 }
+
+/** 上沿一道很淡的内阴影：槽是凹进卡片里的。 */
+private val WellInnerShadow = InnerShadow(radius = 5.dp, color = Color.Black.copy(alpha = 0.10f))

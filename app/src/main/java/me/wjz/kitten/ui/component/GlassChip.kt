@@ -71,7 +71,7 @@ fun GlassChip(
             }
             .clip(SmallShape)
             .drawBehind {
-                drawRect(colors.glassTint)
+                drawRect(colors.controlTint)
                 drawRect(colors.accent, alpha = fill * 0.9f)
                 drawGlassGlow(
                     glow = glow,

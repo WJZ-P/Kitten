@@ -47,7 +47,12 @@ data class KittenColors(
     val backgroundMistLight: Color,
     val backgroundDots: Color,
 
-    /** 玻璃表面的底色：半透明的白，比背景更白一点才"浮"得起来。 */
+    /**
+     * 内容玻璃（分组卡片、消息气泡、输入栏）的底色。
+     *
+     * 是一层淡淡的深天依蓝，不是白：背景本身就很浅、而且一直在动，玻璃要是比它还白，
+     * 两者就糊成一片，分不清哪里是内容。压深一档，内容才从背景里站出来。
+     */
     val glassTint: Color,
     /** 比 [glassTint] 更实一点的玻璃，tab 栏这种要压住下面滚动内容的地方用。 */
     val glassTintStrong: Color,
@@ -55,8 +60,11 @@ data class KittenColors(
     val sliderIdle: Color,
     /** 分隔线、chip 和输入框的边。 */
     val hairline: Color,
-    /** 输入框的底。 */
-    val inputWell: Color,
+    /**
+     * 卡片里的控件（输入框、次要按钮、chip）的底色：比卡片亮一档。卡片往深里走、控件往
+     * 亮里走，背景 → 卡片 → 控件三层一眼就分得开。
+     */
+    val controlTint: Color,
     /** 开关、滑条的空轨道。 */
     val trackOff: Color,
     /** 侧滑抽屉的底色（Material 的 Sheet 不透明，没法用玻璃）。 */
@@ -102,13 +110,13 @@ val LightKittenColors = KittenColors(
     backgroundMistLight = Color.White,
     backgroundDots = Ink.copy(alpha = 0.07f),
 
-    glassTint = Color.White.copy(alpha = 0.45f),
+    // 给得很薄：只把背景压深一点，玻璃的质感还是来自透过去看到的、被边缘掰弯的背景。
+    glassTint = Tianyi500.copy(alpha = 0.12f),
     glassTintStrong = Neutral50.copy(alpha = 0.4f),
     // catalog 浅色主题这里是 10% 的黑，压在天依蓝背景上像一块脏灰，换成淡天依蓝。
     sliderIdle = Tianyi400.copy(alpha = 0.22f),
     hairline = Ink.copy(alpha = 0.10f),
-    // 浅色玻璃上往暗里压会发灰，输入框的凹陷感交给内阴影和细边，底色反而更白一点。
-    inputWell = Color.White.copy(alpha = 0.6f),
+    controlTint = Color.White.copy(alpha = 0.45f),
     trackOff = SystemGray.copy(alpha = 0.2f),
     drawer = Tianyi50,
 

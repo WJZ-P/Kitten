@@ -1,5 +1,6 @@
 package me.wjz.kitten.ui
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
@@ -42,6 +44,7 @@ enum class KittenTab(val label: String, val icon: ImageVector) {
 @Composable
 fun KittenTopBar(
     title: String,
+    icon: ImageVector,
     showSessionActions: Boolean,
     onOpenDrawer: () -> Unit,
     onNewSession: () -> Unit,
@@ -59,13 +62,22 @@ fun KittenTopBar(
                 Icon(Icons.Filled.Menu, contentDescription = "历史会话", tint = KittenTheme.colors.textPrimary)
             }
         } else {
-            // 占位，让标题在三个 tab 之间保持同一个位置，切换时不会左右跳。
-            androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(48.dp))
+            // 没有菜单按钮的页面，在同一个位置放这一页的图标：标题在三个 tab 之间保持同一个
+            // 位置，切换时不会左右跳，左边也不会空出一块。
+            Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = KittenTheme.colors.accentStrong,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
         }
 
         Text(
             text = title,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.SemiBold,
             color = KittenTheme.colors.textPrimary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -78,8 +90,6 @@ fun KittenTopBar(
             IconButton(onClick = onNewSession) {
                 Icon(Icons.Filled.Add, contentDescription = "新对话", tint = KittenTheme.colors.textPrimary)
             }
-        } else {
-            androidx.compose.foundation.layout.Spacer(modifier = Modifier.size(48.dp))
         }
     }
 }
