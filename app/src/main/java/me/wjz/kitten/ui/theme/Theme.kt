@@ -1,71 +1,61 @@
 package me.wjz.kitten.ui.theme
 
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 
-/** 品牌色。它太浅，在浅色背景上承载文字时对比度不够，所以浅色主题的主色用更深的色调。 */
-val KittenBlue = Color(0xFF66CCFF)
-
-private val LightColors = lightColorScheme(
-    primary = Color(0xFF00668A),
-    onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFC4E7FF),
-    onPrimaryContainer = Color(0xFF001E2C),
-    secondary = Color(0xFF4E616D),
-    onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFD1E5F4),
-    onSecondaryContainer = Color(0xFF0A1E28),
-    tertiary = KittenBlue,
-    background = Color(0xFFF6FAFE),
-    onBackground = Color(0xFF171C1F),
-    surface = Color(0xFFF6FAFE),
-    onSurface = Color(0xFF171C1F),
-    surfaceVariant = Color(0xFFDCE3E9),
-    onSurfaceVariant = Color(0xFF41484D),
-    outline = Color(0xFF71787E),
+/**
+ * Material 组件（弹窗、Snackbar、调试卡片）的配色，和 [LightKittenColors] 取自同一张色板。
+ *
+ * primary 用 [Tianyi700] 而不是天依蓝本色：Material 按钮是白字压在 primary 上，本色太浅，
+ * 对比度不够。
+ */
+private val LightMaterialColors = lightColorScheme(
+    primary = Tianyi700,
+    onPrimary = Color.White,
+    primaryContainer = Tianyi150,
+    onPrimaryContainer = Tianyi950,
+    secondary = Slate600,
+    onSecondary = Color.White,
+    secondaryContainer = Slate100,
+    onSecondaryContainer = Slate950,
+    tertiary = Tianyi400,
+    background = Tianyi50,
+    onBackground = Ink,
+    surface = Tianyi50,
+    onSurface = Ink,
+    surfaceVariant = Neutral200,
+    onSurfaceVariant = Slate700,
+    outline = Slate500,
 )
 
-private val DarkColors = darkColorScheme(
-    primary = KittenBlue,
-    onPrimary = Color(0xFF00344A),
-    primaryContainer = Color(0xFF004C69),
-    onPrimaryContainer = Color(0xFFC4E7FF),
-    secondary = Color(0xFFB5C9D7),
-    onSecondary = Color(0xFF20333E),
-    secondaryContainer = Color(0xFF364955),
-    onSecondaryContainer = Color(0xFFD1E5F4),
-    tertiary = KittenBlue,
-    background = Color(0xFF0F1417),
-    onBackground = Color(0xFFDEE3E7),
-    surface = Color(0xFF0F1417),
-    onSurface = Color(0xFFDEE3E7),
-    surfaceVariant = Color(0xFF41484D),
-    onSurfaceVariant = Color(0xFFC0C7CD),
-    outline = Color(0xFF8B9297),
-)
-
+/**
+ * Kitten 的主题：天依蓝 + 白。
+ *
+ * 同时提供两套配色——玻璃界面用的 [KittenTheme.colors]，Material 组件用的
+ * `MaterialTheme.colorScheme`。两者都从 `Color.kt` 的同一张色板取值，颜色只定义一次。
+ *
+ * ## 为什么只有浅色
+ *
+ * 玻璃界面目前只设计了浅色这一套。以前这里也有深色方案和 Android 12 的动态取色，但它们
+ * 只作用于 Material 组件，玻璃界面不跟着变——系统一开深色模式，弹窗变黑、页面还是浅色，
+ * 反而更乱。所以先拿掉，等真要做深色时：给出一份 `DarkKittenColors` 和对应的 Material
+ * 配色，在这里按 `isSystemInDarkTheme()` 一起切换即可，组件不用改。
+ */
 @Composable
-fun KittenTheme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // 默认关闭：在 Android 12+ 上，根据壁纸生成的动态配色会覆盖掉品牌蓝。
-    dynamicColor: Boolean = false,
-    content: @Composable () -> Unit,
-) {
-    val colorScheme = when {
-        // 动态配色是 API 31 起的能力，minSdk 已经是 33，不用再判版本。
-        dynamicColor -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-        darkTheme -> DarkColors
-        else -> LightColors
+fun KittenTheme(content: @Composable () -> Unit) {
+    CompositionLocalProvider(LocalKittenColors provides LightKittenColors) {
+        MaterialTheme(colorScheme = LightMaterialColors, content = content)
     }
-    MaterialTheme(colorScheme = colorScheme, content = content)
+}
+
+/** 读取当前主题的入口，用法和 `MaterialTheme.colorScheme` 一样：`KittenTheme.colors.accent`。 */
+object KittenTheme {
+    val colors: KittenColors
+        @Composable
+        @ReadOnlyComposable
+        get() = LocalKittenColors.current
 }
