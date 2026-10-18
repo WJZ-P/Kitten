@@ -3,6 +3,7 @@ package me.wjz.kitten.ui.settings
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -63,6 +64,9 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 权限状态每次回到前台都要重读：用户是去系统设置里开关的，App 这边收不到回调。
  *
  * 页面本身不再放"设置"大标题：顶栏已经写着了，再写一遍只是占地方。
+ *
+ * @param contentPadding 滚动内容四周额外留的空白。底部栏浮在页面上面，靠它让最后一张卡片
+ *   能滚到栏的上方。
  */
 @Composable
 fun SettingsScreen(
@@ -70,6 +74,7 @@ fun SettingsScreen(
     actions: SetupActions,
     onModelConfigChanged: () -> Unit,
     modifier: Modifier = Modifier,
+    contentPadding: PaddingValues = PaddingValues(),
 ) {
     val context = LocalContext.current
     val controller = remember(context) { WirelessDebugController.getInstance(context) }
@@ -91,6 +96,8 @@ fun SettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
+            // 留白放在滚动内容里面：内容能一直滚到底部栏后面，滚到底时最后一张卡片又能完整露出来。
+            .padding(contentPadding)
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {

@@ -6,9 +6,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.add
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.DrawerValue
@@ -28,10 +34,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.launch
 import me.wjz.kitten.ui.chat.ChatScreen
@@ -82,9 +92,20 @@ fun KittenApp(actions: SetupActions) {
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     val backdrop = rememberLayerBackdrop()
+    // 页面内容。底部栏浮在页面上面，要折射的是"背景 + 页面"，不只是背景。
+    val pageBackdrop = rememberLayerBackdrop()
+    val behindBarBackdrop = rememberCombinedBackdrop(backdrop, pageBackdrop)
     val tabs = KittenTab.entries
     val pagerState = rememberPagerState(initialPage = currentTab.ordinal) { tabs.size }
     val focusManager = LocalFocusManager.current
+    val density = LocalDensity.current
+    // 底部栏的实际高度（含它上下的留白）。栏浮在页面上面，页面要自己给它留出位置。
+    var bottomBarHeight by remember { mutableStateOf(0.dp) }
+    // 栏占的那一截和键盘，取高的那个：键盘没弹时停在栏上面，弹起时贴着键盘（栏被键盘盖住）。
+    // 要带上导航栏：外层已经让过了导航栏，这里的值会被扣掉导航栏那一截，加回来才对得上。
+    val aboveBarOrIme = WindowInsets.navigationBars
+        .add(WindowInsets(bottom = bottomBarHeight))
+        .union(WindowInsets.ime)
 
     // 选中项一变就滑过去。从对话直接切到设置会滑过中间的任务页，方向和距离都和底部
     // 滑块一致，用户能看出自己是往哪边走的。
@@ -137,6 +158,10 @@ fun KittenApp(actions: SetupActions) {
                     modifier = Modifier
                         .fillMaxSize()
                         // 内容避开状态栏和导航栏，但背景依然铺满整屏——这是沉浸式的做法。
+                        //
+                        // 键盘不在这里让：在这里让的话整列都被顶上去，底部栏也跟着浮在键盘上面，
+                        // 而切页面不是打字时要做的事。键盘由每一页自己让（见下面的 when），
+                        // 底部栏留在原地，被键盘盖住。
                         .windowInsetsPadding(WindowInsets.systemBars),
                 ) {
                     KittenTopBar(
@@ -152,10 +177,15 @@ fun KittenApp(actions: SetupActions) {
                         onNewSession = chatViewModel::startNewSession,
                     )
 
+                    // 页面一直铺到底，底部栏浮在页面上面，而不是在页面下面单独占一条。页面滚到
+                    // 栏后面时，栏的玻璃折射得到页面上的字，液态玻璃的效果才出得来。
                     Box(modifier = Modifier.weight(1f)) {
                         HorizontalPager(
                             state = pagerState,
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                // 把页面录一份给底部栏看。栏是页面的兄弟、不在录制范围里，不会成环。
+                                .layerBackdrop(pageBackdrop),
                             // 三页全部常驻：不预先组合的话，第一次切到设置页要现场组合十几块玻璃、
                             // 读配置和权限状态，会卡一下。
                             beyondViewportPageCount = tabs.size - 1,
@@ -176,19 +206,29 @@ fun KittenApp(actions: SetupActions) {
                                     },
                             ) {
                                 when (tabs[page]) {
+                                    // 对话页的输入栏不进栏后面：平时停在栏上面，键盘弹起时贴着键盘。
                                     KittenTab.Chat -> ChatScreen(
                                         state = chatState,
                                         backdrop = backdrop,
                                         onSend = chatViewModel::send,
                                         onOpenSettings = { currentTab = KittenTab.Settings },
+                                        modifier = Modifier.windowInsetsPadding(aboveBarOrIme),
                                     )
 
-                                    KittenTab.Task -> TaskScreen()
+                                    // 内容居中在栏上面那块可见区域里。
+                                    KittenTab.Task -> TaskScreen(
+                                        modifier = Modifier.padding(bottom = bottomBarHeight),
+                                    )
 
+                                    // 设置页滚到栏后面：视口铺到底，只在内容末尾留出栏的高度，
+                                    // 最后一张卡片才滚得上来。键盘弹起时视口缩到键盘上沿，聚焦的
+                                    // 输入框会被滚到键盘上面。
                                     KittenTab.Settings -> SettingsScreen(
                                         backdrop = backdrop,
                                         actions = actions,
                                         onModelConfigChanged = chatViewModel::refreshModelConfig,
+                                        contentPadding = PaddingValues(bottom = bottomBarHeight),
+                                        modifier = Modifier.imePadding(),
                                     )
                                 }
                             }
@@ -198,16 +238,20 @@ fun KittenApp(actions: SetupActions) {
                             hostState = snackbarHostState,
                             modifier = Modifier
                                 .align(Alignment.BottomCenter)
+                                .windowInsetsPadding(aboveBarOrIme)
                                 .padding(bottom = 8.dp),
                         )
-                    }
 
-                    KittenBottomBar(
-                        backdrop = backdrop,
-                        current = currentTab,
-                        onSelect = { currentTab = it },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
+                        KittenBottomBar(
+                            backdrop = behindBarBackdrop,
+                            current = currentTab,
+                            onSelect = { currentTab = it },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .onSizeChanged { bottomBarHeight = with(density) { it.height.toDp() } },
+                        )
+                    }
                 }
             }
         }
