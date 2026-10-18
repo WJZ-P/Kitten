@@ -102,3 +102,11 @@ val GlassCornerRadius = 28.dp
 
 /** 卡片内部留白。玻璃边缘有折射和高光，内容贴太近会糊在一起。 */
 val GlassContentPadding = 20.dp
+
+/**
+ * 玻璃控件的强调色。
+ *
+ * 和背景里那团 [GlowBlue] 同色相：强调色出现在玻璃上时总会和折射到的背景混在一起，
+ * 色相对不上就会显脏。
+ */
+val GlassAccent = Color(0xFF66CCFF)

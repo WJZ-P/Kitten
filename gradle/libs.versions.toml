@@ -13,6 +13,8 @@ conscrypt = "2.5.3"
 okhttp = "4.12.0"
 # 液体玻璃效果（Kotlin Multiplatform 库，Gradle 会自动解析到 backdrop-android）。
 backdrop = "2.0.1"
+# Capsule 等连续圆角形状。backdrop 自己就依赖它，这里版本要跟 backdrop 拉的那份对齐。
+shapes = "1.2.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -31,6 +33,7 @@ sun-security-android = { group = "com.github.MuntashirAkon", name = "sun-securit
 conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", version.ref = "conscrypt" }
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "backdrop" }
+shapes = { group = "io.github.kyant0", name = "shapes", version.ref = "shapes" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
