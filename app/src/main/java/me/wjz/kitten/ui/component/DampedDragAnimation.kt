@@ -1,4 +1,4 @@
-package me.wjz.kitten.ui.glass
+package me.wjz.kitten.ui.component
 
 import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
@@ -47,6 +47,16 @@ import kotlin.math.abs
  * - `velocity` 单独做一条弹簧而不是直接用瞬时速度：原始速度抖得厉害，直接拿去驱动
  *   形变会让滑块高频颤动。
  *
+ * ## 和 catalog 不同的地方
+ *
+ * - 回调带上了手指坐标，松手回调还能区分"抬手"和"被取消"——组件要做到"按下就跟手、
+ *   松手才提交、被外层滚动抢走就复原"，光有位移增量不够。
+ * - 位置动画**自然结束**时把速度弹回 0。catalog 里速度只在位置动画的每一帧更新，动画
+ *   一停就停在最后一次算出的值上，可能不是 0，滑块就一直保持
+ *   被拉长的样子收不回来。
+ * - [animateToValue] 也记录速度。catalog 里只有手指拖动才有速度，点击切换时滑块不会
+ *   被拉长；现在外部改选中项也能看到同样的惯性。
+ *
  * ## 标成 [Stable] 的原因
  *
  * 它的公开读取口（[value]、[pressProgress] 等）全部落在 `Animatable.value` 上，也就是
@@ -54,6 +64,11 @@ import kotlin.math.abs
  *
  * 这不只是形式上的标注：不标的话 Compose 会把捕获了本对象的 lambda 判为不可记忆，
  * 于是 `rememberBackdrop(...) { ... }` 这类调用每次重组都拿到新 key、重建一个 Backdrop。
+ *
+ * @param onDragStarted 手指落下。`size` 是挂着 [modifier] 的那个节点的尺寸。
+ * @param onDrag 手指移动。按下的那一帧也会以零位移调用一次，见 [inspectDragGestures]。
+ * @param onDragStopped 手势结束。`upPosition` 是抬手位置；为 null 表示手势被取消
+ *   （外层滚动容器接管了、或者指针被系统收回），这时组件应该复原而不是提交。
  */
 @Stable
 class DampedDragAnimation(
@@ -63,9 +78,10 @@ class DampedDragAnimation(
     visibilityThreshold: Float,
     private val initialScale: Float,
     private val pressedScale: Float,
-    private val onDragStarted: DampedDragAnimation.(position: Offset) -> Unit = {},
-    private val onDragStopped: DampedDragAnimation.() -> Unit = {},
-    private val onDrag: DampedDragAnimation.(size: IntSize, dragAmount: Offset) -> Unit,
+    private val onDragStarted: DampedDragAnimation.(size: IntSize, position: Offset) -> Unit =
+        { _, _ -> },
+    private val onDragStopped: DampedDragAnimation.(upPosition: Offset?) -> Unit = {},
+    private val onDrag: DampedDragAnimation.(size: IntSize, position: Offset, dragAmount: Offset) -> Unit,
 ) {
     private val valueAnimationSpec = spring(1f, 1000f, visibilityThreshold)
     private val velocityAnimationSpec = spring(0.5f, 300f, visibilityThreshold * 10f)
@@ -91,25 +107,27 @@ class DampedDragAnimation(
     val pressProgress: Float get() = pressProgressAnimation.value
     val scaleX: Float get() = scaleXAnimation.value
     val scaleY: Float get() = scaleYAnimation.value
+
+    /** 归一化速度：每秒走过多少个"值域跨度"。正数朝值增大的方向。 */
     val velocity: Float get() = velocityAnimation.value
 
-    /** 挂在被拖的那个元素上。按下即响应，不等 slop——玻璃要在手指落下的那一帧就鼓起来。 */
+    /** 挂在接收手势的元素上。按下即响应，不等 slop——玻璃要在手指落下的那一帧就鼓起来。 */
     val modifier: Modifier = Modifier.pointerInput(Unit) {
         inspectDragGestures(
             onDragStart = { down ->
-                onDragStarted(down.position)
+                onDragStarted(size, down.position)
                 press()
             },
-            onDragEnd = {
-                onDragStopped()
+            onDragEnd = { up ->
+                onDragStopped(up.position)
                 release()
             },
             onDragCancel = {
-                onDragStopped()
+                onDragStopped(null)
                 release()
             },
-        ) { _, dragAmount ->
-            onDrag(size, dragAmount)
+        ) { change, dragAmount ->
+            onDrag(size, change.position, dragAmount)
         }
     }
 
@@ -143,19 +161,22 @@ class DampedDragAnimation(
     }
 
     /**
-     * 跟手更新：拖动过程中用这个。
+     * 跟手更新：手指还在屏幕上时用这个。
      *
-     * 不做 press/release，因为手指还在屏幕上——鼓起和收缩由 [modifier] 的按下/抬起
-     * 事件负责。这里只把目标值推过去，顺带记录速度给形变用。
+     * 不做 press/release，因为鼓起和收缩由 [modifier] 的按下/抬起事件负责。这里只把
+     * 目标值推过去，顺带记录速度给形变用。
      */
     fun updateValue(value: Float) {
         val target = value.coerceIn(valueRange)
         animationScope.launch {
             valueAnimation.animateTo(target, valueAnimationSpec) { updateVelocity() }
+            // 能走到这里说明位置动画是自然结束的——被新目标打断会抛取消异常，到不了
+            // 这一行。东西停了，速度归零。
+            settleVelocity()
         }
     }
 
-    /** 整段播放：点击、或者外部改了选中项时用这个，走完"放大 → 挪过去 → 缩小"。 */
+    /** 整段播放：外部改了选中项（没有手指参与）时用这个，走完"放大 → 挪过去 → 缩小"。 */
     fun animateToValue(value: Float) {
         animationScope.launch {
             // 连点两个 tab 时，后一次要能干掉前一次的括号，否则两组 press/release
@@ -163,13 +184,17 @@ class DampedDragAnimation(
             mutatorMutex.mutate {
                 press()
                 val target = value.coerceIn(valueRange)
-                launch { valueAnimation.animateTo(target, valueAnimationSpec) }
-                if (velocity != 0f) {
-                    launch { velocityAnimation.animateTo(0f, velocityAnimationSpec) }
+                launch {
+                    valueAnimation.animateTo(target, valueAnimationSpec) { updateVelocity() }
+                    settleVelocity()
                 }
                 release()
             }
         }
+    }
+
+    private suspend fun settleVelocity() {
+        velocityAnimation.animateTo(0f, velocityAnimationSpec)
     }
 
     private fun updateVelocity() {

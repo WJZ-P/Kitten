@@ -9,9 +9,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
  * 任务页：Agent 的执行记录。
@@ -37,12 +37,12 @@ fun TaskScreen(modifier: Modifier = Modifier) {
         Text(
             text = "任务",
             style = MaterialTheme.typography.headlineSmall,
-            color = Color.White,
+            color = KittenTheme.colors.textPrimary,
         )
         Text(
             text = "Agent 执行记录会出现在这里。\n等接上工具调用之后就有内容了。",
             style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = 0.6f),
+            color = KittenTheme.colors.textSecondary,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 12.dp),
         )

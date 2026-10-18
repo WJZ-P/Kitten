@@ -19,12 +19,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
-import me.wjz.kitten.ui.glass.GlassSurface
+import me.wjz.kitten.ui.component.GlassSurface
+import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
  * 底部输入栏。
@@ -74,15 +74,15 @@ fun ChatInputBar(
                     Text(
                         text = hint ?: "说点什么…",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.45f),
+                        color = KittenTheme.colors.textTertiary,
                     )
                 }
                 BasicTextField(
                     value = text,
                     onValueChange = { text = it },
                     enabled = enabled,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = Color.White),
-                    cursorBrush = SolidColor(AccentTint),
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = KittenTheme.colors.textPrimary),
+                    cursorBrush = SolidColor(KittenTheme.colors.accentStrong),
                     // 多行但有上限：长文本不该把整个屏幕顶掉。
                     maxLines = 5,
                     keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
@@ -104,9 +104,9 @@ fun ChatInputBar(
                     imageVector = Icons.AutoMirrored.Filled.Send,
                     contentDescription = "发送",
                     tint = if (enabled && text.isNotBlank()) {
-                        AccentTint
+                        KittenTheme.colors.accentStrong
                     } else {
-                        Color.White.copy(alpha = 0.3f)
+                        KittenTheme.colors.textTertiary
                     },
                 )
             }

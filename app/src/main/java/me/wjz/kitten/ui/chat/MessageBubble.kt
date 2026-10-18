@@ -13,11 +13,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.llm.ChatMessage
-import me.wjz.kitten.ui.glass.GlassSurface
+import me.wjz.kitten.ui.component.GlassSurface
+import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
  * 一条消息。
@@ -49,12 +49,12 @@ private fun UserBubble(text: String, modifier: Modifier = Modifier) {
         Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,
-            color = Color.White,
+            color = KittenTheme.colors.onAccent,
             modifier = Modifier
                 // 不占满整行，留出左边的空白，视觉上才有"从右边来"的感觉。
                 .widthIn(max = 280.dp)
                 .clip(RoundedCornerShape(18.dp))
-                .background(UserBubbleColor)
+                .background(KittenTheme.colors.accent)
                 .padding(horizontal = 14.dp, vertical = 10.dp),
         )
     }
@@ -77,7 +77,7 @@ private fun AssistantBubble(
                     Text(
                         text = it,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White,
+                        color = KittenTheme.colors.textPrimary,
                     )
                 }
                 // 让用户看见 Agent 在做什么，而不是对着"正在思考"干等。
@@ -85,7 +85,7 @@ private fun AssistantBubble(
                     Text(
                         text = "⚙ ${call.name}",
                         style = MaterialTheme.typography.bodySmall,
-                        color = AccentTint,
+                        color = KittenTheme.colors.accentStrong,
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
@@ -94,4 +94,4 @@ private fun AssistantBubble(
     }
 }
 
-private val UserBubbleColor = Color(0xFF1E6F93)
+/** 用户自己的消息用天依蓝本色填满，和助手那边的白玻璃一眼分开。 */

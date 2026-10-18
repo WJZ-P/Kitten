@@ -1,4 +1,4 @@
-package me.wjz.kitten.ui.glass
+package me.wjz.kitten.ui.component
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
@@ -6,7 +6,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -21,6 +20,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
@@ -42,37 +42,39 @@ import com.kyant.backdrop.highlight.Highlight
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import com.kyant.shapes.Capsule
+import kotlin.math.abs
+import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
- * 液体玻璃开关。
+ * 液体玻璃开关，iOS 的样子。
  *
- * 点一下会切换，也可以直接把滑块拖过去。按下的瞬间滑块鼓起来变成透镜，到位之后才收回
- * 原形——和 [GlassTabBar] 的滑块共用 [DampedDragAnimation] 这套驱动。
+ * 点一下会切换，也可以直接把拨钮拖过去。按下的瞬间拨钮鼓起来变成透镜，到位之后才收回
+ * 原形——和 [GlassTabBar] 的滑块共用 [DampedDragAnimation] 这套驱动。形状和参数照搬
+ * catalog 的 `LiquidToggle`。
  *
- * ## 滑块看到的是什么
+ * ## 拨钮看到的是什么
  *
- * 轨道单独录进 `trackBackdrop`，滑块折射的是 `背景 + 被压扁的轨道`：
+ * 轨道单独录进 `trackBackdrop`，拨钮折射的是 `背景 + 被压扁的轨道`：
  *
  * ```
- * 未按下   纵向缩放 0      → 轨道完全看不见，滑块是一块实心白
- * 按下     纵向缩放 0.75   → 轨道的颜色被挤进滑块里透出来
+ * 未按下   纵向缩放 0      → 轨道完全看不见，拨钮是一块实心白
+ * 按下     纵向缩放 0.75   → 轨道的颜色被挤进拨钮里透出来
  * ```
  *
- * 所以按下去的那一下，滑块会从"白色拨钮"变成"真的能看见底下轨道颜色的玻璃"。这是
+ * 所以按下去的那一下，拨钮会从"白色拨钮"变成"真的能看见底下轨道颜色的玻璃"。这是
  * 这个开关和普通 Switch 观感上最大的区别，光靠改颜色做不出来。
  *
- * ## 为什么 Material 的 Switch 不能直接套玻璃
+ * Material 的 `Switch` 做不到这些：它的轨道和拨钮都是不透明的 `Surface`，会把折射盖掉；
+ * 拨钮位移是 `animateDpAsState` 的单条曲线，没有按压形变这一维。
  *
- * `Switch` 的轨道和拨钮都是不透明的 `Surface`，会把折射盖掉；而且它的拨钮位移是
- * `animateDpAsState` 的单条曲线，没有按压形变这一维，鼓起/收缩无处挂。
+ * ## 交互：动效跟手，松手才算数
  *
- * ## 关于手势和收缩的时序
+ * 按下拨钮就鼓起，拖动时跟着手指走，但 [onCheckedChange] 只在抬手时调用：没拖过就取反，
+ * 拖过就就近吸附。手势被外层滚动接管（用户其实是想滚动页面）时退回原位，什么都不发生。
  *
- * 松手时**不调** [DampedDragAnimation.animateToValue]，只调 `updateValue` 推位置。因为
- * 手指按下时 [DampedDragAnimation.modifier] 已经 `press()` 过了，抬手时它会自己
- * `release()`——而 `release()` 正是"等滑块快到位了再收缩"的那一步。再叠一个
- * `animateToValue` 相当于在收缩前又 `press()` 一次，白做一轮。
- * `animateToValue` 只留给外部改状态（没有手指参与）的情况。
+ * 松手时只调 `updateValue`，不调 `animateToValue`：手指按下时 [DampedDragAnimation.modifier]
+ * 已经 `press()` 过了，抬手时它自己会 `release()`。再叠一个 `animateToValue` 等于在收缩前
+ * 又 `press()` 一次，白做一轮。`animateToValue` 只留给外部改状态（没有手指参与）的情况。
  */
 @Composable
 fun GlassSwitch(
@@ -80,21 +82,23 @@ fun GlassSwitch(
     onCheckedChange: (Boolean) -> Unit,
     backdrop: Backdrop,
     modifier: Modifier = Modifier,
-    accentColor: Color = GlassAccent,
+    accentColor: Color = KittenTheme.colors.accent,
 ) {
+    val trackOff = KittenTheme.colors.trackOff
     val currentChecked by rememberUpdatedState(checked)
     val currentOnCheckedChange by rememberUpdatedState(onCheckedChange)
     val density = LocalDensity.current
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
+    val touchSlop = LocalViewConfiguration.current.touchSlop
     val scope = rememberCoroutineScope()
     val travelPx = with(density) { KnobTravel.toPx() }
 
-    // 区分"点一下"和"拖一下"。按下时会先收到一次零位移的 onDrag（见
-    // inspectDragGestures 的说明），所以这里从 false 起算是准的。
-    var didDrag by remember { mutableStateOf(false) }
     var fraction by remember { mutableFloatStateOf(if (checked) 1f else 0f) }
 
-    val drag = remember(scope, travelPx, isLtr) {
+    val drag = remember(scope, travelPx, isLtr, touchSlop) {
+        // 手势内的临时量，只在回调里读写、不参与绘制，用普通变量就够。
+        var totalDx = 0f
+        var didDrag = false
         DampedDragAnimation(
             animationScope = scope,
             initialValue = fraction,
@@ -102,19 +106,31 @@ fun GlassSwitch(
             visibilityThreshold = 0.001f,
             initialScale = 1f,
             pressedScale = 1.5f,
-            onDragStopped = {
-                // 拖过：就近吸附。没拖过（纯点击）：取反。
-                val next = if (didDrag) targetValue >= 0.5f else !currentChecked
+            onDragStarted = { _, _ ->
+                totalDx = 0f
                 didDrag = false
-                fraction = if (next) 1f else 0f
-                updateValue(fraction)
-                currentOnCheckedChange(next)
             },
-            onDrag = { _, dragAmount ->
-                if (!didDrag) didDrag = dragAmount.x != 0f
+            onDrag = { _, _, dragAmount ->
+                totalDx += dragAmount.x
+                // 用 slop 判断"拖过"。catalog 是"收到过非零位移就算拖"，手指落下时的一点点
+                // 抖动就会让一次点击被当成拖动、吸附回原位，看起来就是"点了没反应"。
+                if (!didDrag && abs(totalDx) > touchSlop) didDrag = true
                 val delta = dragAmount.x / travelPx * if (isLtr) 1f else -1f
                 fraction = (fraction + delta).coerceIn(0f, 1f)
                 updateValue(fraction)
+            },
+            onDragStopped = { upPosition ->
+                val next = when {
+                    // 外层滚动接管了：当作没发生过。
+                    upPosition == null -> currentChecked
+                    // 拖过：就近吸附。
+                    didDrag -> targetValue >= 0.5f
+                    // 没拖过（纯点击）：取反。
+                    else -> !currentChecked
+                }
+                fraction = if (next) 1f else 0f
+                updateValue(fraction)
+                if (next != currentChecked) currentOnCheckedChange(next)
             },
         )
     }
@@ -144,16 +160,16 @@ fun GlassSwitch(
         },
         contentAlignment = Alignment.CenterStart,
     ) {
-        // 轨道。它是滑块的折射源，所以必须是滑块的兄弟，不能把滑块放进来。
+        // 轨道。它是拨钮的折射源，所以必须是拨钮的兄弟，不能把拨钮放进来。
         Box(
             modifier = Modifier
                 .layerBackdrop(trackBackdrop)
                 .clip(Capsule())
-                .drawBehind { drawRect(lerp(TrackOffColor, accentColor, drag.value)) }
+                .drawBehind { drawRect(lerp(trackOff, accentColor, drag.value)) }
                 .size(TrackWidth, TrackHeight),
         )
 
-        // 滑块。纯展示，不带手势——手势在下面那块覆盖整条轨道的透明区域上。
+        // 拨钮。纯展示，不带手势——手势在下面那块覆盖整条轨道的透明区域上。
         Box(
             modifier = Modifier
                 .graphicsLayer {
@@ -198,11 +214,13 @@ fun GlassSwitch(
                     layerBlock = {
                         scaleX = drag.scaleX
                         scaleY = drag.scaleY
-                        // 拖得快时横向拉长、纵向压扁。除数 50 比 tab 栏的 10 大，
-                        // 因为这里的值域只有 0..1，归一化后的速度量级大得多。
-                        val v = drag.velocity / 50f
-                        scaleX /= 1f - (v * 0.75f).coerceIn(-0.2f, 0.2f)
-                        scaleY *= 1f - (v * 0.25f).coerceIn(-0.2f, 0.2f)
+                        // 拖得快时横向拉长、纵向压扁。取绝对值：往左甩和往右甩应该是同一种
+                        // 形变（catalog 里直接用带符号的速度，往左甩会变成横向压扁）。
+                        // 除数 50 比 tab 栏的 10 大，因为这里的值域只有 0..1，归一化后的
+                        // 速度量级大得多。
+                        val v = abs(drag.velocity) / 50f
+                        scaleX /= 1f - (v * 0.75f).coerceIn(0f, 0.2f)
+                        scaleY *= 1f - (v * 0.25f).coerceIn(0f, 0.2f)
                     },
                     onDrawSurface = {
                         // 按下时让白色退场，把舞台交给折射。
@@ -212,15 +230,9 @@ fun GlassSwitch(
                 .size(KnobWidth, KnobHeight),
         )
 
-        // 手势区：透明，盖满整条轨道。
-        //
-        // catalog 把手势挂在拨钮上，于是只有那 40dp 能点，点轨道空白处毫无反应——
-        // 和系统 Switch 的习惯（整条都能点）不一致。这里单独拉一块出来，顺带保证
-        // **全局只有一个节点带手势**：若再给外层加一个 clickable，点拨钮时它和拨钮
-        // 的手势会各自触发一次切换，两次相互抵消，开关看着就"点不动"。
-        //
-        // onDrag 只用 dragAmount 的增量，和手势区自身的尺寸无关，所以放大判定区
-        // 不会改变拖动的手感。
+        // 手势区：透明，盖满整条轨道，整条都能点能拖（catalog 只挂在拨钮上，点轨道空白处
+        // 没反应，和系统开关的习惯不符）。全局只留这一个节点带手势：若再给外层加一个
+        // clickable，点拨钮时两边会各切换一次，相互抵消，开关看着就"点不动"。
         Box(modifier = Modifier.then(drag.modifier).size(TrackWidth, TrackHeight))
     }
 }
@@ -231,8 +243,5 @@ private val KnobWidth = 40.dp
 private val KnobHeight = 24.dp
 private val KnobPadding = 2.dp
 
-/** 滑块的行程。由尺寸推出来，改上面任一个都不会和这里算歪。 */
+/** 拨钮的行程。由尺寸推出来，改上面任一个都不会和这里算歪。 */
 private val KnobTravel = TrackWidth - KnobWidth - KnobPadding * 2
-
-/** 关闭态的轨道色。深色背景上用中性灰，不带色相，免得和强调色打架。 */
-private val TrackOffColor = Color(0xFF787880).copy(alpha = 0.36f)

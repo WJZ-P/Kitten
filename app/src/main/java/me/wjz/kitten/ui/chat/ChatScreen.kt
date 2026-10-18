@@ -15,11 +15,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.llm.ChatMessage
+import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
  * 对话页主体：消息列表 + 输入栏。
@@ -107,7 +107,7 @@ private fun EmptyHint(
         Text(
             text = "Kitten",
             style = MaterialTheme.typography.headlineMedium,
-            color = Color.White,
+            color = KittenTheme.colors.textPrimary,
         )
         Text(
             text = if (isModelConfigured) {
@@ -116,7 +116,7 @@ private fun EmptyHint(
                 "还没有配置模型。去「设置」填上 API Key 就能开始对话了。"
             },
             style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = 0.7f),
+            color = KittenTheme.colors.textSecondary,
             textAlign = TextAlign.Center,
             modifier = Modifier.padding(top = 12.dp),
         )
@@ -125,7 +125,7 @@ private fun EmptyHint(
                 onClick = onOpenSettings,
                 modifier = Modifier.padding(top = 8.dp),
             ) {
-                Text("去设置", color = AccentTint)
+                Text("去设置", color = KittenTheme.colors.accentStrong)
             }
         }
     }
@@ -137,10 +137,8 @@ private fun TypingIndicator() {
         Text(
             text = "正在思考…",
             style = MaterialTheme.typography.bodySmall,
-            color = Color.White.copy(alpha = 0.5f),
+            color = KittenTheme.colors.textTertiary,
             modifier = Modifier.padding(start = 8.dp, top = 4.dp),
         )
     }
 }
-
-internal val AccentTint = Color(0xFF66CCFF)

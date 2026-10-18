@@ -24,7 +24,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -33,10 +32,11 @@ import kotlinx.coroutines.launch
 import me.wjz.kitten.ui.chat.ChatScreen
 import me.wjz.kitten.ui.chat.ChatViewModel
 import me.wjz.kitten.ui.chat.SessionDrawer
-import me.wjz.kitten.ui.glass.GlassBackground
+import me.wjz.kitten.ui.component.GlassBackground
 import me.wjz.kitten.ui.settings.SettingsScreen
 import me.wjz.kitten.ui.setup.SetupActions
 import me.wjz.kitten.ui.task.TaskScreen
+import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
  * App 的根容器：底部 tab + 左侧会话抽屉。
@@ -76,7 +76,7 @@ fun KittenApp(actions: SetupActions) {
         // 抽屉只在对话页有意义，别的 tab 下左滑不该拉出会话列表。
         gesturesEnabled = currentTab == KittenTab.Chat,
         drawerContent = {
-            ModalDrawerSheet(drawerContainerColor = DrawerBackground) {
+            ModalDrawerSheet(drawerContainerColor = KittenTheme.colors.drawer) {
                 SessionDrawer(
                     sessions = chatState.sessions,
                     currentSessionId = chatState.sessionId,
@@ -148,5 +148,3 @@ fun KittenApp(actions: SetupActions) {
         }
     }
 }
-
-private val DrawerBackground = Color(0xFF0B1620)

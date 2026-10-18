@@ -1,9 +1,8 @@
-package me.wjz.kitten.ui.glass
+package me.wjz.kitten.ui.component
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -28,14 +27,19 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
@@ -55,13 +59,27 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
+import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
  * 带液体玻璃滑块的底部 tab 栏。
  *
  * 切换时滑块会**先鼓起来、挪过去、到位后再收缩**，移动途中还会被速度拉长压扁。这套
- * 动作由 [DampedDragAnimation] 驱动，参数都抄自库作者的 catalog（库本身只负责画玻璃，
- * 不含这些交互）。滑块也能直接用手指横向拖。
+ * 动作由 [DampedDragAnimation] 驱动，形状和参数都抄自库作者的 catalog（库本身只负责画
+ * 玻璃，不含这些交互）。
+ *
+ * ## 交互：动效跟手，松手才算数
+ *
+ * ```
+ * 按下   滑块立刻鼓起、奔向手指下的那一格     ← 只是预览，选中项没变
+ * 拖动   滑块跟着手指走
+ * 抬手   落在哪格就选哪格，这时才调用 onSelect
+ * 取消   往上拖出 tab 栏一整个栏高再松手、或者手势被系统收回 → 滑块回到原来那格
+ * ```
+ *
+ * 为此最上面盖了一层透明的手势层，整条栏的触摸都由它接管；tab 自己不处理点击，只
+ * 留给读屏用的语义。以前是 tab 各自 `clickable`，于是按住"设置"时什么都不动，要等抬手
+ * 触发点击、选中项变了，滑块才开始走。
  *
  * ## 为什么要把内容画两遍
  *
@@ -72,15 +90,19 @@ import kotlin.math.sign
  * ① 可见层   64dp 胶囊玻璃 + content（图标是白的）
  * ② 隐藏层   56dp，alpha(0)，content 整层染成高亮色，录进 tabsBackdrop
  * ③ 滑块     折射 (背景 + tabsBackdrop)，宽度 1/tabCount，跟着选中项移动
+ * ④ 手势层   透明，盖满整条栏
  * ```
  *
  * 用户看到的始终是①的白图标；但滑块③折射了②，所以**只有滑块盖住的那一块**会透出
  * 高亮色的图标。高亮区域因此是纯几何结果，和滑块严丝合缝，连移动中被折射拉歪的部分
  * 都是对的。代价是 content 被组合两次。
  *
+ * 这套叠法成立的前提是**滑块不透明**——它折射的背景本身是实心的，所以能把①的白图标
+ * 完全盖住。背景层要是没录进东西（见 [GlassBackground] 里记的那个 modifier 顺序的坑），
+ * 滑块就是透明的，按下时②放大 1.2 倍、①没放大，两套图标错开，白色就漏出来了。
+ *
  * ②必须是③的**兄弟**而不是祖先。`layerBackdrop` 要录制自己的全部内容，若③在②的子树
- * 里，③读②、②录③ ⇒ RenderNode 成环，`prepareTree` 递归到栈溢出（详见 [GlassBackground]
- * 里记的那次崩溃）。
+ * 里，③读②、②录③ ⇒ RenderNode 成环，`prepareTree` 递归到栈溢出。
  *
  * @param selectedIndex 当前选中项。外部改它（比如从对话页跳设置页）也会播放完整动画。
  * @param tabCount [content] 里 [GlassTab] 的个数，滑块宽度按它平分。
@@ -92,13 +114,17 @@ fun GlassTabBar(
     onSelect: (Int) -> Unit,
     tabCount: Int,
     modifier: Modifier = Modifier,
-    accentColor: Color = GlassAccent,
+    // 选中的图标和文字压在浅色玻璃上，用加深一档的天依蓝，本色太浅看不清。
+    accentColor: Color = KittenTheme.colors.accentStrong,
     content: @Composable RowScope.() -> Unit,
 ) {
     val currentOnSelect by rememberUpdatedState(onSelect)
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
+    val density = LocalDensity.current
+    val touchSlop = LocalViewConfiguration.current.touchSlop
     val scope = rememberCoroutineScope()
     val tabsBackdrop = rememberLayerBackdrop()
+    val colors = KittenTheme.colors
 
     BoxWithConstraints(
         modifier = modifier,
@@ -110,12 +136,27 @@ fun GlassTabBar(
         // 手指横向拖动的累计位移（px）。整条栏会朝拖动方向轻轻偏一点，像被推着走。
         val dragOffset = remember { Animatable(0f) }
 
-        // 记住"动画已经认过"的选中项。少了这个的话，拖完手之后外部状态回流进来，
-        // 下面的 LaunchedEffect 会对同一个目标再播一遍 press/release，滑块多抖一下。
+        // 已经提交的选中项。滑块在手指底下怎么跑都不改它，只有抬手才改。
         var committedIndex by remember { mutableIntStateOf(selectedIndex) }
 
-        // isLtr 要当 key：下面 onDrag 的方向判断是构造时捕获的，布局方向变了必须重建。
-        val drag = remember(scope, tabCount, isLtr) {
+        // isLtr 等都要当 key：下面的回调是构造时捕获的，这些变了必须重建。
+        val drag = remember(scope, tabCount, isLtr, density, touchSlop) {
+            val padPx = with(density) { BarPadding.toPx() }
+            val cancelDistancePx = with(density) { BarHeight.toPx() }
+            // 手势内的临时量，只在回调里读写、不参与绘制，用普通变量就够。
+            var downX = 0f
+            var following = false
+
+            /** 手指 x（手势层坐标）→ 滑块该在的位置，以格为单位。 */
+            fun valueAt(x: Float, width: Int): Float {
+                val perTab = (width - padPx * 2) / tabCount
+                if (perTab <= 0f) return committedIndex.toFloat()
+                val v = (x - padPx) / perTab - 0.5f
+                // RTL 下第 0 格在最右边。
+                val ordered = if (isLtr) v else tabCount - 1 - v
+                return ordered.coerceIn(0f, (tabCount - 1).toFloat())
+            }
+
             DampedDragAnimation(
                 animationScope = scope,
                 initialValue = selectedIndex.toFloat(),
@@ -125,29 +166,40 @@ fun GlassTabBar(
                 // 按下时滑块从 56dp 鼓到 78dp，会溢出 64dp 的胶囊——这是故意的，
                 // 像一团液体被按得涨出边界。外层留的 8dp 间距正好容得下。
                 pressedScale = PressedSliderHeight / SliderHeight,
-                onDragStopped = {
-                    val target = targetValue.roundToInt().coerceIn(0, tabCount - 1)
-                    committedIndex = target
+                onDragStarted = { size, position ->
+                    downX = position.x
+                    following = false
+                    // 按下就奔向手指下那一格的正中。先吸附到整格，手指晃一点点滑块不会跟着抖。
+                    updateValue(valueAt(position.x, size.width).roundToInt().toFloat())
+                },
+                onDrag = { size, position, dragAmount ->
+                    // 过了 slop 才改成连续跟手：此后滑块正中始终在手指底下。
+                    if (!following && abs(position.x - downX) > touchSlop) following = true
+                    if (following) updateValue(valueAt(position.x, size.width))
+                    scope.launch { dragOffset.snapTo(dragOffset.value + dragAmount.x) }
+                },
+                onDragStopped = { upPosition ->
+                    // 往上拖出一整个栏高再松手，当作反悔。tab 栏贴着屏幕底边，往下拖不出去，
+                    // 所以只看上方。
+                    val cancelled = upPosition == null || upPosition.y < -cancelDistancePx
+                    val target =
+                        if (cancelled) committedIndex
+                        else targetValue.roundToInt().coerceIn(0, tabCount - 1)
                     // 只推位置，不调 animateToValue。手指按下时 modifier 已经 press()
                     // 过了，抬手时它自己会 release()，而 release() 就是"等滑块快到位了
                     // 再收缩"的那一步。再叠一轮 press/release 等于白做。
                     updateValue(target.toFloat())
-                    currentOnSelect(target)
-                    scope.launch { dragOffset.animateTo(0f, spring(1f, 300f, 0.5f)) }
-                },
-                onDrag = { size, dragAmount ->
-                    // size 是滑块自己的宽度，正好等于一格。不捕获上面算出的 tabWidth，
-                    // 是因为这个 lambda 只在构造时记一次，转屏之后捕获的值就过期了。
-                    val perTab = size.width.toFloat()
-                    if (perTab > 0f) {
-                        val delta = dragAmount.x / perTab * if (isLtr) 1f else -1f
-                        updateValue(targetValue + delta)
-                        scope.launch { dragOffset.snapTo(dragOffset.value + dragAmount.x) }
+                    if (target != committedIndex) {
+                        committedIndex = target
+                        currentOnSelect(target)
                     }
+                    scope.launch { dragOffset.animateTo(0f, spring(1f, 300f, 0.5f)) }
                 },
             )
         }
 
+        // 外部改了选中项（没有手指参与）：补一段完整的动画。自己提交的那次 committedIndex
+        // 已经同步过了，这里判断相等会跳过，不会对同一个目标再播一遍。
         LaunchedEffect(selectedIndex) {
             if (selectedIndex != committedIndex) {
                 committedIndex = selectedIndex
@@ -182,7 +234,7 @@ fun GlassTabBar(
                         scaleX = scale
                         scaleY = scale
                     },
-                    onDrawSurface = { drawRect(BarSurface) },
+                    onDrawSurface = { drawRect(colors.glassTintStrong) },
                 )
                 .height(BarHeight)
                 .fillMaxWidth()
@@ -215,7 +267,7 @@ fun GlassTabBar(
                             lens(24.dp.toPx() * p, 24.dp.toPx() * p)
                         },
                         highlight = { Highlight.Default.copy(alpha = drag.pressProgress) },
-                        onDrawSurface = { drawRect(BarSurface) },
+                        onDrawSurface = { drawRect(colors.glassTintStrong) },
                     )
                     .height(SliderHeight)
                     .fillMaxWidth()
@@ -236,7 +288,6 @@ fun GlassTabBar(
                     translationX =
                         (if (isLtr) offset else -offset) + panelShift(dragOffset.value)
                 }
-                .then(drag.modifier)
                 .drawBackdrop(
                     backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop),
                     shape = { Capsule() },
@@ -256,21 +307,31 @@ fun GlassTabBar(
                         scaleX = drag.scaleX
                         scaleY = drag.scaleY
                         // 按移动速度横向拉长、纵向压扁，再加上体积守恒的那点手感：
-                        // 这是"液体"而不是"一块圆角矩形在平移"的全部来源。
-                        val v = drag.velocity / 10f
-                        scaleX /= 1f - (v * 0.75f).coerceIn(-0.2f, 0.2f)
-                        scaleY *= 1f - (v * 0.25f).coerceIn(-0.2f, 0.2f)
+                        // 这是"液体"而不是"一块胶囊在平移"的全部来源。
+                        // 取绝对值：往左甩和往右甩应该是同一种形变（catalog 里直接用带
+                        // 符号的速度，往左甩会变成横向压扁）。
+                        val v = abs(drag.velocity) / 10f
+                        scaleX /= 1f - (v * 0.75f).coerceIn(0f, 0.2f)
+                        scaleY *= 1f - (v * 0.25f).coerceIn(0f, 0.2f)
                     },
                     onDrawSurface = {
                         val p = drag.pressProgress
-                        // 没按下时是一层淡白，看得出滑块在哪；按下后让位给折射，
-                        // 否则这层白会把透镜效果糊掉。
-                        drawRect(SliderSurface, alpha = 1f - p)
+                        // 没按下时是一层淡天依蓝，看得出滑块停在哪一格；按下后让位给折射，
+                        // 否则这层颜色会把透镜效果糊掉。
+                        drawRect(colors.sliderIdle, alpha = 1f - p)
                         drawRect(Color.Black.copy(alpha = 0.03f * p))
                     },
                 )
                 .height(SliderHeight)
                 .fillMaxWidth(1f / tabCount),
+        )
+
+        // ④ 手势层：透明，盖满整条栏，最后放所以在最上面。
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(BarHeight)
+                .then(drag.modifier),
         )
     }
 }
@@ -278,25 +339,31 @@ fun GlassTabBar(
 /**
  * [GlassTabBar] 里的一格。
  *
- * 没有 selected 参数：高亮是滑块折射出来的，不是这里染的，内容一律按未选中的样子给。
+ * 不处理触摸——按下、拖动、松手切换都由 [GlassTabBar] 的手势层统一负责。这里只提供读屏
+ * 用的语义：TalkBack 用户双击时走 [onSelect]。
+ *
+ * [selected] 也只用于语义（让读屏念出"已选中"）。视觉上的高亮是滑块折射出来的，不在
+ * 这里染色，内容一律按未选中的样子给。
  */
 @Composable
 fun RowScope.GlassTab(
-    onClick: () -> Unit,
+    selected: Boolean,
+    onSelect: () -> Unit,
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scale = LocalGlassTabScale.current
     Column(
         modifier = modifier
-            .clip(Capsule())
-            // 不要 Material 的水波纹：滑块本身就是按压反馈，再叠一层涟漪会脏。
-            .clickable(
-                interactionSource = null,
-                indication = null,
-                role = Role.Tab,
-                onClick = onClick,
-            )
+            // 图标和文字合成一个可聚焦节点，读屏念一次就够。
+            .semantics(mergeDescendants = true) {
+                role = Role.Tab
+                this.selected = selected
+                onClick {
+                    onSelect()
+                    true
+                }
+            }
             .fillMaxHeight()
             .weight(1f)
             .graphicsLayer {
@@ -332,9 +399,5 @@ private fun GraphicsLayerScope.panelShift(dragPx: Float): Float {
 
 private val BarHeight = 64.dp
 private val SliderHeight = 56.dp
-private val PressedSliderHeight = 78.dp
+private val PressedSliderHeight = 74.dp
 private val BarPadding = 4.dp
-
-/** 胶囊的表面色。纯折射会发灰，补一点白把玻璃"托"起来。 */
-private val BarSurface = Color.White.copy(alpha = 0.08f)
-private val SliderSurface = Color.White.copy(alpha = 0.12f)

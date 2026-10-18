@@ -3,10 +3,12 @@ package me.wjz.kitten
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -37,7 +39,12 @@ class MainActivity : ComponentActivity(), SetupActions {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // 界面是天依蓝 + 白的浅色系，而且只有这一套：状态栏和导航栏的图标固定用深色。
+        // 默认的 auto 会跟着系统深色模式把图标变白，压在浅色背景上就看不见了。
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+        )
         setContent {
             KittenTheme {
                 KittenApp(actions = this)

@@ -1,4 +1,4 @@
-package me.wjz.kitten.ui.glass
+package me.wjz.kitten.ui.component
 
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -10,31 +10,37 @@ import androidx.compose.ui.input.pointer.PointerInputChange
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.positionChange
+import kotlin.math.abs
 
 /**
- * 「旁观式」拖动手势：立刻响应按下，且不消费事件。
+ * 液体玻璃控件用的拖动手势：按下立刻响应，横向拖过 slop 才认领事件。
  *
- * 和 `detectDragGestures` / `detectHorizontalDragGestures` 的两点关键差别：
+ * 和 `detectDragGestures` / `detectHorizontalDragGestures` 的差别：
  *
- * 1. **不等 touch slop。** 标准的拖动检测要手指先移动几个 dp 才认为开始拖，在那之前
- *    什么回调都不发。但液体玻璃要的是手指一落下玻璃就鼓起来，等 slop 就慢了半拍。
- *    所以这里 `awaitFirstDown` 一拿到就发 `onDragStart`。
+ * 1. **不等 touch slop 就开始回调。** 标准的拖动检测要手指先移动几个 dp 才认为开始拖，
+ *    在那之前什么回调都不发。但液体玻璃要的是手指一落下玻璃就鼓起来，等 slop 就慢了
+ *    半拍。所以这里 `awaitFirstDown` 一拿到就发 `onDragStart`。
  *
- * 2. **不消费（consume）事件。** 标准实现会把事件标记为已消费，好让外层的滚动容器
- *    别抢。这里反过来——滑块盖在 tab 上面，如果它把事件吃掉，底下那个 tab 的
- *    `clickable` 就收不到点击了。不消费，事件继续往下传，点击照常生效。
+ * 2. **slop 只用来决定"这次拖动归不归我"。** 横向累计位移先超过 slop、且横向大于纵向，
+ *    就开始消费事件，外层（对话页的侧滑抽屉、设置页的纵向滚动）就抢不走了。反过来，
+ *    纵向先超过 slop 说明用户想滚动页面，这里不消费，让外层接管。
  *
- * 代价是手势判定要自己写（下面两个私有函数），因为 foundation 里能复用的 `drag()`
- * 都默认带消费语义。
+ * 3. **外层接管时会收到取消。** 外层滚动容器在 Main 阶段比子节点**晚**处理事件，所以在
+ *    Main 阶段看到的永远是"还没被消费"。要到 Final 阶段回头看一眼，才知道外层刚才是不是
+ *    把这个事件吃掉了——吃掉了就当取消处理，组件据此复原，而不是把一次滚动误当成点击。
+ *    这个写法照抄 foundation 里 `waitForUpOrCancellation` 的做法。
  *
  * 另外注意：按下时会立刻发一次 `onDrag(change, Offset.Zero)`，位移为零。这不是多余的
- * 调用——开关靠「抬手前有没有收到非零位移」来区分"点一下"和"拖一下"，这一发零位移
- * 正好把状态初始化成"还没拖过"。
+ * 调用——它把"手指在哪"第一时间交给调用方，组件靠它决定按下时滑块该往哪儿走。
+ *
+ * @param claimHorizontalDrag 横向拖动过 slop 后是否消费事件。Kitten 的这几个控件（tab 栏、
+ *   开关、滑条）都是横向操作，默认认领。
  */
 suspend fun PointerInputScope.inspectDragGestures(
     onDragStart: (down: PointerInputChange) -> Unit = {},
     onDragEnd: (change: PointerInputChange) -> Unit = {},
     onDragCancel: () -> Unit = {},
+    claimHorizontalDrag: Boolean = true,
     onDrag: (change: PointerInputChange, dragAmount: Offset) -> Unit,
 ) {
     awaitEachGesture {
@@ -45,7 +51,23 @@ suspend fun PointerInputScope.inspectDragGestures(
         onDragStart(down)
         onDrag(initialDown, Offset.Zero)
 
-        val upEvent = awaitDrag(initialDown.id) { onDrag(it, it.positionChange()) }
+        val touchSlop = viewConfiguration.touchSlop
+        var claimed = false
+        var totalX = 0f
+        var totalY = 0f
+
+        val upEvent = awaitDrag(initialDown.id) { change ->
+            val dragAmount = change.positionChange()
+            onDrag(change, dragAmount)
+            if (claimHorizontalDrag) {
+                if (!claimed) {
+                    totalX += dragAmount.x
+                    totalY += dragAmount.y
+                    claimed = abs(totalX) > touchSlop && abs(totalX) > abs(totalY)
+                }
+                if (claimed) change.consume()
+            }
+        }
         if (upEvent == null) onDragCancel() else onDragEnd(upEvent)
     }
 }
@@ -53,7 +75,7 @@ suspend fun PointerInputScope.inspectDragGestures(
 /**
  * 跟踪一根手指直到抬起。
  *
- * 返回抬起时的那个 change，中途被别人消费掉则返回 null（当成取消）。
+ * 返回抬起时的那个 change；中途被外层消费掉则返回 null（当成取消）。
  */
 private suspend inline fun AwaitPointerEventScope.awaitDrag(
     pointerId: PointerId,
@@ -65,11 +87,15 @@ private suspend inline fun AwaitPointerEventScope.awaitDrag(
     var pointer = pointerId
     while (true) {
         val change = awaitDragOrUp(pointer) ?: return null
-        // 被外层（比如祖先的滚动容器）消费了，说明这个手势不归我们管，撤。
         if (change.isConsumed) return null
         if (change.changedToUpIgnoreConsumed()) return change
         onDrag(change)
         pointer = change.id
+        // onDrag 里已经认领（消费）了就不用再看：Final 阶段看到的"已消费"是自己干的。
+        if (!change.isConsumed) {
+            val finalPass = awaitPointerEvent(PointerEventPass.Final)
+            if (finalPass.changes.any { it.id == pointer && it.isConsumed }) return null
+        }
     }
 }
 

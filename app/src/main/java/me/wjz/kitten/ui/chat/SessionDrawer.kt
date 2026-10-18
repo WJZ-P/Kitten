@@ -16,7 +16,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -24,6 +23,7 @@ import me.wjz.kitten.data.session.SessionSummary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
  * 左侧抽屉里的历史会话列表。
@@ -53,10 +53,10 @@ fun SessionDrawer(
             Text(
                 text = "历史会话",
                 style = MaterialTheme.typography.titleMedium,
-                color = Color.White,
+                color = KittenTheme.colors.textPrimary,
             )
             TextButton(onClick = onNewSession) {
-                Text("新对话", color = AccentTint)
+                Text("新对话", color = KittenTheme.colors.accentStrong)
             }
         }
 
@@ -65,7 +65,7 @@ fun SessionDrawer(
                 Text(
                     text = "还没有历史会话",
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.45f),
+                    color = KittenTheme.colors.textTertiary,
                 )
             }
             return@Column
@@ -108,21 +108,21 @@ private fun SessionRow(
                 text = session.title.ifBlank { "未命名会话" },
                 style = MaterialTheme.typography.bodyMedium,
                 // 当前打开的那条高亮，否则一眼看不出自己在哪。
-                color = if (isCurrent) AccentTint else Color.White,
+                color = if (isCurrent) KittenTheme.colors.accentStrong else KittenTheme.colors.textPrimary,
                 fontWeight = if (isCurrent) FontWeight.Medium else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f),
             )
             TextButton(onClick = onDelete) {
-                Text("删除", style = MaterialTheme.typography.bodySmall, color = DeleteTint)
+                Text("删除", style = MaterialTheme.typography.bodySmall, color = KittenTheme.colors.danger)
             }
         }
         session.preview?.let {
             Text(
                 text = it,
                 style = MaterialTheme.typography.bodySmall,
-                color = Color.White.copy(alpha = 0.5f),
+                color = KittenTheme.colors.textTertiary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -130,7 +130,7 @@ private fun SessionRow(
         Text(
             text = "${formatTime(session.updatedAtMillis)} · ${session.messageCount} 条",
             style = MaterialTheme.typography.labelSmall,
-            color = Color.White.copy(alpha = 0.35f),
+            color = KittenTheme.colors.textTertiary,
         )
     }
 }
@@ -147,4 +147,3 @@ private fun formatTime(millis: Long): String {
 }
 
 private const val DAY_MILLIS = 24 * 60 * 60 * 1000L
-private val DeleteTint = Color(0xFFFF8A80)

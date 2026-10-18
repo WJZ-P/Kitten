@@ -1,5 +1,6 @@
 package me.wjz.kitten.ui.settings
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,16 +9,22 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -28,12 +35,22 @@ import me.wjz.kitten.llm.LlmConfigStore
 import me.wjz.kitten.permission.PermissionStatus
 import me.wjz.kitten.permission.SelfConfigurator
 import me.wjz.kitten.privilege.client.WirelessDebugController
-import me.wjz.kitten.ui.glass.GlassCard
-import me.wjz.kitten.ui.glass.GlassSwitch
+import me.wjz.kitten.ui.component.GlassButton
+import me.wjz.kitten.ui.component.GlassButtonStyle
+import me.wjz.kitten.ui.component.GlassChip
+import me.wjz.kitten.ui.component.GlassContentPadding
+import me.wjz.kitten.ui.component.GlassDivider
+import me.wjz.kitten.ui.component.GlassIconTile
+import me.wjz.kitten.ui.component.GlassListItem
+import me.wjz.kitten.ui.component.GlassSection
+import me.wjz.kitten.ui.component.GlassSlider
+import me.wjz.kitten.ui.component.GlassSwitch
 import me.wjz.kitten.ui.setup.DebugCard
-import me.wjz.kitten.ui.setup.PermissionCard
-import me.wjz.kitten.ui.setup.PrivilegeCard
+import me.wjz.kitten.ui.setup.PermissionItem
+import me.wjz.kitten.ui.setup.PrivilegeSection
 import me.wjz.kitten.ui.setup.SetupActions
+import kotlin.math.roundToInt
+import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
  * 设置页：模型配置 + 权限管理。
@@ -42,6 +59,8 @@ import me.wjz.kitten.ui.setup.SetupActions
  * 一次性的事，配好之后不该还占着首屏——首屏该是对话。
  *
  * 权限状态每次回到前台都要重读：用户是去系统设置里开关的，App 这边收不到回调。
+ *
+ * 页面本身不再放"设置"大标题：顶栏已经写着了，再写一遍只是占地方。
  */
 @Composable
 fun SettingsScreen(
@@ -70,16 +89,10 @@ fun SettingsScreen(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
     ) {
-        Text(
-            text = "设置",
-            style = MaterialTheme.typography.headlineSmall,
-            color = Color.White,
-        )
-
-        ModelConfigCard(
+        ModelConfigSection(
             backdrop = backdrop,
             config = config,
             onConfigChange = { config = it },
@@ -90,22 +103,28 @@ fun SettingsScreen(
             },
         )
 
-        PermissionCard(
-            backdrop = backdrop,
-            title = stringResource(R.string.accessibility_service_label),
-            enabled = status.accessibilityEnabled,
-            onOpenSettings = actions::openAccessibilitySettings,
-        )
-        PermissionCard(
-            backdrop = backdrop,
-            title = stringResource(R.string.notification_listener_label),
-            enabled = status.notificationListenerEnabled,
-            onOpenSettings = actions::openNotificationListenerSettings,
-        )
-        PrivilegeCard(backdrop = backdrop, onStartPairing = actions::startPairing)
+        GlassSection(backdrop = backdrop, title = "权限") {
+            PermissionItem(
+                backdrop = backdrop,
+                icon = Icons.Filled.Face,
+                title = stringResource(R.string.accessibility_service_label),
+                enabled = status.accessibilityEnabled,
+                onOpenSettings = actions::openAccessibilitySettings,
+            )
+            GlassDivider()
+            PermissionItem(
+                backdrop = backdrop,
+                icon = Icons.Filled.Notifications,
+                title = stringResource(R.string.notification_listener_label),
+                enabled = status.notificationListenerEnabled,
+                onOpenSettings = actions::openNotificationListenerSettings,
+            )
+        }
 
-        // 临时：看液态玻璃开关的效果，定下来之后换成真的设置项。
-        SwitchPreviewCard(backdrop = backdrop)
+        PrivilegeSection(backdrop = backdrop, onStartPairing = actions::startPairing)
+
+        // 临时：看玻璃组件的手感，定下来之后换成真的设置项。
+        ComponentPreviewSection(backdrop = backdrop)
 
         // 临时：验证副屏可用性，验完连同 DebugCard.kt 一起删。
         DebugCard()
@@ -113,75 +132,105 @@ fun SettingsScreen(
 }
 
 /**
- * 开关样式预览。
+ * 组件预览。
  *
- * **这几个开关不接任何逻辑**，只有本地状态，纯粹用来看 [GlassSwitch] 的手感：轨道上
- * 任意位置点一下都能切换，也可以按住拖过去，按下的那一瞬拨钮会鼓起来变成透镜。
- *
- * 等真的有要做开关的设置项（比如"自动授予权限"、"详细日志"）时，把这张卡换成真的
- * 配置项并接上 `LlmConfigStore` 那套存储即可，组件本身不用改。
+ * **这里的控件都不接任何逻辑**，只有本地状态，纯粹用来看 `ui/component` 里那套玻璃
+ * 组件的手感：开关、滑条、chip、两种按钮。等真的有对应的设置项时，把这一块换掉即可，
+ * 组件本身不用改。
  */
 @Composable
-private fun SwitchPreviewCard(backdrop: Backdrop, modifier: Modifier = Modifier) {
+private fun ComponentPreviewSection(backdrop: Backdrop, modifier: Modifier = Modifier) {
     var autoGrant by remember { mutableStateOf(true) }
     var verboseLog by remember { mutableStateOf(false) }
+    var level by remember { mutableFloatStateOf(0.6f) }
+    var tone by remember { mutableIntStateOf(1) }
 
-    GlassCard(backdrop = backdrop, modifier = modifier) {
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    GlassSection(
+        backdrop = backdrop,
+        title = "组件预览",
+        footer = "mock，不接任何逻辑。按下就有反馈，松手才算数：按住开关拖回原处、" +
+            "或者从滑条上开始滚动页面，都会退回原样。",
+        modifier = modifier,
+    ) {
+        GlassListItem(
+            title = "自动授予权限",
+            supporting = "拿到 ADB 后自动打开无障碍",
+            leading = { GlassIconTile(Icons.Filled.Check) },
+            trailing = {
+                GlassSwitch(checked = autoGrant, onCheckedChange = { autoGrant = it }, backdrop = backdrop)
+            },
+        )
+        GlassDivider()
+        GlassListItem(
+            title = "打印详细日志",
+            leading = { GlassIconTile(Icons.Filled.Info) },
+            trailing = {
+                GlassSwitch(checked = verboseLog, onCheckedChange = { verboseLog = it }, backdrop = backdrop)
+            },
+        )
+        GlassDivider()
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = GlassContentPadding, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             Text(
-                text = "开关预览",
-                style = MaterialTheme.typography.titleMedium,
-                color = Color.White,
+                // 不用 String.format：它跟随系统区域设置，有的语言里小数点是逗号。
+                // 数值只在松手时更新——这正是"松手才算数"的样子。
+                text = "示例滑条 · ${(level * 10).roundToInt() / 10f}",
+                style = MaterialTheme.typography.bodyLarge,
+                color = KittenTheme.colors.textPrimary,
             )
-            Text(
-                text = "mock，不接逻辑。可以点，也可以按住拖。",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.45f),
-            )
-
-            SwitchRow(
-                label = "自动授予权限",
-                checked = autoGrant,
-                onCheckedChange = { autoGrant = it },
+            GlassSlider(
+                value = level,
+                onValueChange = { level = it },
                 backdrop = backdrop,
-            )
-            SwitchRow(
-                label = "打印详细日志",
-                checked = verboseLog,
-                onCheckedChange = { verboseLog = it },
-                backdrop = backdrop,
+                valueRange = 0f..2f,
+                steps = 19,
             )
         }
-    }
-}
-
-@Composable
-private fun SwitchRow(
-    label: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-    backdrop: Backdrop,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            // 拨钮按下时会鼓到 36dp，比轨道的 28dp 高——留出余量，不然会贴到上下两行。
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = Color.White.copy(alpha = 0.85f),
+        GlassDivider()
+        Row(
             modifier = Modifier
-                .weight(1f)
-                .padding(end = 16.dp),
-        )
-        GlassSwitch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            backdrop = backdrop,
-        )
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = GlassContentPadding, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf("简洁", "均衡", "详细").forEachIndexed { index, label ->
+                GlassChip(text = label, selected = tone == index, onClick = { tone = index })
+            }
+        }
+        GlassDivider()
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = GlassContentPadding, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            GlassButton(
+                text = "主要",
+                onClick = {},
+                backdrop = backdrop,
+                icon = Icons.Filled.Star,
+                modifier = Modifier.weight(1f),
+            )
+            GlassButton(
+                text = "次要",
+                onClick = {},
+                backdrop = backdrop,
+                style = GlassButtonStyle.Secondary,
+                modifier = Modifier.weight(1f),
+            )
+            GlassButton(
+                text = "禁用",
+                onClick = {},
+                backdrop = backdrop,
+                style = GlassButtonStyle.Secondary,
+                enabled = false,
+                modifier = Modifier.weight(1f),
+            )
+        }
     }
 }
