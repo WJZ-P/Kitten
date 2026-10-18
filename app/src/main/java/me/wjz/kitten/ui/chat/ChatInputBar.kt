@@ -57,7 +57,7 @@ fun ChatInputBar(
         cornerRadius = 26.dp,
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 12.dp, vertical = 4.dp),
     ) {
         Row(
             modifier = Modifier
