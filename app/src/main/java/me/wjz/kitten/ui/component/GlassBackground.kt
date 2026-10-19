@@ -272,8 +272,8 @@ private fun rememberAuroraClock(animate: Boolean): AuroraClock {
     return clock
 }
 
-/** 系统层面允许我们做持续动画吗。任何一项不允许，背景就保持静态。 */
-private fun shouldAnimate(context: Context): Boolean {
+/** 系统层面允许我们做持续动画吗。任何一项不允许，背景（和卡片里的光雾）就保持静态。 */
+internal fun shouldAnimate(context: Context): Boolean {
     // 用户在开发者选项或无障碍里关掉了动画：这是明确的意愿，必须尊重。
     val animatorScale = Settings.Global.getFloat(
         context.contentResolver,

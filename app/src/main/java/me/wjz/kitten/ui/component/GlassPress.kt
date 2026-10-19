@@ -69,14 +69,23 @@ fun rememberGlassPressState(): GlassPressState {
  *
  * [onClick] 只在构造时被捕获一次，调用方要用 `rememberUpdatedState` 包一层再传进来，
  * 否则重组后换了新的回调这里也看不到。
+ *
+ * 按下事件一拿到就消费掉，和 Compose 的 `clickable` 一样。这是给外层看的记号：玻璃卡片这类
+ * 本身也响应按压的容器只接"没被消费"的按下，按在卡片里的按钮上时卡片就不会跟着一起动。
+ * 外层的滚动不受影响——滚动认按下时不管它有没有被消费过。
+ *
+ * @param onDown 手指落下的那一刻，参数是按下的位置。"按下就开始"的效果（比如把卡片里的
+ *   光雾冲开）从这里起。
  */
 suspend fun PointerInputScope.detectGlassPress(
     state: GlassPressState,
+    onDown: (Offset) -> Unit = {},
     onClick: () -> Unit,
 ) {
     awaitEachGesture {
-        val down = awaitFirstDown()
+        val down = awaitFirstDown().also { it.consume() }
         state.position = down.position
+        onDown(down.position)
         state.press()
         var committed = false
         try {

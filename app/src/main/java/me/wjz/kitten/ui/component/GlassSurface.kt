@@ -3,11 +3,14 @@ package me.wjz.kitten.ui.component
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.min
+import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.BackdropEffectScope
 import com.kyant.backdrop.drawBackdrop
@@ -23,6 +26,21 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 消息气泡要随内容伸缩、输入栏要贴着底边，那些约定反而碍事，就直接用这个。
  *
  * 效果本身见 [glassEffects]。
+ *
+ * ## 光雾
+ *
+ * [mist] 打开时，玻璃里铺一层缓缓流动的光雾（见 [GlassMist]）。雾画在玻璃上面、内容下面。
+ *
+ * ## 按压
+ *
+ * [interactive] 打开时，按下玻璃本身（不是按在里面的按钮、开关、输入框上）会有反馈：
+ *
+ * - 整块微微放大到 [PressedScale]，松手时带一点回弹；
+ * - 折射变强（[PressedRefractionBoost]），底色变深（[PressedTintExtra]）；
+ * - 光雾变浓（[PressedMistBoost]），并从手指处被冲开（见 [GlassMist] 的"冲开"）。
+ *
+ * 它只是反馈，不触发任何动作。里面的控件按下时会消费按下事件（见 [detectGlassPress]），
+ * 这里只接没被消费的，所以按在按钮上时玻璃不会跟着一起动。按住后开始滚动页面，反馈收回。
  */
 @Composable
 fun GlassSurface(
@@ -31,20 +49,74 @@ fun GlassSurface(
     cornerRadius: Dp = GlassRadius.Medium,
     blurRadius: Dp = GlassBlur,
     tint: Color = KittenTheme.colors.glassTint,
+    interactive: Boolean = false,
+    mist: Boolean = false,
     content: @Composable () -> Unit,
 ) {
+    val press = rememberGlassPressState()
+    val mistPush = rememberGlassMistPush()
+    val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
     Box(
-        modifier = modifier.drawBackdrop(
-            backdrop = backdrop,
-            shape = { RoundedCornerShape(cornerRadius) },
-            effects = { glassEffects(cornerRadius, blurRadius) },
-            highlight = { GlassRim },
-            onDrawSurface = { drawRect(tint) },
-        ),
+        modifier = modifier
+            .then(
+                if (interactive) {
+                    Modifier.pointerInput(press, mistPush) {
+                        detectGlassPress(press, onDown = mistPush::push, onClick = {})
+                    }
+                } else {
+                    Modifier
+                },
+            )
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { shape },
+                effects = {
+                    glassEffects(cornerRadius, blurRadius, press = press.pressProgress.coerceIn(0f, 1f))
+                },
+                highlight = { GlassRim },
+                layerBlock = if (interactive) {
+                    {
+                        // 松手时 pressProgress 会略冲过 0，这里正好轻轻弹一下。
+                        val scale = lerp(1f, PressedScale, press.pressProgress)
+                        scaleX = scale
+                        scaleY = scale
+                    }
+                } else {
+                    null
+                },
+                onDrawSurface = {
+                    drawRect(tint)
+                    if (interactive) {
+                        // 按下时再叠一层同样的底色：玻璃整体变深，色相不变。
+                        drawRect(tint, alpha = press.pressProgress.coerceIn(0f, 1f) * PressedTintExtra)
+                    }
+                },
+            ),
     ) {
+        if (mist) {
+            GlassMist(
+                shape = shape,
+                modifier = Modifier.matchParentSize(),
+                strength = { 1f + PressedMistBoost * press.pressProgress.coerceIn(0f, 1f) },
+                push = if (interactive) mistPush else null,
+                hold = { press.pressProgress.coerceIn(0f, 1f) },
+            )
+        }
         content()
     }
 }
+
+/** 按下时放大到多少倍。卡片面积大，给一点点就看得出来，多了会挤到相邻的卡片。 */
+private const val PressedScale = 1.02f
+
+/** 按下时折射量额外加多少（相对平时的比例）。 */
+private const val PressedRefractionBoost = 0.6f
+
+/** 按下时再叠一层底色，这层的不透明度。1 就是底色整整加深一倍。 */
+private const val PressedTintExtra = 0.8f
+
+/** 按下时光雾的浓度额外加多少（相对平时的比例）。 */
+private const val PressedMistBoost = 0.6f
 
 /**
  * Kitten 的玻璃：提饱和 → 糊开 → 透镜折射。卡片、输入框、按钮、下拉菜单共用这一套，
@@ -66,14 +138,21 @@ fun GlassSurface(
  *   从来没生效过，也不报错。
  * - 这些参数都是 **Float 像素不是 Dp**，必须自己乘 density——直接传数字的话，不同
  *   dpi 的设备上效果强弱会差很多。effects 的接收者本身就是 Density，直接 `toPx()`。
+ *
+ * @param press 按压进度 0..1，按下时折射变强，见 [GlassSurface] 的按压说明。
  */
-internal fun BackdropEffectScope.glassEffects(cornerRadius: Dp, blurRadius: Dp = GlassBlur) {
+internal fun BackdropEffectScope.glassEffects(
+    cornerRadius: Dp,
+    blurRadius: Dp = GlassBlur,
+    press: Float = 0f,
+) {
     vibrancy()
     blur(blurRadius.toPx())
     val refractionHeight = min(cornerRadius, MaxRefractionHeight).toPx()
     lens(
         refractionHeight = refractionHeight,
-        refractionAmount = refractionHeight * 2f,
+        // 按下时只加折射量、不加折射带宽：带宽超过圆角，圆角里的等高线会出尖角。
+        refractionAmount = refractionHeight * 2f * (1f + PressedRefractionBoost * press),
         depthEffect = true,
         chromaticAberration = true,
     )

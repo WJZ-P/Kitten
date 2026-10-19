@@ -46,7 +46,9 @@ suspend fun PointerInputScope.inspectDragGestures(
     awaitEachGesture {
         // 在 Initial 阶段取按下点：此时还没有任何节点处理过这个事件，拿到的坐标最准。
         val initialDown = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-        val down = awaitFirstDown(requireUnconsumed = false)
+        // 按下事件消费掉，给外层看的记号：玻璃卡片只接没被消费的按下，按在开关、滑条上时卡片
+        // 不会跟着一起动。外层的滚动不受影响，它认按下时不管消没消费过。
+        val down = awaitFirstDown(requireUnconsumed = false).also { it.consume() }
 
         onDragStart(down)
         onDrag(initialDown, Offset.Zero)

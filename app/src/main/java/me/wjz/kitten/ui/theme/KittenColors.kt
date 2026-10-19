@@ -72,6 +72,10 @@ data class KittenColors(
     /** 模态窗背后压暗的那一层，叠在模糊过的界面上。 */
     val scrim: Color,
 
+    /** 卡片里流动的光雾：一层深一点的天依蓝薄雾，上面浮着白色的亮雾。透明度由着色器按浓淡算。 */
+    val cardMistHaze: Color,
+    val cardMistLight: Color,
+
     /** 状态：正常 / 需要处理 / 危险操作。 */
     val positive: Color,
     val warning: Color,
@@ -113,7 +117,7 @@ val LightKittenColors = KittenColors(
     backgroundDots = Ink.copy(alpha = 0.07f),
 
     // 给得很薄：只把背景压深一点，玻璃的质感还是来自透过去看到的、被边缘掰弯的背景。
-    glassTint = Tianyi500.copy(alpha = 0.12f),
+    glassTint = Tianyi500.copy(alpha = 0.18f),
     glassTintStrong = Neutral50.copy(alpha = 0.4f),
     // catalog 浅色主题这里是 10% 的黑，压在天依蓝背景上像一块脏灰，换成淡天依蓝。
     sliderIdle = Tianyi400.copy(alpha = 0.22f),
@@ -123,6 +127,8 @@ val LightKittenColors = KittenColors(
     drawer = Tianyi50,
     // 浅色主题压得很轻：界面本来就糊开了，再压重就成了一块脏灰。
     scrim = Ink.copy(alpha = 0.10f),
+    cardMistHaze = Tianyi450,
+    cardMistLight = Color.White,
 
     positive = Green600,
     warning = Orange600,
