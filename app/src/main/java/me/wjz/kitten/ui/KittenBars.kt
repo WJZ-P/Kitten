@@ -1,27 +1,17 @@
 package me.wjz.kitten.ui
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Email
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.ui.component.GlassTab
@@ -33,65 +23,6 @@ enum class KittenTab(val label: String, val icon: ImageVector) {
     Chat("对话", Icons.Filled.Email),
     Task("任务", Icons.Filled.List),
     Settings("设置", Icons.Filled.Settings),
-}
-
-/**
- * 顶栏：左边拉出历史会话，右边开新对话。
- *
- * 两个按钮只在对话页显示——任务页和设置页既没有历史会话，也没有"新建"的概念，
- * 留着会让人以为能点。
- */
-@Composable
-fun KittenTopBar(
-    title: String,
-    icon: ImageVector,
-    showSessionActions: Boolean,
-    onOpenDrawer: () -> Unit,
-    onNewSession: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(56.dp)
-            .padding(horizontal = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (showSessionActions) {
-            IconButton(onClick = onOpenDrawer) {
-                Icon(Icons.Filled.Menu, contentDescription = "历史会话", tint = KittenTheme.colors.textPrimary)
-            }
-        } else {
-            // 没有菜单按钮的页面，在同一个位置放这一页的图标：标题在三个 tab 之间保持同一个
-            // 位置，切换时不会左右跳，左边也不会空出一块。
-            Box(modifier = Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = KittenTheme.colors.accentStrong,
-                    modifier = Modifier.size(24.dp),
-                )
-            }
-        }
-
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = KittenTheme.colors.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 4.dp),
-        )
-
-        if (showSessionActions) {
-            IconButton(onClick = onNewSession) {
-                Icon(Icons.Filled.Add, contentDescription = "新对话", tint = KittenTheme.colors.textPrimary)
-            }
-        }
-    }
 }
 
 /**

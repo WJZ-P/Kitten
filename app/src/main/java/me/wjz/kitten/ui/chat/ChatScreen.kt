@@ -22,7 +22,7 @@ import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
- * 对话页主体：消息列表 + 输入栏。
+ * 对话页：顶栏 + 消息列表 + 输入栏。
  *
  * 无状态——所有数据由 [ChatUiState] 给，所有动作往上抛。这样 Preview 和以后做测试
  * 都不需要真的起一个 ViewModel。
@@ -33,9 +33,16 @@ fun ChatScreen(
     backdrop: Backdrop,
     onSend: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenDrawer: () -> Unit,
+    onNewSession: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier.fillMaxSize()) {
+        ChatTopBar(
+            title = state.title.ifBlank { "新对话" },
+            onOpenDrawer = onOpenDrawer,
+            onNewSession = onNewSession,
+        )
         Box(modifier = Modifier.weight(1f)) {
             if (state.isEmpty) {
                 EmptyHint(
