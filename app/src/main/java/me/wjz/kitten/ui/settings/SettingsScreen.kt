@@ -79,7 +79,10 @@ fun SettingsScreen(
     val context = LocalContext.current
     val controller = remember(context) { WirelessDebugController.getInstance(context) }
     var status by remember { mutableStateOf(PermissionStatus.read(context)) }
+    // 已保存的配置，和模态窗里正在改的草稿分开：不保存就关掉，草稿直接丢掉。
     var config by remember { mutableStateOf(LlmConfigStore.load(context)) }
+    var draft by remember { mutableStateOf(config) }
+    var editingModel by remember { mutableStateOf(false) }
 
     LifecycleResumeEffect(context) {
         // 拿到 WRITE_SECURE_SETTINGS 之后，无障碍和通知使用权由 Kitten 自己开。
@@ -101,14 +104,12 @@ fun SettingsScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        ModelConfigSection(
+        ModelConfigEntry(
             backdrop = backdrop,
             config = config,
-            onConfigChange = { config = it },
-            onSave = {
-                LlmConfigStore.save(context, config)
-                // 对话页的"模型是否已配置"是启动时读的，这里要主动通知它重读。
-                onModelConfigChanged()
+            onEdit = {
+                draft = config
+                editingModel = true
             },
         )
 
@@ -138,6 +139,22 @@ fun SettingsScreen(
         // 临时：验证副屏可用性，验完连同 DebugCard.kt 一起删。
         DebugCard()
     }
+
+    // 模态窗画在浮层上，放在哪里都一样，不占页面的位置。
+    ModelConfigDialog(
+        visible = editingModel,
+        draft = draft,
+        onDraftChange = { draft = it },
+        onSave = {
+            config = draft
+            LlmConfigStore.save(context, draft)
+            // 对话页的"模型是否已配置"是启动时读的，这里要主动通知它重读。
+            onModelConfigChanged()
+            editingModel = false
+        },
+        onDismiss = { editingModel = false },
+        backdrop = backdrop,
+    )
 }
 
 /**

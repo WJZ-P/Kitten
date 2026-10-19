@@ -69,6 +69,8 @@ data class KittenColors(
     val trackOff: Color,
     /** 侧滑抽屉的底色（Material 的 Sheet 不透明，没法用玻璃）。 */
     val drawer: Color,
+    /** 模态窗背后压暗的那一层，叠在模糊过的界面上。 */
+    val scrim: Color,
 
     /** 状态：正常 / 需要处理 / 危险操作。 */
     val positive: Color,
@@ -119,6 +121,8 @@ val LightKittenColors = KittenColors(
     controlTint = Color.White.copy(alpha = 0.45f),
     trackOff = SystemGray.copy(alpha = 0.2f),
     drawer = Tianyi50,
+    // 浅色主题压得很轻：界面本来就糊开了，再压重就成了一块脏灰。
+    scrim = Ink.copy(alpha = 0.10f),
 
     positive = Green600,
     warning = Orange600,

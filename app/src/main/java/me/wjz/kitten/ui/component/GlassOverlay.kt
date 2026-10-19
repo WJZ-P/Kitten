@@ -17,8 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
+import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 
 /**
@@ -41,6 +43,10 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
  *
  * 平时不录：录制是在 UI 线程上把界面的绘制指令再记一遍，没有浮层要看的时候是白花。
  * 浮层不在录制范围里（它和界面是兄弟），所以不会成环。
+ *
+ * 浮层之间也一样：模态窗里再弹出一个下拉菜单，菜单底下压着的是模态窗，不是界面。所以每个
+ * 浮层也各录一份，挂上来的浮层拿到的 behind 是"界面 + 比它先挂上来的浮层"。一个浮层
+ * 只读比它早的浮层，不读自己和比它晚的，所以也不会成环。
  */
 @Composable
 fun GlassOverlayHost(
@@ -50,16 +56,25 @@ fun GlassOverlayHost(
     val contentBackdrop = rememberLayerBackdrop()
     val state = remember(contentBackdrop) { GlassOverlayHostState(contentBackdrop) }
     Box(modifier = modifier.onGloballyPositioned { state.originInWindow = it.positionInWindow() }) {
-        Box(
-            modifier = if (state.entries.isNotEmpty()) Modifier.layerBackdrop(contentBackdrop) else Modifier,
-        ) {
-            CompositionLocalProvider(LocalGlassOverlay provides state) {
+        // 浮层里也要能再挂浮层（模态窗里的下拉菜单），所以 provider 把浮层也包进来。
+        CompositionLocalProvider(LocalGlassOverlay provides state) {
+            Box(
+                modifier = if (state.entries.isNotEmpty()) Modifier.layerBackdrop(contentBackdrop) else Modifier,
+            ) {
                 content()
             }
-        }
-        // 后挂上来的画在上面。
-        state.entries.forEach { entry ->
-            key(entry) { entry.content(state) }
+            // 后挂上来的画在上面，也看得到先挂上来的。
+            var behind: Backdrop = contentBackdrop
+            state.entries.forEach { entry ->
+                key(entry) {
+                    val layer = rememberLayerBackdrop()
+                    val behindThis = behind
+                    Box(modifier = Modifier.layerBackdrop(layer)) {
+                        entry.content(state, behindThis)
+                    }
+                    behind = rememberCombinedBackdrop(behindThis, layer)
+                }
+            }
         }
     }
 }
@@ -75,7 +90,7 @@ internal class GlassOverlayHostState(
     var originInWindow by mutableStateOf(Offset.Zero)
 }
 
-internal class GlassOverlayEntry(val content: @Composable (GlassOverlayHostState) -> Unit)
+internal class GlassOverlayEntry(val content: @Composable (GlassOverlayHostState, Backdrop) -> Unit)
 
 private val LocalGlassOverlay = staticCompositionLocalOf<GlassOverlayHostState?> { null }
 
@@ -83,19 +98,20 @@ private val LocalGlassOverlay = staticCompositionLocalOf<GlassOverlayHostState?>
  * 在 [visible] 期间把 [content] 挂到最近的 [GlassOverlayHost] 上。
  *
  * [content] 铺满整个 host，位置由它自己算：host 在窗口里的位置见
- * [GlassOverlayHostState.originInWindow]。
+ * [GlassOverlayHostState.originInWindow]。它拿到的第二个参数是它底下的东西（界面 + 比它先
+ * 挂上来的浮层），浮层的玻璃把它和背景叠起来折射，见 [GlassOverlayHost]。
  */
 @Composable
 internal fun GlassOverlay(
     visible: Boolean,
-    content: @Composable (GlassOverlayHostState) -> Unit,
+    content: @Composable (host: GlassOverlayHostState, behind: Backdrop) -> Unit,
 ) {
     val host = checkNotNull(LocalGlassOverlay.current) {
         "GlassOverlay 必须放在 GlassOverlayHost 里面"
     }
     // entry 只建一次；每次重组换上来的新 content 通过这个 State 传过去，host 那边跟着重组。
     val currentContent by rememberUpdatedState(content)
-    val entry = remember { GlassOverlayEntry { currentContent(it) } }
+    val entry = remember { GlassOverlayEntry { host, behind -> currentContent(host, behind) } }
     if (visible) {
         DisposableEffect(host, entry) {
             host.entries += entry

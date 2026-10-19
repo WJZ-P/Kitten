@@ -56,7 +56,7 @@ fun GlassSection(
                 .fillMaxWidth()
                 .padding(vertical = 6.dp),
         ) {
-            if (title != null) SectionHeader(title = title, icon = icon)
+            if (title != null) GlassHeader(title = title, icon = icon)
             content()
             if (footer != null) {
                 Text(
@@ -75,13 +75,29 @@ fun GlassSection(
     }
 }
 
+/**
+ * 玻璃容器的表头：图标 + 加粗标题，可选的尾部控件（比如模态窗的关闭按钮）。
+ *
+ * 分组卡片和模态窗共用这一个，两种容器的标题才是同一个样子。
+ */
 @Composable
-private fun SectionHeader(title: String, icon: ImageVector?) {
+internal fun GlassHeader(
+    title: String,
+    icon: ImageVector?,
+    trailing: (@Composable () -> Unit)? = null,
+) {
     val colors = KittenTheme.colors
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = GlassContentPadding, end = GlassContentPadding, top = 10.dp, bottom = 4.dp)
+            .then(
+                if (trailing == null) {
+                    Modifier.padding(start = GlassContentPadding, end = GlassContentPadding, top = 10.dp, bottom = 4.dp)
+                } else {
+                    // 尾部控件自带 48dp 的触摸区，右边留白收窄，它的图标才和正文的右边对齐。
+                    Modifier.padding(start = GlassContentPadding, end = 4.dp, top = 4.dp)
+                },
+            )
             .semantics { heading() },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -99,7 +115,9 @@ private fun SectionHeader(title: String, icon: ImageVector?) {
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
             color = colors.textPrimary,
+            modifier = Modifier.weight(1f),
         )
+        trailing?.invoke()
     }
 }
 

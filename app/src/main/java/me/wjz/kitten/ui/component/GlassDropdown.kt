@@ -180,9 +180,10 @@ fun <T> GlassDropdown(
         }
     }
 
-    GlassOverlay(visible = menuVisible) { host ->
+    GlassOverlay(visible = menuVisible) { host, behind ->
         DropdownMenuPanel(
             host = host,
+            behind = behind,
             anchorBounds = anchorBounds,
             itemCount = items.size,
             progress = { progress.value },
@@ -206,6 +207,7 @@ fun <T> GlassDropdown(
 @Composable
 private fun DropdownMenuPanel(
     host: GlassOverlayHostState,
+    behind: Backdrop,
     anchorBounds: Rect,
     itemCount: Int,
     progress: () -> Float,
@@ -217,8 +219,9 @@ private fun DropdownMenuPanel(
     val density = LocalDensity.current
     val insets = WindowInsets.systemBars.union(WindowInsets.ime)
     val currentOnDismiss by rememberUpdatedState(onDismiss)
-    // 背景 + 底下的界面：菜单透出来的是它真正盖住的东西，见 GlassOverlayHost。
-    val menuBackdrop = rememberCombinedBackdrop(backdrop, host.contentBackdrop)
+    // 背景 + 底下的界面（和模态窗之类先挂上来的浮层）：菜单透出来的是它真正盖住的东西，
+    // 见 GlassOverlayHost。
+    val menuBackdrop = rememberCombinedBackdrop(backdrop, behind)
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         // 菜单外面：吞掉所有触摸，抬手时收起菜单。
