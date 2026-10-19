@@ -87,6 +87,7 @@ import kotlin.math.sin
  *
  * 四团光晕沿各自的轨迹慢慢游走、半径微微呼吸。周期取 23～43 秒、互不成倍数，叠在一起
  * 几乎不会重复，看起来是"流动"而不是"循环播放"。
+ * 整体快慢由 [GlowSpeed] 统一调，四团之间的周期比例不变。
  *
  * 贵的不是背景本身——几个径向渐变而已——而是**下游**：背景录进了 backdrop，它一变，
  * 屏幕上每一块玻璃都要重新模糊、重新折射。实测每块玻璃每次要花 RenderThread 两三毫秒，
@@ -305,10 +306,11 @@ private fun DrawScope.drawGlows(colors: KittenColors, time: Float) {
     // 光晕的位置故意错开并超出边界——被屏幕裁掉一部分，比几个完整的圆自然得多。
     // 半径给得大，边缘才够柔和，否则折射时会露出生硬的圆形轮廓。白色亮斑最后画，
     // 压在蓝色上面，才是"一片光扫过去"而不是"蓝色被冲淡"。
-    drawBlob(colors.backgroundGlowPrimary, Blobs[0], time)
-    drawBlob(colors.backgroundGlowSecondary, Blobs[1], time)
-    drawBlob(colors.backgroundGlowTertiary, Blobs[2], time)
-    drawBlob(colors.backgroundGlowHighlight, Blobs[3], time)
+    val t = time * GlowSpeed
+    drawBlob(colors.backgroundGlowPrimary, Blobs[0], t)
+    drawBlob(colors.backgroundGlowSecondary, Blobs[1], t)
+    drawBlob(colors.backgroundGlowTertiary, Blobs[2], t)
+    drawBlob(colors.backgroundGlowHighlight, Blobs[3], t)
 }
 
 /**
@@ -370,7 +372,8 @@ private fun dotGrid(size: Size, spacing: Float): List<Offset> {
  * 四团光晕。前三团绕着改成动态之前的位置游走（左上的天依蓝、右侧的浅青、左下的
  * 浅紫），第四团是新加的白色亮斑，从中间往四周游走。
  *
- * 周期都在 20～45 秒之间、两两互不成倍数，叠在一起要很久才会回到同一个画面。
+ * 周期都在 20～45 秒之间、两两互不成倍数，叠在一起要很久才会回到同一个画面。实际快慢再乘
+ * [GlowSpeed]。
  */
 private val Blobs = listOf(
     AuroraBlob(0.15f, 0.12f, 0.16f, 0.08f, 23f, 31f, 0.0f, 320.dp, 0.10f),
@@ -378,6 +381,14 @@ private val Blobs = listOf(
     AuroraBlob(0.30f, 0.82f, 0.18f, 0.07f, 41f, 27f, 2.6f, 360.dp, 0.08f),
     AuroraBlob(0.55f, 0.55f, 0.28f, 0.22f, 43f, 33f, 4.1f, 240.dp, 0.15f),
 )
+
+/**
+ * 光晕整体的流动速度倍数，乘在时间上：2 就是所有光晕快一倍，周期比例不变。
+ *
+ * 调快不多花性能（每秒画几帧不变），但玻璃里看到的那份背景最多比屏幕上落后 1/6 秒，
+ * 走得越快，玻璃边缘里外的光晕错得越开。
+ */
+private const val GlowSpeed = 1.5f
 
 private val TwoPi = (2 * PI).toFloat()
 
