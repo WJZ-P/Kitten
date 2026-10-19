@@ -1,112 +1,89 @@
 package me.wjz.kitten.ui.component
 
+import android.content.Context
 import android.graphics.RuntimeShader
+import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.isSpecified
-import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.ShaderBrush
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.addOutline
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.layer.CompositingStrategy
+import androidx.compose.ui.graphics.layer.GraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.GlobalPositionAwareModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.currentValueOf
+import androidx.compose.ui.node.invalidateDraw
+import androidx.compose.ui.node.requireGraphicsContext
+import androidx.compose.ui.platform.AndroidUiDispatcher
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import me.wjz.kitten.ui.theme.KittenTheme
+import me.wjz.kitten.ui.theme.LocalKittenColors
+import kotlin.math.ceil
 import kotlin.random.Random
 
 /**
- * 卡片里流动的光雾的时钟（秒）。所有卡片共用一个。
+ * 在组件里铺一层缓缓流动的光雾：一层天依蓝的薄雾，上面浮着白色的亮雾，各自卷动、互相穿过。
  *
- * 只在有卡片在看的时候走：卡片显示出来时登记（[subscribers] + 1），不显示了注销。没人看时
- * 时钟挂起，不会每一帧都把主线程叫醒。App 不在前台、系统关掉了动画、省电模式、低内存设备，
- * 都停在当前时间，雾就是一张静态图（见 [shouldAnimate]）。
- */
-@Stable
-class GlassMistClock internal constructor() {
-    var time by mutableFloatStateOf(0f)
-        internal set
-
-    internal var subscribers by mutableIntStateOf(0)
-}
-
-/**
- * 当前页面的光雾时钟。为 null 表示这里的卡片不该动——比如预加载着、但不在屏幕上的页面。
- * 由 KittenApp 按页提供：只有当前页拿到时钟。
- */
-val LocalGlassMistClock = staticCompositionLocalOf<GlassMistClock?> { null }
-
-@Composable
-fun rememberGlassMistClock(): GlassMistClock {
-    val clock = remember { GlassMistClock() }
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    LaunchedEffect(clock, lifecycleOwner, context) {
-        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
-            if (!shouldAnimate(context)) return@repeatOnLifecycle
-            val interval = 1f / MistFps
-            while (true) {
-                // 没有卡片在看就挂起，一帧都不占。
-                snapshotFlow { clock.subscribers > 0 }.first { it }
-                var lastFrameNanos = 0L
-                var pending = 0f
-                while (clock.subscribers > 0) {
-                    val frameNanos = withFrameNanos { it }
-                    if (lastFrameNanos != 0L) {
-                        // 夹住单帧步长：卡顿或者刚切回来时，雾不该突然跳一大截。
-                        pending += ((frameNanos - lastFrameNanos) / 1_000_000_000f).coerceAtMost(0.1f)
-                        // 留一点余量：120Hz 下 4 帧加起来按浮点算会略小于 1/30 秒。
-                        if (pending >= interval - FrameSlack) {
-                            clock.time += pending
-                            pending = 0f
-                        }
-                    }
-                    lastFrameNanos = frameNanos
-                }
-            }
-        }
-    }
-    return clock
-}
-
-/**
- * 卡片里的一层光雾：一层天依蓝的薄雾，上面浮着白色的亮雾，各自缓缓卷动、互相穿过。
+ * 和液态玻璃（`drawBackdrop`）一样是个 modifier，哪个组件要雾就加一行，不用管时钟、不用管
+ * 它在不在屏幕上：
  *
- * 和背景的雾（[BackgroundMist]）是同一种画法——分形噪声 + 坐标扭曲——只是颗粒更小、更浓，
- * 而且叠在卡片的玻璃上面，是卡片自己的雾：卡片滚动时雾跟着卡片走。每张卡片取一个随机的
- * 起点，几张卡片的雾不会长得一模一样。
+ * ```kotlin
+ * Modifier
+ *     .drawBackdrop(...)                 // 玻璃
+ *     .glassMist(shape, state = mist)    // 雾
+ * ```
+ *
+ * 雾画在组件内容的下面；和 drawBackdrop 一起用时画在玻璃的上面。
+ *
+ * ## 必须写在 drawBackdrop 后面
+ *
+ * Compose 里同一个节点上任何一个绘制 modifier 失效，这个节点的绘制就要整个重录。雾每推进
+ * 一次都要重画，要是和 drawBackdrop 在同一层，玻璃就得跟着重新模糊、折射——每帧白白多出
+ * 好几毫秒。所以这个 modifier 自己先开一层 graphicsLayer 当边界：写在它前面的 drawBackdrop
+ * 在外层，不受影响；雾和组件内容在里层，雾推进时只重录里层。
+ *
+ * 写在 drawBackdrop 前面的话，玻璃会被包进雾的这一层，边界就白开了。
+ *
+ * ## 时钟
+ *
+ * 所有雾读同一个时间（[GlassMistTicker]），一起推进，几块卡片的雾是同步的。它只在**有雾在屏幕
+ * 上**的时候走：预加载着、但不在屏幕上的页面，滚出屏幕的卡片，都不算；App 切到后台时窗口不再绘制，
+ * 时钟都会自己停下。用到雾的地方不用关心这些。
  *
  * ## 冲开
  *
- * 传了 [push] 时，按下卡片会把雾冲开（见 [GlassMistPush]）：
+ * 传了 [state] 时，调用方在手指落下时调 [GlassMistState.push]，雾会从那里被冲开：
  *
  * - 按下的那一刻，从触摸点荡出一道往外推的波前，雾被推着往外走、堆在波前上，波前扫过的地方
  *   被吹空；
@@ -114,98 +91,45 @@ fun rememberGlassMistClock(): GlassMistClock {
  * - 松手、波前散尽之后，雾慢慢流回来。
  *
  * 没有做流体模拟（那要多张纹理来回迭代，很贵）：只是在着色器里按离触摸点的距离，把每个像素
- * 的采样坐标往外推、把浓度压下去。每像素多二十来次算术，雾本来就是 1/4 分辨率，可以忽略。
+ * 的采样坐标往外推、把浓度压下去。每像素多二十来次算术，可以忽略。冲开的那一下跟着屏幕
+ * 刷新率画，不然会一顿一顿的。
  *
  * ## 性能
  *
- * - 单独一个图层：雾每推进一次只重画这一层，卡片的模糊和折射不会跟着重算。
- * - 按 1/4 的宽高渲染再放大回卡片大小（做法同 [BackgroundMist]）：雾是软的，看不出颗粒，
- *   像素却只有 1/16。
- * - 时间来自共用的 [GlassMistClock]，按 [MistFps] 推进，只在有卡片显示时走。拿不到时钟（不在当前页）
- *   就停在静止的一帧，也不登记。冲开的那一下例外：它跟着屏幕刷新率画，不然会一顿一顿的。
+ * - 按 1/[MistDownscale] 的宽高渲染进一张离屏纹理，再放大回组件大小（做法同 [BackgroundMist]）：
+ *   雾是软的，看不出颗粒，像素却只有 1/16。
+ * - 雾按 [MistFps] 推进。贵的主要不是雾本身，而是"屏幕上有东西在动"，见 [MistFps]。
  *
- * @param strength 浓度倍数。1 是平时，按下卡片时调用方给大一点，雾会更浓、更亮。在绘制阶段读。
- * @param push 冲开雾的力。为 null 就不响应触摸。
+ * @param shape 雾的形状，一般和玻璃的形状相同。雾会被裁在里面。
+ * @param state 冲开雾的力。为 null 就不响应触摸。
+ * @param strength 浓度倍数。1 是平时，按下组件时调用方给大一点，雾会更浓、更亮。在绘制阶段读。
  * @param hold 手指按住的程度 0..1，决定指尖周围那片空地有多大。在绘制阶段读。
  */
-@Composable
-internal fun GlassMist(
+fun Modifier.glassMist(
     shape: Shape,
-    modifier: Modifier = Modifier,
+    state: GlassMistState? = null,
     strength: () -> Float = { 1f },
-    push: GlassMistPush? = null,
     hold: () -> Float = { 0f },
-) {
-    val clock = LocalGlassMistClock.current
-    if (clock != null) {
-        DisposableEffect(clock) {
-            clock.subscribers++
-            onDispose { clock.subscribers-- }
-        }
-    }
-    val colors = KittenTheme.colors
-    val shader = remember { RuntimeShader(CardMistShader) }
-    val seed = remember { Random.nextFloat() * 100f }
-
-    BoxWithConstraints(modifier = modifier.clip(shape)) {
-        Box(
-            modifier = Modifier
-                .graphicsLayer {
-                    scaleX = MistDownscale
-                    scaleY = MistDownscale
-                    transformOrigin = TransformOrigin(0f, 0f)
-                }
-                .size(maxWidth / MistDownscale, maxHeight / MistDownscale)
-                // 必须离屏：不离屏的话外层的放大只是坐标变换，着色器还是会在放大后的每个像素上跑。
-                .graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)
-                .drawBehind {
-                    shader.setFloatUniform("unit", MistGrain.toPx() / MistDownscale)
-                    shader.setFloatUniform("seed", seed)
-                    shader.setFloatUniform("time", (clock?.time ?: 0f) * MistSpeed)
-                    shader.setFloatUniform("strength", strength())
-                    shader.setFloatUniform("hazeAlpha", MistHazeAlpha)
-                    shader.setFloatUniform("lightAlpha", MistLightAlpha)
-                    shader.setColorUniform("haze", colors.cardMistHaze.toArgb())
-                    shader.setColorUniform("light", colors.cardMistLight.toArgb())
-
-                    // 触摸点是卡片坐标，雾是按 1/4 渲染的，要换算过来。还没按过就放到很远的地方，
-                    // 公式里的力自然衰减到零。
-                    val origin = push?.origin?.takeIf { it.isSpecified }
-                    if (origin != null) {
-                        shader.setFloatUniform("touch", origin.x / MistDownscale, origin.y / MistDownscale)
-                    } else {
-                        shader.setFloatUniform("touch", -1e4f, -1e4f)
-                    }
-                    shader.setFloatUniform("burst", push?.burst?.value ?: 1f)
-                    shader.setFloatUniform("hold", if (origin != null) hold().coerceIn(0f, 1f) else 0f)
-                    shader.setFloatUniform("burstReach", BurstReach)
-                    shader.setFloatUniform("burstWidth", BurstWidth)
-                    shader.setFloatUniform("burstPush", BurstPush)
-                    shader.setFloatUniform("burstPile", BurstPile)
-                    shader.setFloatUniform("holdRadius", HoldRadius)
-                    shader.setFloatUniform("holdPush", HoldPush)
-                    shader.setFloatUniform("clearAmount", ClearAmount)
-                    drawRect(brush = ShaderBrush(shader))
-                },
-        )
-    }
-}
+): Modifier = this
+    .graphicsLayer()
+    .then(GlassMistElement(shape, state, strength, hold))
 
 /**
  * 冲开光雾的力：记住最近一次按下的位置，从那里放一道往外推的波前。
  *
- * 波前的进度 [burst] 从 0 走到 1：0 是刚按下、力最大，1 是波前散尽。没按过时停在 1，
- * 着色器里的力就是零。
+ * 波前的进度从 0 走到 1：0 是刚按下、力最大，1 是波前散尽。没按过时停在 1，着色器里的力
+ * 就是零。
  */
 @Stable
-internal class GlassMistPush(private val scope: CoroutineScope) {
+class GlassMistState internal constructor(private val scope: CoroutineScope) {
 
-    /** 最近一次按下的位置（卡片坐标）。 */
+    /** 最近一次按下的位置（组件坐标）。 */
     var origin by mutableStateOf(Offset.Unspecified)
         private set
 
     internal val burst = Animatable(1f)
 
+    /** 从 [at]（组件坐标）把雾冲开。在手指落下时调。 */
     fun push(at: Offset) {
         origin = at
         scope.launch {
@@ -216,12 +140,223 @@ internal class GlassMistPush(private val scope: CoroutineScope) {
 }
 
 @Composable
-internal fun rememberGlassMistPush(): GlassMistPush {
+fun rememberGlassMistState(): GlassMistState {
     val scope = rememberCoroutineScope()
-    return remember(scope) { GlassMistPush(scope) }
+    return remember(scope) { GlassMistState(scope) }
 }
 
-/** 一团雾大概多大。按 dp 给而不是按卡片高度归一化：高卡片和矮卡片里的雾颗粒一样大。 */
+/**
+ * 所有光雾共用的时钟（秒）。进程里只有这一个。
+ *
+ * 只在**有雾在屏幕上**时推进：屏幕上的雾在绘制时调 [demand] 说"我还要下一帧"。时钟每到一拍
+ * 先看上一拍之后有没有这样的雾，没有就停下——不在屏幕上的页面、滚出去的卡片、后台的 App，
+ * 都不会再要下一帧，时钟自然就停了，不用谁去管。停下后时间冻结，下次有雾回到屏幕上时接着走，
+ * 不会跳一截。雾自己怎么判断在不在屏幕上，见 GlassMistNode.onScreen。
+ *
+ * 系统关掉了动画、省电模式、低内存设备上不推进（见 [shouldAnimate]），雾停在当前这一帧。
+ *
+ * 所有读写都在主线程：[demand] 在绘制时调，推进循环跑在主线程的 [AndroidUiDispatcher] 上。
+ */
+internal object GlassMistTicker {
+
+    var time by mutableFloatStateOf(0f)
+        private set
+
+    /** 上一拍之后有没有屏幕上的雾要过下一帧。 */
+    private var demanded = false
+    private var running = false
+
+    /** 系统允不允许做持续动画。查一次是一次跨进程调用，缓存一段时间再重查。 */
+    private var allowed = true
+    private var allowedCheckedAt = Long.MIN_VALUE
+
+    private val scope = CoroutineScope(SupervisorJob() + AndroidUiDispatcher.Main)
+
+    fun demand(context: Context) {
+        demanded = true
+        if (running) return
+        val now = SystemClock.uptimeMillis()
+        if (allowedCheckedAt == Long.MIN_VALUE || now - allowedCheckedAt >= RecheckMillis) {
+            allowed = shouldAnimate(context)
+            allowedCheckedAt = now
+        }
+        if (!allowed) return
+        running = true
+        val appContext = context.applicationContext
+        scope.launch {
+            try {
+                run(appContext)
+            } finally {
+                running = false
+            }
+        }
+    }
+
+    private suspend fun run(context: Context) {
+        val interval = 1f / MistFps
+        var lastFrameNanos = 0L
+        var pending = 0f
+        var sinceCheck = 0f
+        while (true) {
+            val frameNanos = withFrameNanos { it }
+            if (lastFrameNanos != 0L) {
+                // 夹住单帧步长：卡顿后补帧时雾不该突然跳一大截。
+                val dt = ((frameNanos - lastFrameNanos) / 1_000_000_000f).coerceAtMost(0.1f)
+                pending += dt
+                sinceCheck += dt
+                if (pending >= interval - FrameSlack) {
+                    // 上一拍推进之后屏幕上没有雾要下一帧：没人在看，停下。
+                    if (!demanded) return
+                    demanded = false
+                    time += pending
+                    pending = 0f
+                }
+                // 省电模式可能在前台时被打开，隔几秒查一次。
+                if (sinceCheck * 1000f >= RecheckMillis) {
+                    sinceCheck = 0f
+                    if (!shouldAnimate(context)) {
+                        allowed = false
+                        allowedCheckedAt = SystemClock.uptimeMillis()
+                        return
+                    }
+                }
+            }
+            lastFrameNanos = frameNanos
+        }
+    }
+}
+
+private data class GlassMistElement(
+    val shape: Shape,
+    val state: GlassMistState?,
+    val strength: () -> Float,
+    val hold: () -> Float,
+) : ModifierNodeElement<GlassMistNode>() {
+
+    override fun create() = GlassMistNode(shape, state, strength, hold)
+
+    override fun update(node: GlassMistNode) {
+        if (node.shape != shape) {
+            node.shape = shape
+            node.invalidateDraw()
+        }
+        node.state = state
+        node.strength = strength
+        node.hold = hold
+    }
+}
+
+private class GlassMistNode(
+    var shape: Shape,
+    var state: GlassMistState?,
+    var strength: () -> Float,
+    var hold: () -> Float,
+) : Modifier.Node(), DrawModifierNode, GlobalPositionAwareModifierNode, CompositionLocalConsumerModifierNode {
+
+    // 第一次真正要画的时候才编译着色器：设置页上好几块卡片，没必要在组合时一口气编译。
+    private val shader by lazy { RuntimeShader(MistShader) }
+
+    /** 每块雾一个随机起点，几块卡片的雾不会长得一模一样。 */
+    private val seed = Random.nextFloat() * 100f
+
+    /** 按 1/[MistDownscale] 渲染雾的离屏纹理。 */
+    private var layer: GraphicsLayer? = null
+
+    /**
+     * 这块雾现在在不在屏幕上。只有在屏幕上的雾才推着时钟走。
+     *
+     * 不能用"draw 有没有被调"来判断：Compose 每帧会把所有失效的图层都重录一遍
+     * （AndroidComposeView.dispatchDraw 里的 dirtyLayers），不管它的父级这一帧画不画它——预加载着、
+     * 被 pager 跳过绘制的页面里，雾的 draw 照样会被调。所以按位置判断：boundsInWindow 会被
+     * 沿途每一层父级裁剪，pager 外面的页面、滚出屏幕的卡片都会被裁成空。
+     */
+    private var onScreen = false
+
+    private var clip: Path? = null
+    private var clipSize = Size.Unspecified
+    private var clipDirection: LayoutDirection? = null
+    private var clipShape: Shape? = null
+
+    override fun onAttach() {
+        layer = requireGraphicsContext().createGraphicsLayer().apply {
+            // 必须离屏：不离屏的话 drawLayer 时的放大只是坐标变换，着色器还是会在放大后的
+            // 每个像素上跑，等于没省。离屏后渲染发生在小纹理上，放大只是拉伸这张纹理。
+            compositingStrategy = CompositingStrategy.Offscreen
+        }
+    }
+
+    override fun onDetach() {
+        layer?.let { requireGraphicsContext().releaseGraphicsLayer(it) }
+        layer = null
+    }
+
+    override fun ContentDrawScope.draw() {
+        val layer = layer
+        if (layer != null && size.width >= 1f && size.height >= 1f) {
+            if (onScreen) GlassMistTicker.demand(currentValueOf(LocalContext))
+
+            val colors = currentValueOf(LocalKittenColors)
+            val origin = state?.origin?.takeIf { it.isSpecified }
+            shader.setFloatUniform("unit", MistGrain.toPx() / MistDownscale)
+            shader.setFloatUniform("seed", seed)
+            shader.setFloatUniform("time", GlassMistTicker.time * MistSpeed)
+            shader.setFloatUniform("strength", strength())
+            shader.setFloatUniform("hazeAlpha", MistHazeAlpha)
+            shader.setFloatUniform("lightAlpha", MistLightAlpha)
+            shader.setColorUniform("haze", colors.cardMistHaze.toArgb())
+            shader.setColorUniform("light", colors.cardMistLight.toArgb())
+            // 触摸点是组件坐标，雾是缩小渲染的，要换算过来。还没按过就放到很远的地方，
+            // 公式里的力自然衰减到零。
+            if (origin != null) {
+                shader.setFloatUniform("touch", origin.x / MistDownscale, origin.y / MistDownscale)
+            } else {
+                shader.setFloatUniform("touch", -1e4f, -1e4f)
+            }
+            shader.setFloatUniform("burst", state?.burst?.value ?: 1f)
+            shader.setFloatUniform("hold", if (origin != null) hold().coerceIn(0f, 1f) else 0f)
+            shader.setFloatUniform("burstReach", BurstReach)
+            shader.setFloatUniform("burstWidth", BurstWidth)
+            shader.setFloatUniform("burstPush", BurstPush)
+            shader.setFloatUniform("burstPile", BurstPile)
+            shader.setFloatUniform("holdRadius", HoldRadius)
+            shader.setFloatUniform("holdPush", HoldPush)
+            shader.setFloatUniform("clearAmount", ClearAmount)
+
+            val small = IntSize(
+                ceil(size.width / MistDownscale).toInt(),
+                ceil(size.height / MistDownscale).toInt(),
+            )
+            layer.record(small) { drawRect(brush = ShaderBrush(shader)) }
+            clipPath(mistClip()) {
+                scale(MistDownscale, MistDownscale, pivot = Offset.Zero) { drawLayer(layer) }
+            }
+        }
+        drawContent()
+    }
+
+    override fun onGloballyPositioned(coordinates: LayoutCoordinates) {
+        onScreen = !coordinates.boundsInWindow().isEmpty
+        // 滚进屏幕、切到这一页时，时钟可能正停着，而位置变化不会让雾重画——这里推它一下，
+        // 不然雾会停在滚出去时的那一帧。
+        if (onScreen) GlassMistTicker.demand(currentValueOf(LocalContext))
+    }
+
+    /** 雾裁成组件的形状。尺寸、方向、形状不变时复用上一次的 Path。 */
+    private fun ContentDrawScope.mistClip(): Path {
+        val cached = clip
+        if (cached != null && clipSize == size && clipDirection == layoutDirection && clipShape == shape) {
+            return cached
+        }
+        val path = Path().apply { addOutline(shape.createOutline(size, layoutDirection, this@mistClip)) }
+        clip = path
+        clipSize = size
+        clipDirection = layoutDirection
+        clipShape = shape
+        return path
+    }
+}
+
+/** 一团雾大概多大。按 dp 给而不是按组件高度归一化：高卡片和矮卡片里的雾颗粒一样大。 */
 private val MistGrain = 140.dp
 
 /** 雾流动的快慢。1 大约是背景雾的两倍：卡片小，流慢了看不出在动。 */
@@ -247,6 +382,9 @@ private const val MistFps = 15f
 
 /** 留一点余量：120Hz 下几帧加起来按浮点算会略小于整数倍的间隔。 */
 private const val FrameSlack = 0.002f
+
+/** 系统动画设置隔多久重查一次（毫秒）。 */
+private const val RecheckMillis = 5_000L
 
 /** 冲开的波前从按下到散尽要多久。 */
 private const val BurstDurationMillis = 2000
@@ -295,7 +433,7 @@ private const val ClearAmount = 0.25f
  *
  * 只写 ASCII：AGSL 是运行时才编译的，编译失败就是崩溃。
  */
-private const val CardMistShader = NoiseSkSL + """
+private const val MistShader = NoiseSkSL + """
 uniform float unit;
 uniform float seed;
 uniform float time;

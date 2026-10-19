@@ -23,7 +23,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -49,8 +48,6 @@ import me.wjz.kitten.ui.chat.ChatViewModel
 import me.wjz.kitten.ui.chat.SessionDrawer
 import me.wjz.kitten.ui.component.GlassBackground
 import me.wjz.kitten.ui.component.GlassOverlayHost
-import me.wjz.kitten.ui.component.LocalGlassMistClock
-import me.wjz.kitten.ui.component.rememberGlassMistClock
 import me.wjz.kitten.ui.settings.SettingsScreen
 import me.wjz.kitten.ui.setup.SetupActions
 import me.wjz.kitten.ui.task.TaskScreen
@@ -96,8 +93,6 @@ fun KittenApp(actions: SetupActions) {
     val backdrop = rememberLayerBackdrop()
     // 页面内容。底部栏浮在页面上面，要折射的是"背景 + 页面"，不只是背景。
     val pageBackdrop = rememberLayerBackdrop()
-    // 卡片里光雾的时钟，所有页面共用一个，见下面按页提供的地方。
-    val mistClock = rememberGlassMistClock()
     val behindBarBackdrop = rememberCombinedBackdrop(backdrop, pageBackdrop)
     val tabs = KittenTab.entries
     val pagerState = rememberPagerState(initialPage = currentTab.ordinal) { tabs.size }
@@ -195,38 +190,33 @@ fun KittenApp(actions: SetupActions) {
                                     if (abs(distance) < 1f) drawContent()
                                 },
                         ) {
-                            // 光雾的时钟只给当前页：预加载着、但不在屏幕上的页面里的卡片不该跟着动。
-                            CompositionLocalProvider(
-                                LocalGlassMistClock provides if (tabs[page] == currentTab) mistClock else null,
-                            ) {
-                                when (tabs[page]) {
-                                    // 对话页的输入栏不进栏后面：平时停在栏上面，键盘弹起时贴着键盘。
-                                    KittenTab.Chat -> ChatScreen(
-                                        state = chatState,
-                                        backdrop = backdrop,
-                                        onSend = chatViewModel::send,
-                                        onOpenSettings = { currentTab = KittenTab.Settings },
-                                        onOpenDrawer = { scope.launch { drawerState.open() } },
-                                        onNewSession = chatViewModel::startNewSession,
-                                        modifier = Modifier.windowInsetsPadding(aboveBarOrIme),
-                                    )
+                            when (tabs[page]) {
+                                // 对话页的输入栏不进栏后面：平时停在栏上面，键盘弹起时贴着键盘。
+                                KittenTab.Chat -> ChatScreen(
+                                    state = chatState,
+                                    backdrop = backdrop,
+                                    onSend = chatViewModel::send,
+                                    onOpenSettings = { currentTab = KittenTab.Settings },
+                                    onOpenDrawer = { scope.launch { drawerState.open() } },
+                                    onNewSession = chatViewModel::startNewSession,
+                                    modifier = Modifier.windowInsetsPadding(aboveBarOrIme),
+                                )
 
-                                    // 内容居中在栏上面那块可见区域里。
-                                    KittenTab.Task -> TaskScreen(
-                                        modifier = Modifier.padding(bottom = bottomBarHeight),
-                                    )
+                                // 内容居中在栏上面那块可见区域里。
+                                KittenTab.Task -> TaskScreen(
+                                    modifier = Modifier.padding(bottom = bottomBarHeight),
+                                )
 
-                                    // 设置页滚到栏后面：视口铺到底，只在内容末尾留出栏的高度，
-                                    // 最后一张卡片才滚得上来。键盘弹起时视口缩到键盘上沿，聚焦的
-                                    // 输入框会被滚到键盘上面。
-                                    KittenTab.Settings -> SettingsScreen(
-                                        backdrop = backdrop,
-                                        actions = actions,
-                                        onModelConfigChanged = chatViewModel::refreshModelConfig,
-                                        contentPadding = PaddingValues(bottom = bottomBarHeight),
-                                        modifier = Modifier.imePadding(),
-                                    )
-                                }
+                                // 设置页滚到栏后面：视口铺到底，只在内容末尾留出栏的高度，
+                                // 最后一张卡片才滚得上来。键盘弹起时视口缩到键盘上沿，聚焦的
+                                // 输入框会被滚到键盘上面。
+                                KittenTab.Settings -> SettingsScreen(
+                                    backdrop = backdrop,
+                                    actions = actions,
+                                    onModelConfigChanged = chatViewModel::refreshModelConfig,
+                                    contentPadding = PaddingValues(bottom = bottomBarHeight),
+                                    modifier = Modifier.imePadding(),
+                                )
                             }
                         }
                     }

@@ -29,7 +29,7 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *
  * ## 光雾
  *
- * [mist] 打开时，玻璃里铺一层缓缓流动的光雾（见 [GlassMist]）。雾画在玻璃上面、内容下面。
+ * [mist] 打开时，玻璃里铺一层缓缓流动的光雾（见 [glassMist]）。雾画在玻璃上面、内容下面。
  *
  * ## 按压
  *
@@ -37,7 +37,7 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *
  * - 整块微微放大到 [PressedScale]，松手时带一点回弹；
  * - 折射变强（[PressedRefractionBoost]），底色变深（[PressedTintExtra]）；
- * - 光雾变浓（[PressedMistBoost]），并从手指处被冲开（见 [GlassMist] 的"冲开"）。
+ * - 光雾变浓（[PressedMistBoost]），并从手指处被冲开（见 [glassMist] 的"冲开"）。
  *
  * 它只是反馈，不触发任何动作。里面的控件按下时会消费按下事件（见 [detectGlassPress]），
  * 这里只接没被消费的，所以按在按钮上时玻璃不会跟着一起动。按住后开始滚动页面，反馈收回。
@@ -54,14 +54,14 @@ fun GlassSurface(
     content: @Composable () -> Unit,
 ) {
     val press = rememberGlassPressState()
-    val mistPush = rememberGlassMistPush()
+    val mistState = rememberGlassMistState()
     val shape = remember(cornerRadius) { RoundedCornerShape(cornerRadius) }
     Box(
         modifier = modifier
             .then(
                 if (interactive) {
-                    Modifier.pointerInput(press, mistPush) {
-                        detectGlassPress(press, onDown = mistPush::push, onClick = {})
+                    Modifier.pointerInput(press, mistState) {
+                        detectGlassPress(press, onDown = mistState::push, onClick = {})
                     }
                 } else {
                     Modifier
@@ -91,17 +91,21 @@ fun GlassSurface(
                         drawRect(tint, alpha = press.pressProgress.coerceIn(0f, 1f) * PressedTintExtra)
                     }
                 },
+            )
+            // 雾必须写在 drawBackdrop 后面，见 glassMist。
+            .then(
+                if (mist) {
+                    Modifier.glassMist(
+                        shape = shape,
+                        state = if (interactive) mistState else null,
+                        strength = { 1f + PressedMistBoost * press.pressProgress.coerceIn(0f, 1f) },
+                        hold = { press.pressProgress.coerceIn(0f, 1f) },
+                    )
+                } else {
+                    Modifier
+                },
             ),
     ) {
-        if (mist) {
-            GlassMist(
-                shape = shape,
-                modifier = Modifier.matchParentSize(),
-                strength = { 1f + PressedMistBoost * press.pressProgress.coerceIn(0f, 1f) },
-                push = if (interactive) mistPush else null,
-                hold = { press.pressProgress.coerceIn(0f, 1f) },
-            )
-        }
         content()
     }
 }
