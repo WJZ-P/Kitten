@@ -7,6 +7,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -42,6 +43,7 @@ import androidx.compose.ui.node.invalidateDraw
 import androidx.compose.ui.node.requireGraphicsContext
 import androidx.compose.ui.platform.AndroidUiDispatcher
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -104,15 +106,41 @@ import kotlin.random.Random
  * @param state 冲开雾的力。为 null 就不响应触摸。
  * @param strength 浓度倍数。1 是平时，按下组件时调用方给大一点，雾会更浓、更亮。在绘制阶段读。
  * @param hold 手指按住的程度 0..1，决定指尖周围那片空地有多大。在绘制阶段读。
+ * @param style 雾的颗粒、流速、浓度。不传就是卡片用的那套。
+ * @param seed 雾的起点。不传就随机取一个，几块卡片的雾不会长得一模一样；两块雾要严丝合缝地
+ *   接上时（比如底部栏和它的高亮层）传同一个值。
  */
 fun Modifier.glassMist(
     shape: Shape,
     state: GlassMistState? = null,
     strength: () -> Float = { 1f },
     hold: () -> Float = { 0f },
+    style: GlassMistStyle = GlassMistStyle.Default,
+    seed: Float? = null,
 ): Modifier = this
     .graphicsLayer()
-    .then(GlassMistElement(shape, state, strength, hold))
+    .then(GlassMistElement(shape, state, strength, hold, style, seed))
+
+/**
+ * 雾的样子：颗粒、流速、两层的浓度。默认值是卡片用的那套。
+ *
+ * @param grain 一团雾大概多大。按 dp 给而不是按组件高度归一化：高卡片和矮卡片里的雾颗粒一样大。
+ *   冲开时的那些距离（[BurstReach] 等）都以它为单位。
+ * @param speed 雾流动的快慢。1 大约是背景雾的两倍：卡片小，流慢了看不出在动。
+ * @param hazeAlpha 天依蓝薄雾最浓处的不透明度。
+ * @param lightAlpha 白色亮雾最浓处的不透明度。
+ */
+@Immutable
+data class GlassMistStyle(
+    val grain: Dp = 140.dp,
+    val speed: Float = 2f,
+    val hazeAlpha: Float = 0.45f,
+    val lightAlpha: Float = 0.6f,
+) {
+    companion object {
+        val Default = GlassMistStyle()
+    }
+}
 
 /**
  * 冲开光雾的力：记住最近一次按下的位置，从那里放一道往外推的波前。
@@ -231,13 +259,17 @@ private data class GlassMistElement(
     val state: GlassMistState?,
     val strength: () -> Float,
     val hold: () -> Float,
+    val style: GlassMistStyle,
+    val seed: Float?,
 ) : ModifierNodeElement<GlassMistNode>() {
 
-    override fun create() = GlassMistNode(shape, state, strength, hold)
+    override fun create() = GlassMistNode(shape, state, strength, hold, style, seed)
 
     override fun update(node: GlassMistNode) {
-        if (node.shape != shape) {
+        if (node.shape != shape || node.style != style || node.seed != seed) {
             node.shape = shape
+            node.style = style
+            node.seed = seed
             node.invalidateDraw()
         }
         node.state = state
@@ -251,13 +283,15 @@ private class GlassMistNode(
     var state: GlassMistState?,
     var strength: () -> Float,
     var hold: () -> Float,
+    var style: GlassMistStyle,
+    var seed: Float?,
 ) : Modifier.Node(), DrawModifierNode, GlobalPositionAwareModifierNode, CompositionLocalConsumerModifierNode {
 
     // 第一次真正要画的时候才编译着色器：设置页上好几块卡片，没必要在组合时一口气编译。
     private val shader by lazy { RuntimeShader(MistShader) }
 
-    /** 每块雾一个随机起点，几块卡片的雾不会长得一模一样。 */
-    private val seed = Random.nextFloat() * 100f
+    /** 没指定 [seed] 时用的随机起点，几块卡片的雾不会长得一模一样。 */
+    private val randomSeed = Random.nextFloat() * 100f
 
     /** 按 1/[MistDownscale] 渲染雾的离屏纹理。 */
     private var layer: GraphicsLayer? = null
@@ -297,12 +331,12 @@ private class GlassMistNode(
 
             val colors = currentValueOf(LocalKittenColors)
             val origin = state?.origin?.takeIf { it.isSpecified }
-            shader.setFloatUniform("unit", MistGrain.toPx() / MistDownscale)
-            shader.setFloatUniform("seed", seed)
-            shader.setFloatUniform("time", GlassMistTicker.time * MistSpeed)
+            shader.setFloatUniform("unit", style.grain.toPx() / MistDownscale)
+            shader.setFloatUniform("seed", seed ?: randomSeed)
+            shader.setFloatUniform("time", GlassMistTicker.time * style.speed)
             shader.setFloatUniform("strength", strength())
-            shader.setFloatUniform("hazeAlpha", MistHazeAlpha)
-            shader.setFloatUniform("lightAlpha", MistLightAlpha)
+            shader.setFloatUniform("hazeAlpha", style.hazeAlpha)
+            shader.setFloatUniform("lightAlpha", style.lightAlpha)
             shader.setColorUniform("haze", colors.cardMistHaze.toArgb())
             shader.setColorUniform("light", colors.cardMistLight.toArgb())
             // 触摸点是组件坐标，雾是缩小渲染的，要换算过来。还没按过就放到很远的地方，
@@ -356,18 +390,6 @@ private class GlassMistNode(
     }
 }
 
-/** 一团雾大概多大。按 dp 给而不是按组件高度归一化：高卡片和矮卡片里的雾颗粒一样大。 */
-private val MistGrain = 140.dp
-
-/** 雾流动的快慢。1 大约是背景雾的两倍：卡片小，流慢了看不出在动。 */
-private const val MistSpeed = 2f
-
-/** 天依蓝薄雾最浓处的不透明度。 */
-private const val MistHazeAlpha = 0.45f
-
-/** 白色亮雾最浓处的不透明度。 */
-private const val MistLightAlpha = 0.6f
-
 /** 渲染分辨率缩小的倍数（每个方向）。 */
 private const val MistDownscale = 4f
 
@@ -392,7 +414,7 @@ private const val BurstDurationMillis = 2000
 /** 先快后慢：一下冲出去，越往外越缓。 */
 private val BurstEasing = CubicBezierEasing(0.1f, 0.7f, 0.3f, 1f)
 
-// 下面这几个距离都以"雾团"为单位，一团约 [MistGrain]。
+// 下面这几个距离都以"雾团"为单位，一团约 [GlassMistStyle.grain]。
 
 /** 波前最远走多远。 */
 private const val BurstReach = 1.2f

@@ -57,6 +57,7 @@ import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.math.sign
+import kotlin.random.Random
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
@@ -122,6 +123,8 @@ fun GlassTabBar(
     val touchSlop = LocalViewConfiguration.current.touchSlop
     val scope = rememberCoroutineScope()
     val tabsBackdrop = rememberLayerBackdrop()
+    // 栏和高亮层共用一个雾的起点，见下面的 glassMist。
+    val mistSeed = remember { Random.nextFloat() * 100f }
     val colors = KittenTheme.colors
 
     BoxWithConstraints(
@@ -222,6 +225,8 @@ fun GlassTabBar(
                     },
                     onDrawSurface = { drawRect(colors.glassTintStrong) },
                 )
+                // 雾必须写在 drawBackdrop 后面，见 glassMist。
+                .glassMist(BarShape, style = BarMistStyle, seed = mistSeed)
                 .height(BarHeight)
                 .fillMaxWidth()
                 .padding(BarPadding),
@@ -252,6 +257,9 @@ fun GlassTabBar(
                         highlight = { Highlight.Default.copy(alpha = drag.pressProgress) },
                         onDrawSurface = { drawRect(colors.glassTintStrong) },
                     )
+                    // 和①同一个起点：滑块平时露出的就是这一层，两层的雾要接得上，不然选中那一格
+                    // 像被挖了个洞。
+                    .glassMist(SliderShape, style = BarMistStyle, seed = mistSeed)
                     .height(SliderHeight)
                     .fillMaxWidth()
                     .padding(horizontal = BarPadding)
@@ -404,7 +412,15 @@ private val SliderShape = RoundedCornerShape(GlassRadius.Large - BarPadding)
  * 按住时滑块放大到原来的几倍。会鼓出栏外，每边溢出滑块高度的 (倍数 − 1) / 2，
  * 1.4 就是上下各 20%。外层给栏留的上下间距要容得下这一截。
  */
-private const val PressedSliderScale = 1.4f
+private const val PressedSliderScale = 1.35f
 
 /** 按住时整条栏跟着胀大的倍数。 */
 private const val PressedBarScale = 1.05f
+
+/**
+ * 栏里光雾的样子，单独一套，不和卡片共用。
+ *
+ * 栏只有 [BarHeight] 高，卡片那套颗粒（140dp）在里面只装得下一两团，像一块脏斑；颗粒给小一点，
+ * 横向才排得开几团。其余先照卡片的给，按实际效果再调。
+ */
+private val BarMistStyle = GlassMistStyle(grain = 48.dp)
