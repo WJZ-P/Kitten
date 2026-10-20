@@ -5,6 +5,7 @@ import android.graphics.RuntimeShader
 import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -48,10 +49,13 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import me.wjz.kitten.ui.theme.LocalKittenColors
 import kotlin.math.ceil
+import kotlin.math.max
 import kotlin.random.Random
 
 /**
@@ -105,7 +109,8 @@ import kotlin.random.Random
  * @param shape 雾的形状，一般和玻璃的形状相同。雾会被裁在里面。
  * @param state 冲开雾的力。为 null 就不响应触摸。
  * @param strength 浓度倍数。1 是平时，按下组件时调用方给大一点，雾会更浓、更亮。在绘制阶段读。
- * @param hold 手指按住的程度 0..1，决定指尖周围那片空地有多大。在绘制阶段读。
+ * @param hold 手指按住的程度 0..1，决定指尖周围那片空地有多大。在绘制阶段读。快速点一下时
+ *   空地至少撑开一小段时间，不完全跟着它，见 [GlassMistState]。
  * @param style 雾的颗粒、流速、浓度。不传就是卡片用的那套。
  * @param seed 雾的起点。不传就随机取一个，几块卡片的雾不会长得一模一样；两块雾要严丝合缝地
  *   接上时（比如底部栏和它的高亮层）传同一个值。
@@ -147,15 +152,27 @@ data class GlassMistStyle(
  *
  * 波前的进度从 0 走到 1：0 是刚按下、力最大，1 是波前散尽。没按过时停在 1，着色器里的力
  * 就是零。
+ *
+ * 指尖那片空地平时跟着调用方给的 hold 走（手指按住多久就撑多久）。但快速点一下时，按压态
+ * 刚涨起来就落回去了，空地一闪就没，看着像没按到。所以每次按下，空地至少撑开
+ * [minHoldMillis] 才开始合拢（[holdFloor]），按得更久时照旧跟着 hold。
  */
 @Stable
-class GlassMistState internal constructor(private val scope: CoroutineScope) {
+class GlassMistState internal constructor(
+    private val scope: CoroutineScope,
+    private val minHoldMillis: Int,
+) {
 
     /** 最近一次按下的位置（组件坐标）。 */
     var origin by mutableStateOf(Offset.Unspecified)
         private set
 
     internal val burst = Animatable(1f)
+
+    /** 空地的保底撑开程度 0..1：按下时撑满，过了 [minHoldMillis] 再合拢。着色器取它和 hold 中大的那个。 */
+    internal val holdFloor = Animatable(0f)
+
+    private var holdJob: Job? = null
 
     /** 从 [at]（组件坐标）把雾冲开。在手指落下时调。 */
     fun push(at: Offset) {
@@ -164,14 +181,28 @@ class GlassMistState internal constructor(private val scope: CoroutineScope) {
             burst.snapTo(0f)
             burst.animateTo(1f, tween(BurstDurationMillis, easing = BurstEasing))
         }
+        holdJob?.cancel()
+        holdJob = scope.launch {
+            launch { holdFloor.animateTo(1f, HoldOpenSpec) }
+            delay(minHoldMillis.toLong())
+            // 撑开的动画要是还没放完，这里会把它打断，从当前的大小开始合拢。
+            holdFloor.animateTo(0f, HoldCloseSpec)
+        }
     }
 }
 
+/**
+ * @param minHoldMillis 每次按下，指尖那片空地至少撑开多久才开始合拢，快速点一下也看得到雾被
+ *   冲开。见 [GlassMistState]。
+ */
 @Composable
-fun rememberGlassMistState(): GlassMistState {
+fun rememberGlassMistState(minHoldMillis: Int = DefaultMinHoldMillis): GlassMistState {
     val scope = rememberCoroutineScope()
-    return remember(scope) { GlassMistState(scope) }
+    return remember(scope, minHoldMillis) { GlassMistState(scope, minHoldMillis) }
 }
+
+/** 指尖那片空地默认至少撑开多久（毫秒），见 [rememberGlassMistState]。 */
+const val DefaultMinHoldMillis = 200
 
 /**
  * 所有光雾共用的时钟（秒）。进程里只有这一个。
@@ -347,7 +378,8 @@ private class GlassMistNode(
                 shader.setFloatUniform("touch", -1e4f, -1e4f)
             }
             shader.setFloatUniform("burst", state?.burst?.value ?: 1f)
-            shader.setFloatUniform("hold", if (origin != null) hold().coerceIn(0f, 1f) else 0f)
+            val holdAmount = max(hold(), state?.holdFloor?.value ?: 0f)
+            shader.setFloatUniform("hold", if (origin != null) holdAmount.coerceIn(0f, 1f) else 0f)
             shader.setFloatUniform("burstReach", BurstReach)
             shader.setFloatUniform("burstWidth", BurstWidth)
             shader.setFloatUniform("burstPush", BurstPush)
@@ -413,6 +445,12 @@ private const val BurstDurationMillis = 2000
 
 /** 先快后慢：一下冲出去，越往外越缓。 */
 private val BurstEasing = CubicBezierEasing(0.1f, 0.7f, 0.3f, 1f)
+
+/** 按下时空地撑开的弹簧。 */
+private val HoldOpenSpec = spring<Float>(dampingRatio = 0.75f, stiffness = 600f)
+
+/** 保底时间到了之后空地合拢的弹簧：雾流回来。 */
+private val HoldCloseSpec = spring<Float>(dampingRatio = 0.75f, stiffness = 400f)
 
 // 下面这几个距离都以"雾团"为单位，一团约 [GlassMistStyle.grain]。
 

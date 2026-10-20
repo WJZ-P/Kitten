@@ -46,8 +46,9 @@ enum class GlassButtonStyle {
  * 主按钮是一块染了色的玻璃，不是实心色块：强调色只给到八成多不透明，再在上半截叠一道
  * 很淡的亮光，背景还能隐约透过来。
  *
- * 按下时里面亮起一团跟着手指流动的光雾（[GlassGlow]），按钮同时轻轻鼓起；手指滑出按钮
- * 光雾就熄灭，只有在按钮范围内抬手才触发 [onClick]。见 [GlassPressState]。
+ * 按下时里面亮起一团跟着手指流动的光雾（[GlassGlow]），按钮同时轻轻鼓起；按住拖动时按钮
+ * 跟着手指被拉长、歪一点（[dragStretch]）。手指滑出按钮一段距离，光雾熄灭、形变弹回，只有
+ * 在按钮范围内抬手才触发 [onClick]。见 [GlassPressState]。
  *
  * @param compact 紧凑尺寸，用在列表项右侧这种空间有限的地方。
  */
@@ -84,7 +85,7 @@ fun GlassButton(
                 }
             }
             .pointerInput(press, enabled) {
-                if (enabled) detectGlassPress(press) { currentOnClick() }
+                if (enabled) detectGlassPress(press, followDrag = true) { currentOnClick() }
             }
             .alpha(if (enabled) 1f else DisabledAlpha)
             .drawBackdrop(
@@ -100,6 +101,8 @@ fun GlassButton(
                     val s = lerp(1f, PressedScale, press.pressProgress)
                     scaleX = s
                     scaleY = s
+                    // 按住拖动时跟着手指拉长、歪一点，松手弹回。
+                    dragStretch(press.dragOffset, press.downPosition, ButtonDragStyle)
                 },
                 onDrawSurface = {
                     if (isPrimary) {
@@ -158,6 +161,12 @@ private val RegularHeight = 48.dp
 private val CompactHeight = 32.dp
 
 private const val PressedScale = 1.04f
+
+/**
+ * 按住拖动时的形变，各项含义见 [GlassDragStyle]。按钮比窗小得多，手指拖一小段就该看得出
+ * 在拉，所以 range 给得短、拉长的比例给得大。
+ */
+private val ButtonDragStyle = GlassDragStyle(range = 80.dp, stretch = 0.08f, squeeze = 0.5f, tilt = 3f)
 private const val PrimaryFillAlpha = 0.85f
 private const val DisabledAlpha = 0.4f
 

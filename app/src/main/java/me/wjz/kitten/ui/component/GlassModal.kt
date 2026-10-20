@@ -23,8 +23,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -83,6 +81,15 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 窗底下的光雾一直在流动。窗体要是折射窗外，雾每推进一帧，窗体那一大块就得跟着重新模糊、
  * 折射一遍，窗里的玻璃再跟着重算。所以窗体只折射自己的雾：底色挡住窗外，雾和透镜给出
  * 玻璃的质感，窗外怎么动都和它无关。
+ *
+ * ## 按住、拖动
+ *
+ * 按在窗的留白处（不是按在里面的按钮、输入框上）：雾从手指处被冲开、变浓，边缘折射变强，
+ * 和卡片一样。按住拖动时整块窗跟着手指被拉长、歪一点（[dragStretch]），松手弹回；窗里的内容
+ * 超出、能滚动时，竖着拖归滚动，形变随之弹回。卡片不做拖动形变，免得铺满整页的卡片跟着手指晃，
+ * 影响页面上的其它操作。
+ *
+ * 窗体不读窗外，所以形变直接套在整块窗上就行，不用管背后的内容怎么对齐。
  *
  * 窗画在 [GlassOverlayHost] 上，原因和下拉菜单一样，见那边。窗里再弹出的下拉菜单是后挂上
  * 去的浮层，看得到这个窗。
@@ -177,15 +184,28 @@ private fun ModalLayer(
         ) {
             val mistBackdrop = rememberLayerBackdrop()
             val surfaceBackdrop = rememberLayerBackdrop()
+            val press = rememberGlassPressState()
+            val mist = rememberGlassMistState()
+            val scrollState = rememberScrollState()
             Box(
                 modifier = modifier
                     .width(min(maxWidth * ModalWidthFraction, ModalMaxWidth))
                     .heightIn(max = maxHeight * ModalHeightFraction)
                     .semantics { if (title != null) paneTitle = title }
-                    // 窗自己的留白处也要接住触摸，不然会落到下面的遮罩上，把窗关掉。
-                    .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false) } }
-                    // 窗体、雾、内容一起淡入、长大。窗体不读窗外，三层套同一个变换就行。
-                    .graphicsLayer { modalTransform(progress()) },
+                    // 按在窗的留白处：雾从手指处被冲开，拖动时整块窗跟着手指形变。按在里面的按钮、
+                    // 输入框上时，它们先消费了按下，窗不跟着动。这里也顺带接住了留白处的触摸，不然
+                    // 会落到下面的遮罩上，把窗关掉。
+                    // 必须写在 graphicsLayer 前面：手指位置要按没变形的坐标算，不然形变会反过来
+                    // 改变手指的位置，越拉越抖。
+                    .pointerInput(press, mist) {
+                        detectGlassPress(press, onDown = mist::push, followDrag = true, onClick = {})
+                    }
+                    // 窗体、雾、内容一起淡入、长大，一起跟着手指形变。窗体不读窗外，三层套同一个
+                    // 变换就行。
+                    .graphicsLayer {
+                        modalTransform(progress())
+                        dragStretch(press.dragOffset, press.downPosition, ModalDragStyle)
+                    },
             ) {
                 // 窗里的雾：只录下来给窗体折射，自己不上屏（alpha = 0）。直接画在屏幕上的话，
                 // 底色不是完全不透明，会透出一份没被掰弯的雾，边缘出重影。
@@ -194,7 +214,13 @@ private fun ModalLayer(
                         .matchParentSize()
                         .graphicsLayer { alpha = 0f }
                         .layerBackdrop(mistBackdrop)
-                        .glassMist(ModalShape, style = ModalMistStyle),
+                        .glassMist(
+                            shape = ModalShape,
+                            state = mist,
+                            strength = { 1f + PressedMistBoost * press.pressProgress.coerceIn(0f, 1f) },
+                            hold = { press.pressProgress.coerceIn(0f, 1f) },
+                            style = ModalMistStyle,
+                        ),
                 )
                 // 窗体单独画在一层，录下来给窗里的玻璃折射：输入框里透出来的是窗体的底色和雾，
                 // 不是窗外界面上的字。不能和内容画在同一个节点上——layerBackdrop 会把内容也
@@ -207,7 +233,15 @@ private fun ModalLayer(
                             backdrop = mistBackdrop,
                             shape = { ModalShape },
                             // 不模糊：窗体折射的是自己的雾，雾本来就是软的，糊了看不出区别，白算一遍。
-                            effects = { glassEffects(ModalRadius, blurRadius = 0.dp, refraction = ModalRefraction) },
+                            // 按下时折射变强，和卡片一样。
+                            effects = {
+                                glassEffects(
+                                    cornerRadius = ModalRadius,
+                                    blurRadius = 0.dp,
+                                    press = press.pressProgress.coerceIn(0f, 1f),
+                                    refraction = ModalRefraction,
+                                )
+                            },
                             highlight = { GlassRim },
                             shadow = { ModalShadow },
                             // 底色和天依蓝都垫在雾下面，雾浮在最上面，和卡片里的雾一个样子。
@@ -219,7 +253,11 @@ private fun ModalLayer(
                 )
                 Column(
                     modifier = Modifier
-                        .verticalScroll(rememberScrollState())
+                        // 内容装得下时不接滚动手势：滚动容器即使没东西可滚，也会把竖直拖动吃掉，
+                        // 窗就只能跟着横向拖了。内容超出（比如键盘弹起、窗被压矮）时照常滚动，
+                        // 这时竖直拖动归滚动，横向拖动归窗的形变。maxValue 在第一次测量前是
+                        // Int.MAX_VALUE，量完才是真实值。
+                        .verticalScroll(scrollState, enabled = scrollState.maxValue > 0)
                         .padding(vertical = 6.dp),
                 ) {
                     if (title != null) {
@@ -227,13 +265,12 @@ private fun ModalLayer(
                             title = title,
                             icon = icon,
                             trailing = {
-                                IconButton(onClick = onDismiss) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Close,
-                                        contentDescription = "关闭",
-                                        tint = colors.textSecondary,
-                                    )
-                                }
+                                GlassIconButton(
+                                    icon = Icons.Filled.Close,
+                                    contentDescription = "关闭",
+                                    onClick = onDismiss,
+                                    backdrop = surfaceBackdrop,
+                                )
                             },
                         )
                     }
@@ -284,6 +321,15 @@ private const val ModalRefraction = 4f
 
 /** 窗里光雾的样子（颗粒、流速、浓度），见 [GlassMistStyle]。默认是卡片那套。 */
 private val ModalMistStyle = GlassMistStyle()
+
+/** 按住窗时光雾的浓度额外加多少（相对平时的比例），和卡片一样。 */
+private const val PressedMistBoost = 0.6f
+
+/**
+ * 按住窗拖动时的形变，各项含义见 [GlassDragStyle]。窗很大，按比例拉长给得小，手指要拖得
+ * 远一些才到顶。
+ */
+private val ModalDragStyle = GlassDragStyle(range = 200.dp, stretch = 0.06f, squeeze = 0.5f, tilt = 2f)
 
 /** 窗浮在整页最上面，阴影比卡片和下拉菜单都重。 */
 private val ModalShadow = Shadow(radius = 32.dp, color = Color.Black.copy(alpha = 0.18f))

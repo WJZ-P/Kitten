@@ -102,8 +102,9 @@ internal fun GlassHeader(
                 if (trailing == null) {
                     Modifier.padding(start = GlassContentPadding, end = GlassContentPadding, top = 10.dp, bottom = 4.dp)
                 } else {
-                    // 尾部控件自带 48dp 的触摸区，右边留白收窄，它的图标才和正文的右边对齐。
-                    Modifier.padding(start = GlassContentPadding, end = 4.dp, top = 4.dp)
+                    // 尾部控件（GlassIconButton）是 48dp 的触摸区里放一个 36dp 的玻璃圆，右边留白
+                    // 收窄，圆的右边才和正文、输入框的右边对齐。
+                    Modifier.padding(start = GlassContentPadding, end = 10.dp, top = 4.dp)
                 },
             )
             .semantics { heading() },

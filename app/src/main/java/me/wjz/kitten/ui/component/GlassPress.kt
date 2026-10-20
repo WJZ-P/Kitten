@@ -1,10 +1,12 @@
 package me.wjz.kitten.ui.component
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -12,13 +14,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.isSpecified
+import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.input.pointer.AwaitPointerEventScope
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerId
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+import kotlin.math.abs
+import kotlin.math.sign
+import kotlin.math.tanh
 
 /**
  * 按钮类控件的按压进度。
@@ -49,12 +58,35 @@ class GlassPressState internal constructor(private val scope: CoroutineScope) {
     var position by mutableStateOf(Offset.Unspecified)
         internal set
 
+    /** 最近一次手指落下的位置（控件自身坐标）。还没按过时是 Unspecified。 */
+    var downPosition by mutableStateOf(Offset.Unspecified)
+        internal set
+
+    private val drag = Animatable(Offset.Zero, Offset.VectorConverter)
+
+    /**
+     * 按住后拖了多远：手指当前位置减去落下的位置。只在 [detectGlassPress] 打开了 followDrag
+     * 时才有值；拖动时紧跟手指，手指滑出范围或者松手后带回弹落回零。组件拿它去驱动跟手的
+     * 形变（[dragStretch]）。
+     */
+    val dragOffset: Offset get() = drag.value
+
     internal fun press() {
         scope.launch { progress.animateTo(1f, PressInSpec) }
     }
 
     internal fun release() {
         scope.launch { progress.animateTo(0f, PressOutSpec) }
+    }
+
+    internal fun dragTo(offset: Offset) {
+        // 用很硬的弹簧追，不直接跳过去：每来一次移动就换一个目标，接着当前的速度追，跟手又不
+        // 生硬。手指滑出去再滑回来时，形变也是追回来的，不会一下子跳到拉满。
+        scope.launch { drag.animateTo(offset, DragFollowSpec) }
+    }
+
+    internal fun releaseDrag() {
+        scope.launch { drag.animateTo(Offset.Zero, DragReleaseSpec) }
     }
 }
 
@@ -76,23 +108,32 @@ fun rememberGlassPressState(): GlassPressState {
  *
  * @param onDown 手指落下的那一刻，参数是按下的位置。"按下就开始"的效果（比如把卡片里的
  *   光雾冲开）从这里起。
+ * @param followDrag 按住拖动时把手指的位移交给 [GlassPressState.dragOffset]，组件拿它做跟手
+ *   的形变。只是跟着，**不接管手势**：按钮多半在能滚的页面里，从按钮上开始往上划，页面照样
+ *   滚，滚动一接管，形变就弹回去。拖动之后在范围里抬手照样算点击。
+ *
+ *   打开它时"滑出范围"的判定放宽到 [DragExitTolerance]：按钮小，只放宽一个 touch slop 的话，
+ *   刚拖出一点形变就弹回去了，看不出在跟手。iOS 的按钮也是滑出一段距离才算出去。
  */
 suspend fun PointerInputScope.detectGlassPress(
     state: GlassPressState,
     onDown: (Offset) -> Unit = {},
+    followDrag: Boolean = false,
     onClick: () -> Unit,
 ) {
     awaitEachGesture {
         val down = awaitFirstDown().also { it.consume() }
         state.position = down.position
+        state.downPosition = down.position
         onDown(down.position)
         state.press()
         var committed = false
         try {
-            committed = trackPress(down.id, state)
+            committed = trackPress(down.id, down.position, state, followDrag)
         } finally {
             // 手势协程被取消（比如控件被移出组合）时也要收回按压态，否则会一直鼓着。
             state.release()
+            if (followDrag) state.releaseDrag()
         }
         if (committed) onClick()
     }
@@ -101,10 +142,13 @@ suspend fun PointerInputScope.detectGlassPress(
 /** 返回 true 表示在范围内抬手；手指滑出后抬手、或者被外层接管，都返回 false。 */
 private suspend fun AwaitPointerEventScope.trackPress(
     pointerId: PointerId,
+    downPosition: Offset,
     state: GlassPressState,
+    followDrag: Boolean,
 ): Boolean {
     // 允许手指稍微滑出边界——指头是一块面，不是一个点，贴着边抬起来不该算"滑出去了"。
-    val slop = viewConfiguration.touchSlop
+    // 跟手形变时放得更宽，见 detectGlassPress 的 followDrag。
+    val tolerance = if (followDrag) DragExitTolerance.toPx() else viewConfiguration.touchSlop
     var inside = true
     while (true) {
         val event = awaitPointerEvent()
@@ -113,10 +157,14 @@ private suspend fun AwaitPointerEventScope.trackPress(
         if (change.isConsumed) return false
         state.position = change.position
 
-        val nowInside = change.position.isWithin(size.width.toFloat(), size.height.toFloat(), slop)
+        val nowInside = change.position.isWithin(size.width.toFloat(), size.height.toFloat(), tolerance)
         if (nowInside != inside) {
             inside = nowInside
             if (inside) state.press() else state.release()
+        }
+        // 形变和按压态一起表示"现在松手算不算数"：在范围里就跟着手指，滑出去就弹回。
+        if (followDrag) {
+            if (inside) state.dragTo(change.position - downPosition) else state.releaseDrag()
         }
 
         // 外层滚动容器在 Main 阶段比子节点晚处理，要到 Final 阶段才看得出它有没有接管。
@@ -133,3 +181,61 @@ private val PressInSpec = spring<Float>(dampingRatio = 1f, stiffness = 1200f)
 
 /** 松开带一点过冲，像液体被放开后弹了一下。 */
 private val PressOutSpec = spring<Float>(dampingRatio = 0.55f, stiffness = 400f)
+
+/** 拖动后松手，形变弹回原样：比按压回弹更软、晃得更明显，像一块果冻被放开。 */
+private val DragReleaseSpec = spring(dampingRatio = 0.45f, stiffness = 300f, visibilityThreshold = Offset(0.5f, 0.5f))
+
+/** 拖动时形变追手指的弹簧：很硬、不过冲，看起来是紧跟着的，只是不生硬。 */
+private val DragFollowSpec = spring(dampingRatio = 1f, stiffness = 2000f, visibilityThreshold = Offset(0.5f, 0.5f))
+
+/** 跟手形变时，手指滑出边界多远才算"滑出去了"。 */
+private val DragExitTolerance = 40.dp
+
+/**
+ * 按住拖动时的形变参数，见 [dragStretch]。
+ *
+ * @param range 手指拖多远形变基本到顶。
+ * @param stretch 朝手指方向最多拉长多少，按组件尺寸的比例。0.06 就是最多长出 6%。
+ * @param squeeze 拉长时另一个方向跟着收多少，按拉长量的比例。0 就是只拉长不收窄。
+ * @param tilt 按在边上拖动时最多歪多少度。按在正中间拖不歪。
+ */
+@Immutable
+internal data class GlassDragStyle(
+    val range: Dp,
+    val stretch: Float,
+    val squeeze: Float,
+    val tilt: Float,
+)
+
+/**
+ * 按住拖动时的形变，像一块果冻被手指拽着。在 graphicsLayer 或 drawBackdrop 的 layerBlock 里
+ * 调，叠在已有的缩放上面。
+ *
+ * - 朝手指的方向拉长，另一个方向收一点。远离手指的那一边不动，靠近手指的那一边被拽过去：
+ *   以中心缩放，再往手指那边平移拉长量的一半。
+ * - 拖得越远拉得越长，但越来越拉不动（tanh），拖到 range 左右基本到顶。
+ * - 按的位置离中心越远，拖动时越歪：按在上半截往右拖，上边被拽得多、下边少，整块顺时针
+ *   歪一点。
+ *
+ * 写在 drawBackdrop 的 layerBlock 里时，玻璃背后的内容不会跟着变形：库会把缩放、旋转反着
+ * 抵消掉，平移靠它按图层变换后的位置重新对齐。
+ *
+ * @param drag 手指拖了多远（[GlassPressState.dragOffset]）。
+ * @param grab 手指落下的位置，按这个图层自己的坐标。
+ */
+internal fun GraphicsLayerScope.dragStretch(drag: Offset, grab: Offset, style: GlassDragStyle) {
+    if (drag == Offset.Zero || !grab.isSpecified || size.width <= 0f || size.height <= 0f) return
+    val range = style.range.toPx()
+    val fx = tanh(drag.x / range)
+    val fy = tanh(drag.y / range)
+    val stretchX = style.stretch * abs(fx)
+    val stretchY = style.stretch * abs(fy)
+    scaleX *= (1f + stretchX) * (1f - stretchY * style.squeeze)
+    scaleY *= (1f + stretchY) * (1f - stretchX * style.squeeze)
+    translationX += sign(fx) * stretchX * size.width / 2f
+    translationY += sign(fy) * stretchY * size.height / 2f
+    // 按的位置换算到 -1..1，中心是 0。
+    val gx = (grab.x / size.width * 2f - 1f).coerceIn(-1f, 1f)
+    val gy = (grab.y / size.height * 2f - 1f).coerceIn(-1f, 1f)
+    rotationZ += style.tilt * (fx * -gy + fy * gx)
+}
