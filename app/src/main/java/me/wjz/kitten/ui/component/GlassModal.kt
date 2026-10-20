@@ -33,9 +33,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.GraphicsLayerScope
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -51,7 +51,6 @@ import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.shadow.Shadow
 import me.wjz.kitten.ui.theme.KittenTheme
 
@@ -74,10 +73,16 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * ## 层次
  *
  * ```
- * 遮罩     "背景 + 界面"整块高斯模糊（[ScrimBlur]），再压一层 scrim 色，录进一份 backdrop
- * 窗体     折射遮罩，再糊重一点（[ModalGlassBlur]），边缘被掰弯；也录进一份 backdrop
+ * 遮罩     "背景 + 界面"整块高斯模糊（[ScrimBlur]，降采样做，见 [ScrimDownscale]），再压一层 scrim 色
+ * 窗体     自己的底色 + 自己的光雾，雾在边缘被透镜掰弯（[ModalRefraction]）；录进一份 backdrop
  * 窗里的玻璃（输入框、按钮……）折射窗体，content 的参数就是它
  * ```
+ *
+ * ## 窗体不读窗外
+ *
+ * 窗底下的光雾一直在流动。窗体要是折射窗外，雾每推进一帧，窗体那一大块就得跟着重新模糊、
+ * 折射一遍，窗里的玻璃再跟着重算。所以窗体只折射自己的雾：底色挡住窗外，雾和透镜给出
+ * 玻璃的质感，窗外怎么动都和它无关。
  *
  * 窗画在 [GlassOverlayHost] 上，原因和下拉菜单一样，见那边。窗里再弹出的下拉菜单是后挂上
  * 去的浮层，看得到这个窗。
@@ -134,10 +139,9 @@ private fun ModalLayer(
     content: @Composable ColumnScope.(backdrop: Backdrop) -> Unit,
 ) {
     val colors = KittenTheme.colors
-    val scrimBackdrop = rememberLayerBackdrop()
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // 遮罩：把整个界面糊开、压暗，再录下来给窗体和窗里的玻璃折射。
+        // 遮罩：把整个界面糊开、压暗。
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -159,17 +163,9 @@ private fun ModalLayer(
                         onDismiss()
                     }
                 }
-                // 顺序不能换：layerBackdrop 录的是它右边画出来的东西，也就是糊开之后的界面。
-                .layerBackdrop(scrimBackdrop)
-                .drawBackdrop(
-                    backdrop = surroundings,
-                    shape = { RectangleShape },
-                    // 模糊跟着打开的进度从 0 涨到 ScrimBlur，界面是慢慢糊开的，而不是一下子变糊。
-                    effects = { blur(ScrimBlur.toPx() * progress().coerceIn(0f, 1f)) },
-                    highlight = null,
-                    shadow = null,
-                    onDrawSurface = { drawRect(colors.scrim, alpha = progress().coerceIn(0f, 1f)) },
-                ),
+                // 模糊跟着打开的进度从 0 涨到 ScrimBlur，界面是慢慢糊开的，而不是一下子变糊。
+                .downsampledBlur(surroundings, ScrimBlur, progress = progress, downscale = ScrimDownscale)
+                .drawBehind { drawRect(colors.scrim, alpha = progress().coerceIn(0f, 1f)) },
         )
 
         // 窗体：居中在扣掉系统栏和键盘之后的区域里。
@@ -179,6 +175,7 @@ private fun ModalLayer(
                 .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.ime)),
             contentAlignment = Alignment.Center,
         ) {
+            val mistBackdrop = rememberLayerBackdrop()
             val surfaceBackdrop = rememberLayerBackdrop()
             Box(
                 modifier = modifier
@@ -186,28 +183,42 @@ private fun ModalLayer(
                     .heightIn(max = maxHeight * ModalHeightFraction)
                     .semantics { if (title != null) paneTitle = title }
                     // 窗自己的留白处也要接住触摸，不然会落到下面的遮罩上，把窗关掉。
-                    .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false) } },
+                    .pointerInput(Unit) { awaitEachGesture { awaitFirstDown(requireUnconsumed = false) } }
+                    // 窗体、雾、内容一起淡入、长大。窗体不读窗外，三层套同一个变换就行。
+                    .graphicsLayer { modalTransform(progress()) },
             ) {
-                // 窗体的玻璃单独画在底下一层，录下来给窗里的玻璃折射：输入框里透出来的是窗体那层
-                // 干净的颜色，而不是窗外界面上的字。不能和内容画在同一个节点上——layerBackdrop
-                // 会把内容也录进去，内容又在读它，成环。
+                // 窗里的雾：只录下来给窗体折射，自己不上屏（alpha = 0）。直接画在屏幕上的话，
+                // 底色不是完全不透明，会透出一份没被掰弯的雾，边缘出重影。
+                Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .graphicsLayer { alpha = 0f }
+                        .layerBackdrop(mistBackdrop)
+                        .glassMist(ModalShape, style = ModalMistStyle),
+                )
+                // 窗体单独画在一层，录下来给窗里的玻璃折射：输入框里透出来的是窗体的底色和雾，
+                // 不是窗外界面上的字。不能和内容画在同一个节点上——layerBackdrop 会把内容也
+                // 录进去，内容又在读它，成环。
                 Box(
                     modifier = Modifier
                         .matchParentSize()
                         .layerBackdrop(surfaceBackdrop)
                         .drawBackdrop(
-                            backdrop = scrimBackdrop,
+                            backdrop = mistBackdrop,
                             shape = { ModalShape },
-                            effects = { glassEffects(ModalRadius, ModalGlassBlur) },
+                            // 不模糊：窗体折射的是自己的雾，雾本来就是软的，糊了看不出区别，白算一遍。
+                            effects = { glassEffects(ModalRadius, blurRadius = 0.dp, refraction = ModalRefraction) },
                             highlight = { GlassRim },
                             shadow = { ModalShadow },
-                            layerBlock = { modalTransform(progress()) },
-                            onDrawSurface = { drawRect(colors.glassTint) },
+                            // 底色和天依蓝都垫在雾下面，雾浮在最上面，和卡片里的雾一个样子。
+                            onDrawBehind = {
+                                drawRect(colors.modalSurface)
+                                drawRect(colors.glassTint)
+                            },
                         ),
                 )
                 Column(
                     modifier = Modifier
-                        .graphicsLayer { modalTransform(progress()) }
                         .verticalScroll(rememberScrollState())
                         .padding(vertical = 6.dp),
                 ) {
@@ -233,7 +244,7 @@ private fun ModalLayer(
     }
 }
 
-/** 打开和关闭时窗体和内容一起淡入、长大。两层各自套这一份，动起来才是一个整体。 */
+/** 打开和关闭时窗体、雾和内容一起淡入、长大。 */
 private fun GraphicsLayerScope.modalTransform(progress: Float) {
     alpha = progress.coerceIn(0f, 1f)
     val scale = lerp(ModalStartScale, 1f, progress)
@@ -254,14 +265,25 @@ private const val ModalHeightFraction = 0.9f
 private val ScrimBlur = 4.dp
 
 /**
- * 窗体自己的模糊，叠在 [ScrimBlur] 上面。比卡片重得多：窗外的字只糊了 4dp 还认得出来，
- * 透进窗里会和表单叠在一起抢着被读（试过 2dp）。糊到只剩颜色，窗里才干净。
+ * 遮罩的模糊按 1/它 的宽高做，再拉伸回整屏，见 [downsampledBlur]。越大越省，也越软：
+ * 拉伸本身也会糊一点，调大它之后可以把 [ScrimBlur] 调小一点补回来。
  */
-private val ModalGlassBlur = 12.dp
+private const val ScrimDownscale = 4f
 
 /** 窗的圆角。和 tab 栏同一档：它是比卡片大一号的容器。 */
 private val ModalRadius = GlassRadius.Large
 private val ModalShape = RoundedCornerShape(ModalRadius)
+
+/**
+ * 窗体的折射量（折射带宽的倍数，卡片是 [DefaultRefraction]）。雾是软的，掰得轻了看不出边缘
+ * 在折射；窗又大，边缘那一圈拉扯得明显一点才压得住这么大一块面。
+ *
+ * 折射带的宽度跟着圆角走（见 [glassEffects]），想让那一圈更宽得先把 [ModalRadius] 调大。
+ */
+private const val ModalRefraction = 4f
+
+/** 窗里光雾的样子（颗粒、流速、浓度），见 [GlassMistStyle]。默认是卡片那套。 */
+private val ModalMistStyle = GlassMistStyle()
 
 /** 窗浮在整页最上面，阴影比卡片和下拉菜单都重。 */
 private val ModalShadow = Shadow(radius = 32.dp, color = Color.Black.copy(alpha = 0.18f))

@@ -41,12 +41,9 @@ import me.wjz.kitten.ui.theme.KittenTheme
 /**
  * 玻璃输入框。
  *
- * 和卡片是同一种玻璃（[glassEffects]）：边缘一样会把背景掰弯、带一点色散。区别在于它是
- * **凹下去的**——上沿一道很淡的内阴影，不投外阴影，底色比卡片略白一点。浮起来的是可以
- * 按的，凹下去的是可以填的，一眼就能分清。
- *
- * 玻璃折射不到另一块玻璃（见 [GlassBackground]），所以它透过卡片看到的是背景本身，
- * 不是卡片——这正好：嵌在卡片里的输入框像是在卡片上开了一扇更清透的窗。
+ * 和卡片是同一种玻璃（[glassEffects]）：边缘一样会把背后掰弯、带一点色散，折射得更狠一些
+ * （[WellRefraction]）。区别在于它是**凹下去的**——上沿一道很淡的内阴影，不投外阴影，底色
+ * 比所在的面深一档（`wellTint`）。浮起来的是可以按的，凹下去的是可以填的，一眼就能分清。
  *
  * 聚焦时边框和标签变成强调色，底部一道强调色的线从起始边延伸到整条。
  *
@@ -141,7 +138,7 @@ internal fun Modifier.glassWell(
     .drawBackdrop(
         backdrop = backdrop,
         shape = { SmallShape },
-        effects = { glassEffects(GlassRadius.Small) },
+        effects = { glassEffects(GlassRadius.Small, refraction = WellRefraction) },
         highlight = { GlassRim },
         // 凹进卡片里的东西不投外阴影。
         shadow = null,
@@ -158,7 +155,7 @@ internal fun Modifier.glassWell(
     )
 
 private fun DrawScope.drawWell(active: Float, colors: KittenColors) {
-    drawRect(colors.controlTint)
+    drawRect(colors.wellTint)
     if (active > 0.001f) {
         val lineHeight = 2.dp.toPx()
         val width = size.width * active.coerceIn(0f, 1f)
@@ -170,6 +167,12 @@ private fun DrawScope.drawWell(active: Float, colors: KittenColors) {
         )
     }
 }
+
+/**
+ * 槽的折射量（折射带宽的倍数，卡片是 [DefaultRefraction]）。槽的圆角小，折射带只有 8dp 宽，
+ * 倍数给小了边缘几乎看不出在折射。
+ */
+private const val WellRefraction = 4f
 
 /** 上沿一道很淡的内阴影：槽是凹进卡片里的。 */
 private val WellInnerShadow = InnerShadow(radius = 5.dp, color = Color.Black.copy(alpha = 0.10f))

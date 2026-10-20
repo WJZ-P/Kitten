@@ -136,7 +136,8 @@ private const val PressedMistBoost = 0.6f
  * - [lens] 是液体玻璃区别于普通毛玻璃的关键：边缘一圈像透镜一样把背后的内容往里拉扯、
  *   放大，再带一点色散的彩边。折射带最宽到圆角大小——再宽，圆角里面的等高线会出尖角，
  *   边缘出现断裂；也不超过 [MaxRefractionHeight]，否则大圆角的输入栏整块都在折射带里，
- *   看出去全是扭曲。折射量取带宽的两倍，和 tab 栏滑块按下时的强度相当。
+ *   看出去全是扭曲。折射量默认取带宽的两倍（[DefaultRefraction]），和 tab 栏滑块按下时的
+ *   强度相当；输入框、下拉菜单、模态窗这些要更显眼的，传自己的倍数。
  * - **lens 的两个参数都必须是正数。** 库里 `refractionAmount <= 0` 会直接 return，
  *   什么都不做（方向由着色器内部取反）。早先这里传的是 `-cornerRadius`，于是折射
  *   从来没生效过，也不报错。
@@ -144,11 +145,14 @@ private const val PressedMistBoost = 0.6f
  *   dpi 的设备上效果强弱会差很多。effects 的接收者本身就是 Density，直接 `toPx()`。
  *
  * @param press 按压进度 0..1，按下时折射变强，见 [GlassSurface] 的按压说明。
+ * @param refraction 折射量，按折射带宽的倍数给。越大，边缘把背后的东西往里拉扯、放大得越
+ *   厉害，色散的彩边也越明显。
  */
 internal fun BackdropEffectScope.glassEffects(
     cornerRadius: Dp,
     blurRadius: Dp = GlassBlur,
     press: Float = 0f,
+    refraction: Float = DefaultRefraction,
 ) {
     vibrancy()
     blur(blurRadius.toPx())
@@ -156,7 +160,7 @@ internal fun BackdropEffectScope.glassEffects(
     lens(
         refractionHeight = refractionHeight,
         // 按下时只加折射量、不加折射带宽：带宽超过圆角，圆角里的等高线会出尖角。
-        refractionAmount = refractionHeight * 2f * (1f + PressedRefractionBoost * press),
+        refractionAmount = refractionHeight * refraction * (1f + PressedRefractionBoost * press),
         depthEffect = true,
         chromaticAberration = true,
     )
@@ -164,5 +168,8 @@ internal fun BackdropEffectScope.glassEffects(
 
 /** 玻璃默认的模糊半径。 */
 internal val GlassBlur = 2.dp
+
+/** 玻璃默认的折射量（折射带宽的倍数）。卡片、按钮、tab 栏都用它。 */
+internal const val DefaultRefraction = 2f
 
 private val MaxRefractionHeight = 16.dp

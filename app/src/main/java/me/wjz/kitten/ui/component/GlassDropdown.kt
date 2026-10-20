@@ -271,7 +271,7 @@ private fun DropdownMenuPanel(
                     .drawBackdrop(
                         backdrop = menuBackdrop,
                         shape = { MediumShape },
-                        effects = { glassEffects(GlassRadius.Medium, MenuBlur) },
+                        effects = { glassEffects(GlassRadius.Medium, MenuBlur, refraction = MenuRefraction) },
                         highlight = { GlassRim },
                         shadow = { MenuShadow },
                         layerBlock = {
@@ -361,6 +361,12 @@ private val MenuMargin = 8.dp
  * 卡片的底色），看得出底下有什么，又不干扰阅读。
  */
 private val MenuBlur = 8.dp
+
+/**
+ * 菜单的折射量（折射带宽的倍数，卡片是 [DefaultRefraction]）。菜单底下压着一行行字和
+ * 输入框，边缘把它们掰弯得明显，一眼就看得出这是一块浮着的玻璃。
+ */
+private const val MenuRefraction = 4f
 
 /** 浮层的阴影比卡片的重：它是整页最上面的东西。 */
 private val MenuShadow = Shadow(radius = 24.dp, color = Color.Black.copy(alpha = 0.16f))

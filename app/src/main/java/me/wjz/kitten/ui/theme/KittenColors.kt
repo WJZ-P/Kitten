@@ -61,16 +61,28 @@ data class KittenColors(
     /** 分隔线、chip 和输入框的边。 */
     val hairline: Color,
     /**
-     * 卡片里的控件（输入框、次要按钮、chip）的底色：比卡片亮一档。卡片往深里走、控件往
+     * 卡片里的控件（次要按钮、chip）的底色：比卡片亮一档。卡片往深里走、控件往
      * 亮里走，背景 → 卡片 → 控件三层一眼就分得开。
      */
     val controlTint: Color,
+    /**
+     * 输入框、下拉框这种凹下去的槽的底色：比所在的面深一档。凹下去的地方本来就该暗一点；
+     * 浅色的窗上再放白色的槽，两者几乎分不开。
+     */
+    val wellTint: Color,
     /** 开关、滑条的空轨道。 */
     val trackOff: Color,
     /** 侧滑抽屉的底色（Material 的 Sheet 不透明，没法用玻璃）。 */
     val drawer: Color,
     /** 模态窗背后压暗的那一层，叠在模糊过的界面上。 */
     val scrim: Color,
+    /**
+     * 模态窗窗体的底色，[glassTint] 和窗里的光雾叠在它上面。
+     *
+     * 窗体不透出窗外（见 GlassModal），窗外那层只糊了一点的界面全靠它挡住：透明度给低了，
+     * 窗外的字会隐隐透进表单里。
+     */
+    val modalSurface: Color,
 
     /** 卡片里流动的光雾：一层深一点的天依蓝薄雾，上面浮着白色的亮雾。透明度由着色器按浓淡算。 */
     val cardMistHaze: Color,
@@ -123,10 +135,13 @@ val LightKittenColors = KittenColors(
     sliderIdle = Tianyi400.copy(alpha = 0.22f),
     hairline = Ink.copy(alpha = 0.10f),
     controlTint = Color.White.copy(alpha = 0.45f),
+    wellTint = Tianyi500.copy(alpha = 0.16f),
     trackOff = SystemGray.copy(alpha = 0.2f),
     drawer = Tianyi50,
     // 浅色主题压得很轻：界面本来就糊开了，再压重就成了一块脏灰。
     scrim = Ink.copy(alpha = 0.10f),
+    // 和背景顶部同色：再叠上 glassTint，窗体和页面上的卡片颜色接近。
+    modalSurface = Tianyi50.copy(alpha = 0.92f),
     cardMistHaze = Tianyi450,
     cardMistLight = Color.White,
 
