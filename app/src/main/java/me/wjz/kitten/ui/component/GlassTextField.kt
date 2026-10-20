@@ -33,6 +33,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.LayerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.shadow.InnerShadow
 import me.wjz.kitten.ui.theme.KittenColors
@@ -49,6 +51,10 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *
  * Material 的 `TextField` 自带不透明容器，会把玻璃效果整个盖住，所以基于
  * [BasicTextField] 自己画。
+ *
+ * @param trailing 槽里右边的控件，参数是它该折射的 backdrop：槽自己画出来的那一层。尾部要是
+ *   放玻璃按钮，就用它，不要用外面的 [backdrop]——那样按钮透出来的是槽外面的颜色，像在槽上
+ *   挖了一块。
  */
 @Composable
 fun GlassTextField(
@@ -61,9 +67,10 @@ fun GlassTextField(
     singleLine: Boolean = true,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
-    trailing: @Composable (() -> Unit)? = null,
+    trailing: @Composable ((wellBackdrop: Backdrop) -> Unit)? = null,
 ) {
     val colors = KittenTheme.colors
+    val wellBackdrop = rememberLayerBackdrop()
     var focused by remember { mutableStateOf(false) }
     val focusProgress by animateFloatAsState(
         targetValue = if (focused) 1f else 0f,
@@ -95,9 +102,15 @@ fun GlassTextField(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .glassWell(backdrop = backdrop, colors = colors, active = focusProgress)
+                        .glassWell(
+                            backdrop = backdrop,
+                            colors = colors,
+                            active = focusProgress,
+                            exportedBackdrop = if (trailing != null) wellBackdrop else null,
+                        )
                         .heightIn(min = 44.dp)
-                        .padding(start = 14.dp, end = if (trailing != null) 4.dp else 14.dp),
+                        // 尾部控件（32dp 高）在 44dp 的槽里上下各空 6dp，右边也空 6dp，四周一样宽。
+                        .padding(start = 14.dp, end = if (trailing != null) 6.dp else 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Box(
@@ -115,7 +128,7 @@ fun GlassTextField(
                         }
                         innerTextField()
                     }
-                    trailing?.invoke()
+                    trailing?.invoke(wellBackdrop)
                 }
             },
         )
@@ -127,12 +140,15 @@ fun GlassTextField(
  *
  * @param active 0..1，聚焦（或者菜单展开）的程度：边框变成强调色，底部一道强调色的线
  *   从起始边延伸到整条。
- * @param onDrawSurface 画在底色上面、内容下面，比如按压时的光雾。
+ * @param exportedBackdrop 把槽自己画出来的那一层（不含里面的内容）录进去，给槽里的玻璃控件
+ *   折射。
+ * @param onDrawSurface 画在底色上面、内容下面，比如按压时的光雾。放最后，调用方可以写成尾随 lambda。
  */
 internal fun Modifier.glassWell(
     backdrop: Backdrop,
     colors: KittenColors,
     active: Float,
+    exportedBackdrop: LayerBackdrop? = null,
     onDrawSurface: DrawScope.() -> Unit = {},
 ): Modifier = this
     .drawBackdrop(
@@ -143,6 +159,7 @@ internal fun Modifier.glassWell(
         // 凹进卡片里的东西不投外阴影。
         shadow = null,
         innerShadow = { WellInnerShadow },
+        exportedBackdrop = exportedBackdrop,
         onDrawSurface = {
             drawWell(active, colors)
             onDrawSurface()

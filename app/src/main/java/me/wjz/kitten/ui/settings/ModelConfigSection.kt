@@ -24,7 +24,6 @@ import me.wjz.kitten.llm.LlmConfig
 import me.wjz.kitten.llm.LlmPreset
 import me.wjz.kitten.ui.component.GlassButton
 import me.wjz.kitten.ui.component.GlassButtonStyle
-import me.wjz.kitten.ui.component.GlassChip
 import me.wjz.kitten.ui.component.GlassContentPadding
 import me.wjz.kitten.ui.component.GlassDropdown
 import me.wjz.kitten.ui.component.GlassListItem
@@ -33,6 +32,7 @@ import me.wjz.kitten.ui.component.GlassSection
 import me.wjz.kitten.ui.component.GlassStatus
 import me.wjz.kitten.ui.component.GlassStatusTone
 import me.wjz.kitten.ui.component.GlassTextField
+import me.wjz.kitten.ui.component.GlassToggleButton
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
@@ -182,11 +182,12 @@ private fun ModelConfigForm(
                 PasswordVisualTransformation()
             },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            trailing = {
-                GlassChip(
+            trailing = { wellBackdrop ->
+                GlassToggleButton(
                     text = if (keyVisible) "隐藏" else "显示",
-                    selected = keyVisible,
-                    onClick = { keyVisible = !keyVisible },
+                    checked = keyVisible,
+                    onCheckedChange = { keyVisible = it },
+                    backdrop = wellBackdrop,
                 )
             },
         )
@@ -199,10 +200,11 @@ private fun ModelConfigForm(
         )
 
         GlassButton(
-            text = "保存",
+            text = "保 存",
             onClick = onSave,
             backdrop = backdrop,
             modifier = Modifier.fillMaxWidth(),
+            textStyle = MaterialTheme.typography.titleLarge
         )
     }
 }

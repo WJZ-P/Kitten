@@ -62,6 +62,13 @@ class GlassPressState internal constructor(private val scope: CoroutineScope) {
     var downPosition by mutableStateOf(Offset.Unspecified)
         internal set
 
+    /**
+     * 手指现在是不是按着、并且还在范围里（现在松手算不算数）。和 [pressProgress] 不同，它是
+     * 立刻翻转的，不带动画：组件要自己编排按下、松开的动画时看它。
+     */
+    var isPressed by mutableStateOf(false)
+        private set
+
     private val drag = Animatable(Offset.Zero, Offset.VectorConverter)
 
     /**
@@ -72,10 +79,12 @@ class GlassPressState internal constructor(private val scope: CoroutineScope) {
     val dragOffset: Offset get() = drag.value
 
     internal fun press() {
+        isPressed = true
         scope.launch { progress.animateTo(1f, PressInSpec) }
     }
 
     internal fun release() {
+        isPressed = false
         scope.launch { progress.animateTo(0f, PressOutSpec) }
     }
 

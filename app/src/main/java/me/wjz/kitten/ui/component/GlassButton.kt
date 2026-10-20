@@ -24,6 +24,7 @@ import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
@@ -43,14 +44,17 @@ enum class GlassButtonStyle {
 /**
  * 玻璃按钮。
  *
- * 主按钮是一块染了色的玻璃，不是实心色块：强调色只给到八成多不透明，再在上半截叠一道
- * 很淡的亮光，背景还能隐约透过来。
+ * 主按钮是一块染了色的玻璃，不是实心色块：强调色上浅下深、只给到半透明，背后的东西透得
+ * 过来、在边缘被折射得比别的玻璃更狠（[PrimaryRefraction]），上半截再叠一道很淡的亮光；
+ * 里面流着一层光雾（和卡片一样），按下时从手指处冲开。透明款就是一块淡白玻璃，不带雾。
  *
  * 按下时里面亮起一团跟着手指流动的光雾（[GlassGlow]），按钮同时轻轻鼓起；按住拖动时按钮
  * 跟着手指被拉长、歪一点（[dragStretch]）。手指滑出按钮一段距离，光雾熄灭、形变弹回，只有
  * 在按钮范围内抬手才触发 [onClick]。见 [GlassPressState]。
  *
  * @param compact 紧凑尺寸，用在列表项右侧这种空间有限的地方。
+ * @param textStyle 文字的样式（字号、字重等）。不传时普通按钮用 titleSmall，紧凑按钮用 labelLarge。
+ *   颜色不看这里，由按钮的款式决定。
  */
 @Composable
 fun GlassButton(
@@ -62,10 +66,12 @@ fun GlassButton(
     enabled: Boolean = true,
     compact: Boolean = false,
     icon: ImageVector? = null,
+    textStyle: TextStyle? = null,
 ) {
     val currentOnClick by rememberUpdatedState(onClick)
     val press = rememberGlassPressState()
     val glow = rememberGlassGlow { press.pressProgress.coerceIn(0f, 1f) }
+    val mist = rememberGlassMistState()
     val isPrimary = style == GlassButtonStyle.Primary
     val colors = KittenTheme.colors
     val contentColor = if (isPrimary) colors.onAccent else colors.textPrimary
@@ -84,15 +90,23 @@ fun GlassButton(
                     disabled()
                 }
             }
-            .pointerInput(press, enabled) {
-                if (enabled) detectGlassPress(press, followDrag = true) { currentOnClick() }
+            .pointerInput(press, mist, enabled, isPrimary) {
+                if (enabled) {
+                    detectGlassPress(
+                        state = press,
+                        onDown = { if (isPrimary) mist.push(it) },
+                        followDrag = true,
+                    ) { currentOnClick() }
+                }
             }
             .alpha(if (enabled) 1f else DisabledAlpha)
             .drawBackdrop(
                 backdrop = backdrop,
                 // 按钮都嵌在卡片里，统一用小一档的圆角，和输入框对齐。
                 shape = { SmallShape },
-                effects = { glassEffects(GlassRadius.Small) },
+                effects = {
+                    glassEffects(GlassRadius.Small, refraction = if (isPrimary) PrimaryRefraction else DefaultRefraction)
+                },
                 highlight = { GlassRim },
                 shadow = { ButtonShadow },
                 layerBlock = {
@@ -106,7 +120,15 @@ fun GlassButton(
                 },
                 onDrawSurface = {
                     if (isPrimary) {
-                        drawRect(colors.accent.copy(alpha = PrimaryFillAlpha))
+                        // 上浅下深：一块有厚度的染色玻璃，而不是平涂。
+                        drawRect(
+                            brush = Brush.verticalGradient(
+                                colors = listOf(
+                                    colors.accent.copy(alpha = PrimaryTopAlpha),
+                                    colors.accentDeep.copy(alpha = PrimaryBottomAlpha),
+                                ),
+                            ),
+                        )
                         // 上半截一道渐隐的亮光：没有它，染色玻璃看起来就是一块平涂的色块。
                         drawRect(
                             brush = Brush.verticalGradient(
@@ -124,6 +146,20 @@ fun GlassButton(
                         // 主按钮是天依蓝的填色，上面要用白雾；透明按钮在白玻璃上，用蓝雾。
                         colors = if (isPrimary) colors.glowOnAccent else colors.glowOnGlass,
                     )
+                },
+            )
+            // 雾必须写在 drawBackdrop 后面，见 glassMist。
+            .then(
+                if (isPrimary) {
+                    Modifier.glassMist(
+                        shape = SmallShape,
+                        state = mist,
+                        strength = { 1f + PressedMistBoost * press.pressProgress.coerceIn(0f, 1f) },
+                        hold = { press.pressProgress.coerceIn(0f, 1f) },
+                        style = PrimaryMistStyle,
+                    )
+                } else {
+                    Modifier
                 },
             )
             .height(if (compact) CompactHeight else RegularHeight)
@@ -144,7 +180,7 @@ fun GlassButton(
             }
             Text(
                 text = text,
-                style = if (compact) {
+                style = textStyle ?: if (compact) {
                     MaterialTheme.typography.labelLarge
                 } else {
                     MaterialTheme.typography.titleSmall
@@ -167,7 +203,20 @@ private const val PressedScale = 1.04f
  * 在拉，所以 range 给得短、拉长的比例给得大。
  */
 private val ButtonDragStyle = GlassDragStyle(range = 80.dp, stretch = 0.08f, squeeze = 0.5f, tilt = 3f)
-private const val PrimaryFillAlpha = 0.85f
+
+/** 主按钮染色的浓度：上沿（强调色）和下沿（深一档的强调色）。给低了字看不清，给高了又成了色块。 */
+private const val PrimaryTopAlpha = 0.55f
+private const val PrimaryBottomAlpha = 0.75f
+
+/** 主按钮的折射量（折射带宽的倍数，透明款是 [DefaultRefraction]）。 */
+private const val PrimaryRefraction = 4f
+
+/** 主按钮里光雾的样子。按钮只有 48dp 高，雾团给小一些，和底部栏一样。 */
+private val PrimaryMistStyle = GlassMistStyle(grain = 40.dp, hazeAlpha = 0.35f, lightAlpha = 0.5f)
+
+/** 按下时主按钮里的雾额外浓多少（相对平时的比例），和卡片一样。 */
+private const val PressedMistBoost = 0.6f
+
 private const val DisabledAlpha = 0.4f
 
 /** 光雾的最大亮度。按钮面积大，给满了会白成一片。 */
