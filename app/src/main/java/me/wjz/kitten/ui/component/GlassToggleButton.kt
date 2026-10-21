@@ -1,7 +1,5 @@
 package me.wjz.kitten.ui.component
 
-import android.os.SystemClock
-import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
@@ -10,11 +8,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -36,8 +31,6 @@ import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.collectLatest
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
@@ -54,8 +47,8 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 底色是在"清透"那一段换的：按下时旧的底色淡出，松手后新的底色随着磨砂一起回来，看起来是
  * 玻璃本身变了颜色，而不是两块色块直接切换。
  *
- * 快速点一下时按压态一闪就过，这一套来不及播完。所以变形单独用一条动画（morph）：按下就
- * 鼓起，松手时先把鼓起放完、在最鼓处停够 [MinMorphMillis]，再收回去。
+ * 快速点一下时按压态一闪就过，这一套来不及播完。所以变形单独用一条动画（[rememberPressMorph]）：
+ * 按下就鼓起，松手时先把鼓起放完、在最鼓处停够 [MinMorphMillis]，再收回去。
  *
  * 按住拖动时跟着手指拉长（[dragStretch]），和按钮一样。
  *
@@ -80,22 +73,7 @@ fun GlassToggleButton(
         label = "toggleTint",
     )
 
-    val morph = remember { Animatable(0f) }
-    LaunchedEffect(press, morph) {
-        var pressedAt = 0L
-        snapshotFlow { press.isPressed }.collectLatest { pressed ->
-            if (pressed) {
-                pressedAt = SystemClock.uptimeMillis()
-                morph.animateTo(1f, MorphInSpec)
-            } else if (pressedAt != 0L) {
-                // 快速点按时鼓起还没放完：先放完，在最鼓处停够时间再收回。
-                morph.animateTo(1f, MorphInSpec)
-                val held = SystemClock.uptimeMillis() - pressedAt
-                if (held < MinMorphMillis) delay(MinMorphMillis - held)
-                morph.animateTo(0f, MorphOutSpec)
-            }
-        }
-    }
+    val morph = rememberPressMorph(press, MinMorphMillis, MorphInSpec, MorphOutSpec)
 
     Box(
         modifier = modifier

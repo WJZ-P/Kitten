@@ -1,5 +1,6 @@
 package me.wjz.kitten.ui.component
 
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -30,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
 import me.wjz.kitten.ui.theme.KittenTheme
 
@@ -48,9 +50,11 @@ enum class GlassButtonStyle {
  * 过来、在边缘被折射得比别的玻璃更狠（[PrimaryRefraction]），上半截再叠一道很淡的亮光；
  * 里面流着一层光雾（和卡片一样），按下时从手指处冲开。透明款就是一块淡白玻璃，不带雾。
  *
- * 按下时里面亮起一团跟着手指流动的光雾（[GlassGlow]），按钮同时轻轻鼓起；按住拖动时按钮
- * 跟着手指被拉长、歪一点（[dragStretch]）。手指滑出按钮一段距离，光雾熄灭、形变弹回，只有
- * 在按钮范围内抬手才触发 [onClick]。见 [GlassPressState]。
+ * 按下时按钮鼓起，磨砂和底色退场、折射变强，变成一块清透的透镜，松手再磨砂回去（和
+ * [GlassToggleButton] 一样，快速点一下也能播完一轮，见 [rememberPressMorph]）；里面同时亮起
+ * 一团跟着手指流动的光雾（[GlassGlow]）。按住拖动时按钮跟着手指被拉长、歪一点（[dragStretch]）。
+ * 手指滑出按钮一段距离，光雾熄灭、形变弹回，只有在按钮范围内抬手才触发 [onClick]。见
+ * [GlassPressState]。
  *
  * @param compact 紧凑尺寸，用在列表项右侧这种空间有限的地方。
  * @param textStyle 文字的样式（字号、字重等）。不传时普通按钮用 titleSmall，紧凑按钮用 labelLarge。
@@ -70,6 +74,7 @@ fun GlassButton(
 ) {
     val currentOnClick by rememberUpdatedState(onClick)
     val press = rememberGlassPressState()
+    val morph = rememberPressMorph(press, MinMorphMillis, MorphInSpec, MorphOutSpec)
     val glow = rememberGlassGlow { press.pressProgress.coerceIn(0f, 1f) }
     val mist = rememberGlassMistState()
     val isPrimary = style == GlassButtonStyle.Primary
@@ -105,20 +110,33 @@ fun GlassButton(
                 // 按钮都嵌在卡片里，统一用小一档的圆角，和输入框对齐。
                 shape = { SmallShape },
                 effects = {
-                    glassEffects(GlassRadius.Small, refraction = if (isPrimary) PrimaryRefraction else DefaultRefraction)
+                    // 按下时磨砂退场、折射变强，变成一块透镜；松手再磨砂回去。和切换按钮一样。
+                    val p = morph.value.coerceIn(0f, 1f)
+                    glassEffects(
+                        cornerRadius = GlassRadius.Small,
+                        blurRadius = GlassBlur * (1f - p),
+                        press = p,
+                        refraction = if (isPrimary) PrimaryRefraction else DefaultRefraction,
+                    )
                 },
                 highlight = { GlassRim },
                 shadow = { ButtonShadow },
+                innerShadow = {
+                    val p = morph.value.coerceIn(0f, 1f)
+                    InnerShadow(radius = 4.dp * p, alpha = p)
+                },
                 layerBlock = {
-                    // 按下鼓起一点。给得很克制：按钮在列表里，鼓太多会挤到旁边的元素。
-                    // 松手时 pressProgress 会略冲过 0，这里正好弹一下。
-                    val s = lerp(1f, PressedScale, press.pressProgress)
+                    // 按下鼓起。普通按钮多半铺满一行，鼓得多会顶出卡片，给得克制；紧凑按钮小，
+                    // 给多一点才看得出来。收回时 morph 会略冲过 0，这里正好弹一下。
+                    val s = lerp(1f, if (compact) CompactPressedScale else PressedScale, morph.value)
                     scaleX = s
                     scaleY = s
                     // 按住拖动时跟着手指拉长、歪一点，松手弹回。
                     dragStretch(press.dragOffset, press.downPosition, ButtonDragStyle)
                 },
                 onDrawSurface = {
+                    // 磨砂的那层底色：按下时退场，把舞台交给折射。
+                    val frost = 1f - morph.value.coerceIn(0f, 1f)
                     if (isPrimary) {
                         // 上浅下深：一块有厚度的染色玻璃，而不是平涂。
                         drawRect(
@@ -128,6 +146,7 @@ fun GlassButton(
                                     colors.accentDeep.copy(alpha = PrimaryBottomAlpha),
                                 ),
                             ),
+                            alpha = frost,
                         )
                         // 上半截一道渐隐的亮光：没有它，染色玻璃看起来就是一块平涂的色块。
                         drawRect(
@@ -135,9 +154,10 @@ fun GlassButton(
                                 colors = listOf(Color.White.copy(alpha = 0.22f), Color.Transparent),
                                 endY = size.height * 0.55f,
                             ),
+                            alpha = frost,
                         )
                     } else {
-                        drawRect(colors.controlTint)
+                        drawRect(colors.controlTint, alpha = frost)
                     }
                     drawGlassGlow(
                         glow = glow,
@@ -196,7 +216,18 @@ fun GlassButton(
 private val RegularHeight = 48.dp
 private val CompactHeight = 32.dp
 
+/** 按下鼓起多少：普通按钮、紧凑按钮。 */
 private const val PressedScale = 1.04f
+private const val CompactPressedScale = 1.15f
+
+/** 快速点按时，在最鼓的状态至少停多久（毫秒）再收回，见 [rememberPressMorph]。 */
+private const val MinMorphMillis = 100L
+
+/** 鼓起：快，带一点过冲。 */
+private val MorphInSpec = spring<Float>(dampingRatio = 0.7f, stiffness = 600f)
+
+/** 收回：软一点，晃一下，像液体落回去。 */
+private val MorphOutSpec = spring<Float>(dampingRatio = 0.6f, stiffness = 300f)
 
 /**
  * 按住拖动时的形变，各项含义见 [GlassDragStyle]。按钮比窗小得多，手指拖一小段就该看得出

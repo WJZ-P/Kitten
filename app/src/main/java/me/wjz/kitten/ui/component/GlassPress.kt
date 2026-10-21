@@ -1,18 +1,24 @@
 package me.wjz.kitten.ui.component
 
+import android.os.SystemClock
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationSpec
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.GraphicsLayerScope
@@ -24,6 +30,8 @@ import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import kotlin.math.sign
@@ -97,6 +105,45 @@ class GlassPressState internal constructor(private val scope: CoroutineScope) {
     internal fun releaseDrag() {
         scope.launch { drag.animateTo(Offset.Zero, DragReleaseSpec) }
     }
+}
+
+/**
+ * 按压变形的进度 0..1，给"按下鼓起、变成透镜，松手再磨砂回去"这类效果用（见 [GlassToggleButton]、
+ * [GlassButton]）。
+ *
+ * 和 [GlassPressState.pressProgress] 的区别：快速点一下时按压态一闪就过，变形来不及播完。这条
+ * 动画按下就涨，松手时先涨满、在最鼓处停够 [minMillis]，再落回去，再快的点按也能看到完整一轮。
+ *
+ * @param inSpec 鼓起的动画。
+ * @param outSpec 收回的动画。带过冲的话会略冲过 0，拿去驱动缩放正好弹一下，驱动透明度、模糊时
+ *   自己 coerceIn(0f, 1f)。
+ */
+@Composable
+internal fun rememberPressMorph(
+    press: GlassPressState,
+    minMillis: Long,
+    inSpec: AnimationSpec<Float>,
+    outSpec: AnimationSpec<Float>,
+): Animatable<Float, AnimationVector1D> {
+    val morph = remember { Animatable(0f) }
+    val currentInSpec by rememberUpdatedState(inSpec)
+    val currentOutSpec by rememberUpdatedState(outSpec)
+    LaunchedEffect(press, morph, minMillis) {
+        var pressedAt = 0L
+        snapshotFlow { press.isPressed }.collectLatest { pressed ->
+            if (pressed) {
+                pressedAt = SystemClock.uptimeMillis()
+                morph.animateTo(1f, currentInSpec)
+            } else if (pressedAt != 0L) {
+                // 快速点按时鼓起还没放完：先放完，在最鼓处停够时间再收回。
+                morph.animateTo(1f, currentInSpec)
+                val held = SystemClock.uptimeMillis() - pressedAt
+                if (held < minMillis) delay(minMillis - held)
+                morph.animateTo(0f, currentOutSpec)
+            }
+        }
+    }
+    return morph
 }
 
 @Composable
