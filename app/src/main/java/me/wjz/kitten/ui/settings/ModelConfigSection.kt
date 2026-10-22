@@ -1,7 +1,9 @@
 package me.wjz.kitten.ui.settings
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardOptions
@@ -21,6 +23,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.llm.LlmConfig
+import me.wjz.kitten.llm.LlmFormat
 import me.wjz.kitten.llm.LlmPreset
 import me.wjz.kitten.ui.component.GlassButton
 import me.wjz.kitten.ui.component.GlassButtonStyle
@@ -88,8 +91,9 @@ fun ModelConfigEntry(
  * 编辑的是一份草稿（[draft]），由调用方在打开时从已保存的配置拷一份：点保存才写回，不保存
  * 直接关掉就丢弃，不会出现"改了一半关掉，下次打开还是改了一半的样子"。
  *
- * 预设只是帮用户省掉查文档，不是白名单——任何兼容 OpenAI 协议的服务（包括自建的
- * Ollama）填上地址就能用，所以每个字段都保持可编辑。
+ * 预设只是帮用户省掉查文档，不是白名单——任何兼容 OpenAI 或 Anthropic 协议的服务（包括
+ * 自建的 Ollama、各种中转）填上地址就能用，所以每个字段都保持可编辑。地址对不上任何预设时，
+ * 表单里会多出"接口格式"一项（[FormatPicker]）让用户选协议。
  *
  * 预设用玻璃下拉菜单（[GlassDropdown]）选。Material 的下拉菜单是另开窗口的不透明弹层，
  * 和玻璃格格不入，所以没用它。
@@ -192,6 +196,16 @@ private fun ModelConfigForm(
             },
         )
 
+        // 选了预设时格式是那一家定死的，不用问；地址对不上任何预设（自定义）时，不知道它说
+        // 哪种协议，让用户选。不显示的话，先选 Anthropic 预设再改地址，格式会悄悄停在 Anthropic。
+        AnimatedVisibility(visible = config.matchingPreset() == null) {
+            FormatPicker(
+                format = config.format,
+                onFormatChange = { onConfigChange(config.copy(format = it)) },
+                backdrop = backdrop,
+            )
+        }
+
         Text(
             text = "密钥保存在应用私有目录，其它应用读不到；但 root 过的设备或系统备份" +
                 "仍可能读到明文，请自行斟酌是否在本机存放高权限密钥。",
@@ -209,6 +223,69 @@ private fun ModelConfigForm(
     }
 }
 
-/** 预设没有单独存，按"格式 + 地址都对得上"反推当前用的是哪一家。对不上就是用户自己填的。 */
+/**
+ * 自定义服务的接口格式：OpenAI 还是 Anthropic。
+ *
+ * [LlmFormat.OPENAI] 和 [LlmFormat.OPENAI_COMPATIBLE] 发出去的请求一模一样（只差显示名），
+ * 这里合成一个选项，选它时存成 OPENAI_COMPATIBLE。
+ *
+ * 两个选项是两块玻璃切换按钮（[GlassToggleButton]），各占一半铺满整行；选中的那块染上强调色，
+ * 点的时候鼓起、变成透镜，和别的按钮一样。
+ */
+@Composable
+private fun FormatPicker(
+    format: LlmFormat,
+    onFormatChange: (LlmFormat) -> Unit,
+    backdrop: Backdrop,
+) {
+    val colors = KittenTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        // 和输入框的标签同一个样子，看起来是表单里的一项。
+        Text(
+            text = "接口格式",
+            style = MaterialTheme.typography.labelMedium,
+            color = colors.textSecondary,
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // 单选：点已经选中的那块不会取消，只有点另一块才切换。
+            GlassToggleButton(
+                text = "OpenAI 格式",
+                checked = !format.isAnthropic,
+                onCheckedChange = { if (it) onFormatChange(LlmFormat.OPENAI_COMPATIBLE) },
+                backdrop = backdrop,
+                modifier = Modifier.weight(1f),
+                pressedScale = FormatPressedScale,
+            )
+            GlassToggleButton(
+                text = "Anthropic 格式",
+                checked = format.isAnthropic,
+                onCheckedChange = { if (it) onFormatChange(LlmFormat.ANTHROPIC) },
+                backdrop = backdrop,
+                modifier = Modifier.weight(1f),
+                pressedScale = FormatPressedScale,
+            )
+        }
+        Text(
+            text = "不确定就选 OpenAI 格式，大多数第三方服务和中转都兼容它。",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.textTertiary,
+        )
+    }
+}
+
+/** 接口格式的两个按钮按下时鼓到多大。它们各占半行，比输入框里的小按钮宽得多，给小一点。 */
+private const val FormatPressedScale = 1.05f
+
+private val LlmFormat.isAnthropic: Boolean get() = this == LlmFormat.ANTHROPIC
+
+/**
+ * 预设没有单独存，按"地址 + 协议都对得上"反推当前用的是哪一家。对不上就是用户自己填的。
+ *
+ * 协议只分 OpenAI 和 Anthropic 两种：OPENAI 和 OPENAI_COMPATIBLE 是同一种协议，地址填的是
+ * OpenAI 官方、格式存的是 OPENAI_COMPATIBLE 时，也该认成 OpenAI 预设。
+ */
 private fun LlmConfig.matchingPreset(): LlmPreset? =
-    LlmPreset.ALL.firstOrNull { it.format == format && it.baseUrl == baseUrl }
+    LlmPreset.ALL.firstOrNull { it.baseUrl == baseUrl && it.format.isAnthropic == format.isAnthropic }
