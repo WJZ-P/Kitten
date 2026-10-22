@@ -54,6 +54,8 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *
  * @param text 按钮上的字。一般随 [checked] 变，比如"显示"和"隐藏"。
  * @param backdrop 它该折射的东西。放在输入框里时用输入框给的那份，见 [GlassTextField] 的 trailing。
+ * @param pressedScale 按下时鼓到多大。默认 [DefaultPressedScale]，按钮宽的时候（比如铺满半行）
+ *   同样的比例会鼓得很大，传小一点。
  */
 @Composable
 fun GlassToggleButton(
@@ -62,6 +64,7 @@ fun GlassToggleButton(
     onCheckedChange: (Boolean) -> Unit,
     backdrop: Backdrop,
     modifier: Modifier = Modifier,
+    pressedScale: Float = DefaultPressedScale,
 ) {
     val currentChecked by rememberUpdatedState(checked)
     val currentOnCheckedChange by rememberUpdatedState(onCheckedChange)
@@ -112,7 +115,7 @@ fun GlassToggleButton(
                 },
                 layerBlock = {
                     // 收回时 morph 会略冲过 0，这里正好轻轻弹一下。
-                    val s = lerp(1f, PressedScale, morph.value)
+                    val s = lerp(1f, pressedScale, morph.value)
                     scaleX = s
                     scaleY = s
                     dragStretch(press.dragOffset, press.downPosition, ToggleDragStyle)
@@ -139,8 +142,8 @@ fun GlassToggleButton(
 
 private val Height = 32.dp
 
-/** 按下鼓起多少。放在输入框里，鼓到 1.2 刚好不顶出槽。 */
-private const val PressedScale = 1.2f
+/** 按下默认鼓起多少。放在输入框里，鼓到 1.2 刚好不顶出槽。 */
+const val DefaultPressedScale = 1.2f
 
 /** 平时磨砂的模糊半径。 */
 private val FrostBlur = 4.dp
