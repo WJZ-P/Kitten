@@ -191,7 +191,8 @@ fun KittenApp(actions: SetupActions) {
                                 },
                         ) {
                             when (tabs[page]) {
-                                // 对话页的输入栏不进栏后面：平时停在栏上面，键盘弹起时贴着键盘。
+                                // 消息列表铺到底、滚到输入栏和底部栏后面；输入栏不进栏后面：平时
+                                // 停在栏上面，键盘弹起时贴着键盘。见 ChatScreen。
                                 KittenTab.Chat -> ChatScreen(
                                     state = chatState,
                                     backdrop = backdrop,
@@ -199,7 +200,7 @@ fun KittenApp(actions: SetupActions) {
                                     onOpenSettings = { currentTab = KittenTab.Settings },
                                     onOpenDrawer = { scope.launch { drawerState.open() } },
                                     onNewSession = chatViewModel::startNewSession,
-                                    modifier = Modifier.windowInsetsPadding(aboveBarOrIme),
+                                    bottomInsets = aboveBarOrIme,
                                 )
 
                                 // 内容居中在栏上面那块可见区域里。

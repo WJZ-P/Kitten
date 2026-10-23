@@ -25,7 +25,8 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * [GlassSection] 是它之上的约定版本（占满宽度、带表头），设置页那种整齐的分组用它。
  * 消息气泡要随内容伸缩、输入栏要贴着底边，那些约定反而碍事，就直接用这个。
  *
- * 效果本身见 [glassEffects]。
+ * 效果本身见 [glassEffects]。背后压着会滚动的内容、要把它掰弯得明显一些时（比如对话页的输入栏），
+ * 把 refraction（折射量，折射带宽的倍数）给大一点。
  *
  * ## 光雾
  *
@@ -51,6 +52,7 @@ fun GlassSurface(
     tint: Color = KittenTheme.colors.glassTint,
     interactive: Boolean = false,
     mist: Boolean = false,
+    refraction: Float = DefaultRefraction,
     content: @Composable () -> Unit,
 ) {
     val press = rememberGlassPressState()
@@ -71,7 +73,12 @@ fun GlassSurface(
                 backdrop = backdrop,
                 shape = { shape },
                 effects = {
-                    glassEffects(cornerRadius, blurRadius, press = press.pressProgress.coerceIn(0f, 1f))
+                    glassEffects(
+                        cornerRadius = cornerRadius,
+                        blurRadius = blurRadius,
+                        press = press.pressProgress.coerceIn(0f, 1f),
+                        refraction = refraction,
+                    )
                 },
                 highlight = { GlassRim },
                 layerBlock = if (interactive) {

@@ -32,6 +32,9 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 用 [BasicTextField] 而不是 Material 的 `TextField`：后者自带一整套容器样式
  * （背景、下划线、浮动标签），放在玻璃上会多出一层不透明的底，把折射效果盖住。
  * 这里只需要光标和文字，容器交给 [GlassSurface]。
+ *
+ * 它浮在消息列表上面，[backdrop] 是"背景 + 消息列表"：气泡从它背后滚过时，边缘把气泡和字
+ * 掰弯，液态玻璃才看得出来。见 [ChatScreen]。
  */
 @Composable
 fun ChatInputBar(
@@ -55,6 +58,8 @@ fun ChatInputBar(
     GlassSurface(
         backdrop = backdrop,
         cornerRadius = 26.dp,
+        blurRadius = InputBarBlur,
+        refraction = InputBarRefraction,
         modifier = modifier
             .fillMaxWidth()
             .padding(horizontal = 12.dp, vertical = 4.dp),
@@ -113,3 +118,12 @@ fun ChatInputBar(
         }
     }
 }
+
+/**
+ * 输入栏的模糊。比卡片（2dp）重一点、和底部栏一样：背后滚过的是一行行字，糊得太轻会和正在
+ * 打的字抢着被读。
+ */
+private val InputBarBlur = 4.dp
+
+/** 输入栏的折射量（折射带宽的倍数，卡片是 2）。背后的气泡要被掰弯得明显，玻璃才看得出来。 */
+private const val InputBarRefraction = 2f
