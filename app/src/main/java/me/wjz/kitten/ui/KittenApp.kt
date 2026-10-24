@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.DrawerValue
-import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -33,6 +32,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -51,7 +51,6 @@ import me.wjz.kitten.ui.component.GlassOverlayHost
 import me.wjz.kitten.ui.settings.SettingsScreen
 import me.wjz.kitten.ui.setup.SetupActions
 import me.wjz.kitten.ui.task.TaskScreen
-import me.wjz.kitten.ui.theme.KittenTheme
 import kotlin.math.abs
 
 /**
@@ -94,6 +93,8 @@ fun KittenApp(actions: SetupActions) {
     // 页面内容。底部栏浮在页面上面，要折射的是"背景 + 页面"，不只是背景。
     val pageBackdrop = rememberLayerBackdrop()
     val behindBarBackdrop = rememberCombinedBackdrop(backdrop, pageBackdrop)
+    // 整个界面（背景 + 页面 + 栏）。左侧抽屉浮在它上面，折射的是它。
+    val appBackdrop = rememberLayerBackdrop()
     val tabs = KittenTab.entries
     val pagerState = rememberPagerState(initialPage = currentTab.ordinal) { tabs.size }
     val focusManager = LocalFocusManager.current
@@ -127,25 +128,31 @@ fun KittenApp(actions: SetupActions) {
         // 抽屉只在对话页有意义，别的 tab 下左滑不该拉出会话列表。
         gesturesEnabled = currentTab == KittenTab.Chat,
         drawerContent = {
-            ModalDrawerSheet(drawerContainerColor = KittenTheme.colors.drawer) {
-                SessionDrawer(
-                    sessions = chatState.sessions,
-                    currentSessionId = chatState.sessionId,
-                    onOpenSession = {
-                        chatViewModel.openSession(it)
-                        scope.launch { drawerState.close() }
-                    },
-                    onDeleteSession = chatViewModel::deleteSession,
-                    onNewSession = {
-                        chatViewModel.startNewSession()
-                        scope.launch { drawerState.close() }
-                    },
-                )
-            }
+            // 不套 ModalDrawerSheet：它是一块不透明的面板，玻璃透不出来。面板由 SessionDrawer 自己画。
+            SessionDrawer(
+                sessions = chatState.sessions,
+                currentSessionId = chatState.sessionId,
+                onOpenSession = {
+                    chatViewModel.openSession(it)
+                    scope.launch { drawerState.close() }
+                },
+                onDeleteSession = chatViewModel::deleteSession,
+                onNewSession = {
+                    chatViewModel.startNewSession()
+                    scope.launch { drawerState.close() }
+                },
+                backdrop = appBackdrop,
+            )
         },
     ) {
         GlassBackground(
             backdrop = backdrop,
+            modifier = Modifier
+                // 整个界面录一份给抽屉折射。抽屉是它的兄弟、不在录制范围里，不会成环。
+                .layerBackdrop(appBackdrop)
+                // 界面自己单独一层：背景光晕、雾这些每帧都在变的东西只重录这一层，上面这份
+                // 录制不用跟着每帧重做。
+                .graphicsLayer(),
             // 设置页满屏都是玻璃卡片，背景几乎露不出来，动了也看不见；而玻璃越多，背景每推进
             // 一次要重算的就越多（实测设置页是对话页的一倍半）。所以只在对话页和任务页动。
             animate = currentTab != KittenTab.Settings,
