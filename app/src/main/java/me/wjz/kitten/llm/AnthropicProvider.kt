@@ -71,37 +71,46 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
     /**
      * 组装 messages。
      *
-     * 关键在于**连续的工具结果要合并成一条 user 消息**：模型一轮里可以并发调用多个
-     * 工具，它们的结果必须装进同一条消息的 content 数组，分成多条会被服务端拒绝。
+     * 这个协议对消息的排法有两条硬要求，不满足就是 400：
+     *
+     * - **第一条必须是 user。** 用户把开头的提问删掉以后，对话会以模型的回复开头——这种开头
+     *   的回复（连同它的工具结果）没有提问可依，直接丢掉。
+     * - **同一方的消息不能挨着分成好几条。** 模型一轮里并发调用多个工具时，它们的结果要装进
+     *   同一条 user 消息；用户删掉中间某条消息后，也会出现两条 user 或两条 assistant 挨在
+     *   一起。统一处理：和上一条是同一方，就并进上一条的 content 里。
      */
     private fun buildMessages(messages: List<ChatMessage>): JSONArray {
         val array = JSONArray()
-        var pendingToolResults: JSONArray? = null
 
-        fun flushToolResults() {
-            pendingToolResults?.let {
-                array.put(JSONObject().put("role", "user").put("content", it))
+        fun append(role: String, blocks: JSONArray) {
+            if (blocks.length() == 0) return
+            val last = array.optJSONObject(array.length() - 1)
+            if (last != null && last.getString("role") == role) {
+                val content = last.getJSONArray("content")
+                for (i in 0 until blocks.length()) content.put(blocks.get(i))
+            } else {
+                array.put(JSONObject().put("role", role).put("content", blocks))
             }
-            pendingToolResults = null
         }
 
-        messages.forEach { message ->
+        messages.dropWhile { it !is ChatMessage.User }.forEach { message ->
             when (message) {
-                is ChatMessage.ToolResult -> {
-                    val block = JSONObject()
-                        .put("type", "tool_result")
-                        .put("tool_use_id", message.callId)
-                        .put("content", message.content)
-                    (pendingToolResults ?: JSONArray().also { pendingToolResults = it }).put(block)
-                }
+                is ChatMessage.ToolResult -> append(
+                    "user",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("type", "tool_result")
+                            .put("tool_use_id", message.callId)
+                            .put("content", message.content),
+                    ),
+                )
 
-                is ChatMessage.User -> {
-                    flushToolResults()
-                    array.put(JSONObject().put("role", "user").put("content", message.text))
-                }
+                is ChatMessage.User -> append(
+                    "user",
+                    JSONArray().put(JSONObject().put("type", "text").put("text", message.text)),
+                )
 
                 is ChatMessage.Assistant -> {
-                    flushToolResults()
                     val content = JSONArray()
                     message.text?.takeIf { it.isNotBlank() }?.let {
                         content.put(JSONObject().put("type", "text").put("text", it))
@@ -116,13 +125,10 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                                 .put("input", call.argumentsJson()),
                         )
                     }
-                    if (content.length() > 0) {
-                        array.put(JSONObject().put("role", "assistant").put("content", content))
-                    }
+                    append("assistant", content)
                 }
             }
         }
-        flushToolResults()
         return array
     }
 
