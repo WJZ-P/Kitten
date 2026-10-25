@@ -170,11 +170,16 @@ fun rememberGlassPressState(): GlassPressState {
  *
  *   打开它时"滑出范围"的判定放宽到 [DragExitTolerance]：按钮小，只放宽一个 touch slop 的话，
  *   刚拖出一点形变就弹回去了，看不出在跟手。iOS 的按钮也是滑出一段距离才算出去。
+ * @param onLongPress 传了的话，按住不动够系统的长按时长就调用它，参数是手指的位置（控件自己的
+ *   坐标）。和系统的长按一样，时间一到就触发、不等抬手：它只是把菜单之类的东西弹出来，真正的
+ *   操作还是在菜单里松手才算数。手指挪出 touch slop、滑出范围或者被外层滚动接管，就不再算
+ *   长按。长按之后这一下不再算点击，抬手前的移动也都吞掉，不让外面的列表跟着滚。
  */
 suspend fun PointerInputScope.detectGlassPress(
     state: GlassPressState,
     onDown: (Offset) -> Unit = {},
     followDrag: Boolean = false,
+    onLongPress: ((Offset) -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     awaitEachGesture {
@@ -185,7 +190,7 @@ suspend fun PointerInputScope.detectGlassPress(
         state.press()
         var committed = false
         try {
-            committed = trackPress(down.id, down.position, state, followDrag)
+            committed = trackPress(down.id, down.position, state, followDrag, onLongPress)
         } finally {
             // 手势协程被取消（比如控件被移出组合）时也要收回按压态，否则会一直鼓着。
             state.release()
@@ -195,23 +200,43 @@ suspend fun PointerInputScope.detectGlassPress(
     }
 }
 
-/** 返回 true 表示在范围内抬手；手指滑出后抬手、或者被外层接管，都返回 false。 */
+/**
+ * 返回 true 表示在范围内抬手；手指滑出后抬手、被外层接管、或者已经算成长按，都返回 false。
+ */
 private suspend fun AwaitPointerEventScope.trackPress(
     pointerId: PointerId,
     downPosition: Offset,
     state: GlassPressState,
     followDrag: Boolean,
+    onLongPress: ((Offset) -> Unit)?,
 ): Boolean {
     // 允许手指稍微滑出边界——指头是一块面，不是一个点，贴着边抬起来不该算"滑出去了"。
     // 跟手形变时放得更宽，见 detectGlassPress 的 followDrag。
     val tolerance = if (followDrag) DragExitTolerance.toPx() else viewConfiguration.touchSlop
     var inside = true
+    // 还在等长按：手指按住不动的时候没有事件进来，只能给"等下一个事件"设个时限，时限到了还没
+    // 等到，就是按住不动够久了。
+    var longPressPending = onLongPress != null
+    val longPressAt = SystemClock.uptimeMillis() + viewConfiguration.longPressTimeoutMillis
     while (true) {
-        val event = awaitPointerEvent()
+        val event = if (longPressPending) {
+            withTimeoutOrNull(longPressAt - SystemClock.uptimeMillis()) { awaitPointerEvent() }
+        } else {
+            awaitPointerEvent()
+        }
+        if (event == null) {
+            if (followDrag) state.releaseDrag()
+            onLongPress?.invoke(state.position.takeIf { it.isSpecified } ?: downPosition)
+            consumeUntilUp(pointerId)
+            return false
+        }
         val change = event.changes.firstOrNull { it.id == pointerId } ?: return false
         if (change.changedToUpIgnoreConsumed()) return inside && !change.isConsumed
         if (change.isConsumed) return false
         state.position = change.position
+        if (longPressPending && (change.position - downPosition).getDistance() > viewConfiguration.touchSlop) {
+            longPressPending = false
+        }
 
         val nowInside = change.position.isWithin(size.width.toFloat(), size.height.toFloat(), tolerance)
         if (nowInside != inside) {
@@ -226,6 +251,15 @@ private suspend fun AwaitPointerEventScope.trackPress(
         // 外层滚动容器在 Main 阶段比子节点晚处理，要到 Final 阶段才看得出它有没有接管。
         val finalPass = awaitPointerEvent(PointerEventPass.Final)
         if (finalPass.changes.any { it.id == pointerId && it.isConsumed }) return false
+    }
+}
+
+/** 长按之后：吞掉这根手指抬起前的所有事件，外面的列表、抽屉不会跟着滚。 */
+private suspend fun AwaitPointerEventScope.consumeUntilUp(pointerId: PointerId) {
+    while (true) {
+        val change = awaitPointerEvent().changes.firstOrNull { it.id == pointerId } ?: return
+        change.consume()
+        if (!change.pressed) return
     }
 }
 
