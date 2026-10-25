@@ -77,6 +77,12 @@ data class KittenColors(
     /** 模态窗背后压暗的那一层，叠在模糊过的界面上。 */
     val scrim: Color,
     /**
+     * Toast 的底色和字色。深底白字：Toast 不读背后，压在什么上面都要读得清，浅色界面上用
+     * 深色也最醒目。
+     */
+    val toast: Color,
+    val onToast: Color,
+    /**
      * 模态窗窗体的底色，[glassTint] 和窗里的光雾叠在它上面。
      *
      * 窗体不透出窗外（见 GlassModal），窗外那层只糊了一点的界面全靠它挡住：透明度给低了，
@@ -140,6 +146,8 @@ val LightKittenColors = KittenColors(
     drawer = Tianyi50,
     // 浅色主题压得很轻：界面本来就糊开了，再压重就成了一块脏灰。
     scrim = Ink.copy(alpha = 0.10f),
+    toast = Ink.copy(alpha = 0.88f),
+    onToast = Color.White,
     // 和背景顶部同色：再叠上 glassTint，窗体和页面上的卡片颜色接近。
     modalSurface = Tianyi50.copy(alpha = 0.92f),
     cardMistHaze = Tianyi450,

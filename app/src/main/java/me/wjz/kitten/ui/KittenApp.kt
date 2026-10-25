@@ -18,10 +18,9 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ModalNavigationDrawer
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -48,6 +47,10 @@ import me.wjz.kitten.ui.chat.ChatViewModel
 import me.wjz.kitten.ui.chat.SessionDrawer
 import me.wjz.kitten.ui.component.GlassBackground
 import me.wjz.kitten.ui.component.GlassOverlayHost
+import me.wjz.kitten.ui.component.LocalToast
+import me.wjz.kitten.ui.component.ToastHost
+import me.wjz.kitten.ui.component.ToastState
+import me.wjz.kitten.ui.component.ToastTone
 import me.wjz.kitten.ui.settings.SettingsScreen
 import me.wjz.kitten.ui.setup.SetupActions
 import me.wjz.kitten.ui.task.TaskScreen
@@ -88,7 +91,7 @@ fun KittenApp(actions: SetupActions) {
     var currentTab by rememberSaveable { mutableStateOf(KittenTab.Chat) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    val snackbarHostState = remember { SnackbarHostState() }
+    val toast = remember { ToastState() }
     val backdrop = rememberLayerBackdrop()
     // 页面内容。底部栏浮在页面上面，要折射的是"背景 + 页面"，不只是背景。
     val pageBackdrop = rememberLayerBackdrop()
@@ -115,10 +118,10 @@ fun KittenApp(actions: SetupActions) {
         pagerState.animateScrollToPage(currentTab.ordinal, animationSpec = PageSlideSpec)
     }
 
-    // 错误用 snackbar 提示完就清掉，否则切走再回来会重复弹。
+    // 错误弹一条 Toast 就清掉，否则切走再回来会重复弹。
     LaunchedEffect(chatState.error) {
         chatState.error?.let {
-            snackbarHostState.showSnackbar(it)
+            toast.show(it, tone = ToastTone.Error)
             chatViewModel.consumeError()
         }
     }
@@ -157,97 +160,96 @@ fun KittenApp(actions: SetupActions) {
             // 一次要重算的就越多（实测设置页是对话页的一倍半）。所以只在对话页和任务页动。
             animate = currentTab != KittenTab.Settings,
         ) {
-            // 下拉菜单这类浮层画在这一层上，盖住整个界面（包括顶栏和底部栏）。它必须在
-            // GlassBackground 里面、和背景是兄弟，浮层的玻璃才折射得到背景。见 GlassOverlayHost。
-            GlassOverlayHost(modifier = Modifier.fillMaxSize()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        // 内容避开状态栏和导航栏，但背景依然铺满整屏——这是沉浸式的做法。
-                        //
-                        // 键盘不在这里让：在这里让的话整个界面都被顶上去，底部栏也跟着浮在键盘上面，
-                        // 而切页面不是打字时要做的事。键盘由每一页自己让（见下面的 when），
-                        // 底部栏留在原地，被键盘盖住。
-                        .windowInsetsPadding(WindowInsets.systemBars),
-                ) {
-                    // 页面一直铺到底，底部栏浮在页面上面，而不是在页面下面单独占一条。页面滚到
-                    // 栏后面时，栏的玻璃折射得到页面上的字，液态玻璃的效果才出得来。
-                    HorizontalPager(
-                        state = pagerState,
+            // Toast 的入口包住整个界面和浮层：页面、模态窗、下拉菜单里都能弹。
+            CompositionLocalProvider(LocalToast provides toast) {
+                // 下拉菜单这类浮层画在这一层上，盖住整个界面（包括顶栏和底部栏）。它必须在
+                // GlassBackground 里面、和背景是兄弟，浮层的玻璃才折射得到背景。见 GlassOverlayHost。
+                GlassOverlayHost(modifier = Modifier.fillMaxSize()) {
+                    Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            // 把页面录一份给底部栏看。栏是页面的兄弟、不在录制范围里，不会成环。
-                            .layerBackdrop(pageBackdrop),
-                        // 三页全部常驻：不预先组合的话，第一次切到设置页要现场组合十几块玻璃、
-                        // 读配置和权限状态，会卡一下。
-                        beyondViewportPageCount = tabs.size - 1,
-                        // 只跟着底部 tab 走，不接手指左右滑。原因见类注释。
-                        userScrollEnabled = false,
-                    ) { page ->
-                        Box(
+                            // 内容避开状态栏和导航栏，但背景依然铺满整屏——这是沉浸式的做法。
+                            //
+                            // 键盘不在这里让：在这里让的话整个界面都被顶上去，底部栏也跟着浮在键盘上面，
+                            // 而切页面不是打字时要做的事。键盘由每一页自己让（见下面的 when），
+                            // 底部栏留在原地，被键盘盖住。
+                            .windowInsetsPadding(WindowInsets.systemBars),
+                    ) {
+                        // 页面一直铺到底，底部栏浮在页面上面，而不是在页面下面单独占一条。页面滚到
+                        // 栏后面时，栏的玻璃折射得到页面上的字，液态玻璃的效果才出得来。
+                        HorizontalPager(
+                            state = pagerState,
                             modifier = Modifier
                                 .fillMaxSize()
-                                // 预加载的页面只组合、不绘制。不画的话它们的 RenderNode 不在渲染树里，
-                                // 里面的玻璃就不会跟着背景一起重新模糊、折射——实测停在对话页时，背景每
-                                // 推进一次的 RenderThread 耗时从 20ms 降到 13ms。滑动切换的途中两页都露出来，
-                                // 所以按"离视口还差多少"判断，而不是只画当前页。
-                                .drawWithContent {
-                                    val distance = (pagerState.currentPage - page) +
-                                        pagerState.currentPageOffsetFraction
-                                    if (abs(distance) < 1f) drawContent()
-                                },
-                        ) {
-                            when (tabs[page]) {
-                                // 消息列表铺到底、滚到输入栏和底部栏后面；输入栏不进栏后面：平时
-                                // 停在栏上面，键盘弹起时贴着键盘。见 ChatScreen。
-                                KittenTab.Chat -> ChatScreen(
-                                    state = chatState,
-                                    backdrop = backdrop,
-                                    onSend = chatViewModel::send,
-                                    onOpenSettings = { currentTab = KittenTab.Settings },
-                                    onOpenDrawer = { scope.launch { drawerState.open() } },
-                                    onNewSession = chatViewModel::startNewSession,
-                                    bottomInsets = aboveBarOrIme,
-                                )
+                                // 把页面录一份给底部栏看。栏是页面的兄弟、不在录制范围里，不会成环。
+                                .layerBackdrop(pageBackdrop),
+                            // 三页全部常驻：不预先组合的话，第一次切到设置页要现场组合十几块玻璃、
+                            // 读配置和权限状态，会卡一下。
+                            beyondViewportPageCount = tabs.size - 1,
+                            // 只跟着底部 tab 走，不接手指左右滑。原因见类注释。
+                            userScrollEnabled = false,
+                        ) { page ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    // 预加载的页面只组合、不绘制。不画的话它们的 RenderNode 不在渲染树里，
+                                    // 里面的玻璃就不会跟着背景一起重新模糊、折射——实测停在对话页时，背景每
+                                    // 推进一次的 RenderThread 耗时从 20ms 降到 13ms。滑动切换的途中两页都露出来，
+                                    // 所以按"离视口还差多少"判断，而不是只画当前页。
+                                    .drawWithContent {
+                                        val distance = (pagerState.currentPage - page) +
+                                            pagerState.currentPageOffsetFraction
+                                        if (abs(distance) < 1f) drawContent()
+                                    },
+                            ) {
+                                when (tabs[page]) {
+                                    // 消息列表铺到底、滚到输入栏和底部栏后面；输入栏不进栏后面：平时
+                                    // 停在栏上面，键盘弹起时贴着键盘。见 ChatScreen。
+                                    KittenTab.Chat -> ChatScreen(
+                                        state = chatState,
+                                        backdrop = backdrop,
+                                        onSend = chatViewModel::send,
+                                        onOpenSettings = { currentTab = KittenTab.Settings },
+                                        onOpenDrawer = { scope.launch { drawerState.open() } },
+                                        onNewSession = chatViewModel::startNewSession,
+                                        bottomInsets = aboveBarOrIme,
+                                    )
 
-                                // 内容居中在栏上面那块可见区域里。
-                                KittenTab.Task -> TaskScreen(
-                                    modifier = Modifier.padding(bottom = bottomBarHeight),
-                                )
+                                    // 内容居中在栏上面那块可见区域里。
+                                    KittenTab.Task -> TaskScreen(
+                                        modifier = Modifier.padding(bottom = bottomBarHeight),
+                                    )
 
-                                // 设置页滚到栏后面：视口铺到底，只在内容末尾留出栏的高度，
-                                // 最后一张卡片才滚得上来。键盘弹起时视口缩到键盘上沿，聚焦的
-                                // 输入框会被滚到键盘上面。
-                                KittenTab.Settings -> SettingsScreen(
-                                    backdrop = backdrop,
-                                    actions = actions,
-                                    onModelConfigChanged = chatViewModel::refreshModelConfig,
-                                    contentPadding = PaddingValues(bottom = bottomBarHeight),
-                                    modifier = Modifier.imePadding(),
-                                )
+                                    // 设置页滚到栏后面：视口铺到底，只在内容末尾留出栏的高度，
+                                    // 最后一张卡片才滚得上来。键盘弹起时视口缩到键盘上沿，聚焦的
+                                    // 输入框会被滚到键盘上面。
+                                    KittenTab.Settings -> SettingsScreen(
+                                        backdrop = backdrop,
+                                        actions = actions,
+                                        onModelConfigChanged = chatViewModel::refreshModelConfig,
+                                        contentPadding = PaddingValues(bottom = bottomBarHeight),
+                                        modifier = Modifier.imePadding(),
+                                    )
+                                }
                             }
                         }
+
+                        KittenBottomBar(
+                            backdrop = behindBarBackdrop,
+                            current = currentTab,
+                            onSelect = { currentTab = it },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .onSizeChanged { bottomBarHeight = with(density) { it.height.toDp() } },
+                        )
                     }
-
-                    SnackbarHost(
-                        hostState = snackbarHostState,
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .windowInsetsPadding(aboveBarOrIme)
-                            .padding(bottom = 8.dp),
-                    )
-
-                    KittenBottomBar(
-                        backdrop = behindBarBackdrop,
-                        current = currentTab,
-                        onSelect = { currentTab = it },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .fillMaxWidth()
-                            .onSizeChanged { bottomBarHeight = with(density) { it.height.toDp() } },
-                    )
                 }
             }
+
+            // Toast 是最上面单独一层，盖住整个界面和浮层（包括底部栏和模态窗）。底部那种停在栏
+            // 上面，键盘弹起时贴着键盘。见 ToastHost。
+            ToastHost(state = toast, bottomInsets = aboveBarOrIme)
         }
     }
 }
