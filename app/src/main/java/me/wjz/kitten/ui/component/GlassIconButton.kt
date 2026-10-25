@@ -20,7 +20,9 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.max
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
@@ -32,10 +34,16 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 圆形的玻璃图标按钮，比如模态窗右上角的关闭。
  *
  * 和 [GlassButton] 的透明款是同一种玻璃、同一套按压反馈（鼓起、磨砂退场变成透镜 + 跟着手指
- * 的光雾 + 按住拖动时跟手拉长），只是做成圆的、只放一个图标。看得见的圆是 [IconButtonSize]，四周留出触摸区，整体
- * [TouchSize] 见方，和 Material 的 IconButton 一样大，换进去不用改布局。
+ * 的光雾 + 按住拖动时跟手拉长），只是做成圆的、只放一个图标。看得见的圆默认
+ * [DefaultIconButtonSize]，四周留出触摸区，整体至少 [MinTouchSize] 见方——和 Material 的 IconButton
+ * 一样大，换进去不用改布局。
  *
  * @param contentDescription 给读屏用。图标按钮没有文字，这里一定要写清楚它是干什么的。
+ * @param size 看得见的那个圆有多大。触摸区至少 [MinTouchSize]，圆比它大时触摸区跟着圆走。
+ * @param iconSize 圆里图标的大小。默认跟着圆等比例缩放（36dp 的圆配 24dp 的图标）。
+ * @param touchSize 触摸区多大。默认至少 [MinTouchSize]；只有放在挤不下的地方（比如输入框的槽里，
+ *   槽只有 44dp 高）才往小里给，不能比 [size] 小。
+ * @param iconModifier 加在图标上的，比如加载时让图标转起来。
  */
 @Composable
 fun GlassIconButton(
@@ -44,6 +52,10 @@ fun GlassIconButton(
     onClick: () -> Unit,
     backdrop: Backdrop,
     modifier: Modifier = Modifier,
+    size: Dp = DefaultIconButtonSize,
+    iconSize: Dp = size * IconSizeRatio,
+    touchSize: Dp = max(MinTouchSize, size),
+    iconModifier: Modifier = Modifier,
 ) {
     val currentOnClick by rememberUpdatedState(onClick)
     val press = rememberGlassPressState()
@@ -53,7 +65,7 @@ fun GlassIconButton(
 
     Box(
         modifier = modifier
-            .size(TouchSize)
+            .size(touchSize)
             .semantics {
                 role = Role.Button
                 this.contentDescription = contentDescription
@@ -67,7 +79,7 @@ fun GlassIconButton(
     ) {
         Box(
             modifier = Modifier
-                .size(IconButtonSize)
+                .size(size)
                 .drawBackdrop(
                     backdrop = backdrop,
                     shape = { CircleShape },
@@ -88,7 +100,7 @@ fun GlassIconButton(
                         scaleX = s
                         scaleY = s
                         // 按住拖动时跟着手指拉长，松手弹回。按下的位置是外面触摸区的坐标，换算到圆里。
-                        val inset = (TouchSize - IconButtonSize).toPx() / 2f
+                        val inset = (touchSize - size).toPx() / 2f
                         val grab = press.downPosition
                         dragStretch(
                             drag = press.dragOffset,
@@ -100,7 +112,7 @@ fun GlassIconButton(
                         // 磨砂的那层底色：按下时退场，把舞台交给折射。
                         drawRect(colors.controlTint, alpha = 1f - morph.value.coerceIn(0f, 1f))
                         // 手指位置是外面触摸区的坐标，换算到圆里。
-                        val inset = (TouchSize - IconButtonSize).toPx() / 2f
+                        val inset = (touchSize - size).toPx() / 2f
                         val position = press.position
                         drawGlassGlow(
                             glow = glow,
@@ -116,19 +128,20 @@ fun GlassIconButton(
                 imageVector = icon,
                 contentDescription = null,
                 tint = colors.textSecondary,
-                modifier = Modifier.size(IconSize),
+                modifier = iconModifier.size(iconSize),
             )
         }
     }
 }
 
-/** 触摸区，和 Material 的 IconButton 一样。 */
-private val TouchSize = 48.dp
+/** 触摸区至少这么大，和 Material 的 IconButton 一样。 */
+private val MinTouchSize = 48.dp
 
-/** 看得见的那个圆。 */
-private val IconButtonSize = 36.dp
+/** 看得见的那个圆，默认多大。 */
+val DefaultIconButtonSize = 36.dp
 
-private val IconSize = 24.dp
+/** 图标占圆的比例：36dp 的圆配 24dp 的图标。 */
+private const val IconSizeRatio = 24f / 36f
 
 /** 按下鼓起多少。圆很小，给得比长条按钮多一点才看得出来。 */
 private const val PressedScale = 1.25f

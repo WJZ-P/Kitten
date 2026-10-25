@@ -72,6 +72,7 @@ fun ChatScreen(
                 title = state.title.ifBlank { "新对话" },
                 onOpenDrawer = onOpenDrawer,
                 onNewSession = onNewSession,
+                backdrop = backdrop,
             )
             // 录一份给输入栏折射。输入栏是它的兄弟、不在录制范围里，不会成环。
             Box(

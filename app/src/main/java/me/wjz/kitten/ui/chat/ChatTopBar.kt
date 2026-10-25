@@ -7,8 +7,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -17,6 +15,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.kyant.backdrop.Backdrop
+import me.wjz.kitten.ui.component.GlassIconButton
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
@@ -30,6 +30,7 @@ internal fun ChatTopBar(
     title: String,
     onOpenDrawer: () -> Unit,
     onNewSession: () -> Unit,
+    backdrop: Backdrop,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -39,9 +40,14 @@ internal fun ChatTopBar(
             .padding(horizontal = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IconButton(onClick = onOpenDrawer) {
-            Icon(Icons.Filled.Menu, contentDescription = "历史会话", tint = KittenTheme.colors.textPrimary)
-        }
+        // 两边都是玻璃圆按钮，和模态窗的关闭按钮一样。顶栏下面是背景，折射的就是背景。
+        GlassIconButton(
+            icon = Icons.Filled.Menu,
+            contentDescription = "历史会话",
+            onClick = onOpenDrawer,
+            backdrop = backdrop,
+            size = TopBarButtonSize,
+        )
 
         Text(
             text = title,
@@ -55,8 +61,18 @@ internal fun ChatTopBar(
                 .padding(horizontal = 4.dp),
         )
 
-        IconButton(onClick = onNewSession) {
-            Icon(Icons.Filled.Add, contentDescription = "新对话", tint = KittenTheme.colors.textPrimary)
-        }
+        GlassIconButton(
+            icon = Icons.Filled.Add,
+            contentDescription = "新对话",
+            onClick = onNewSession,
+            backdrop = backdrop,
+            size = TopBarButtonSize,
+        )
     }
 }
+
+/**
+ * 顶栏两个按钮的玻璃圆有多大（图标跟着等比例缩放）。比模态窗关闭按钮那种默认尺寸（36dp）大
+ * 一号：顶栏是对话页最常点的地方，圆小了不好按、也不显眼。
+ */
+private val TopBarButtonSize = 40.dp
