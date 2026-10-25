@@ -3,8 +3,11 @@ package me.wjz.kitten.ui.component
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -23,9 +26,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -40,6 +45,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Rect
@@ -66,6 +72,7 @@ import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.shadow.Shadow
 import me.wjz.kitten.ui.theme.KittenTheme
@@ -87,6 +94,11 @@ import kotlin.math.roundToInt
  *
  * @param selected 当前选中的项。为 null 时槽里显示 [placeholder]——比如用户手填了一个
  *   不在列表里的值。
+ * @param label 槽上方的标签。为 null 时不占那一行，给放在紧凑卡片里、旁边已经有标题的场合用。
+ * @param onRemove 传了的话，每一项右边多一个"×"，点了把这一项删掉（菜单不收起）。给用户能
+ *   自己增删的列表用，比如模型名。
+ * @param footer 菜单底部固定的一块，不跟着列表滚动，和列表之间隔一道细线。参数是菜单自己那层
+ *   玻璃（里面的玻璃控件该折射它）和收起菜单的方法。给"在列表里手动加一项"这类输入用。
  */
 @Composable
 fun <T> GlassDropdown(
@@ -94,10 +106,12 @@ fun <T> GlassDropdown(
     selected: T?,
     onSelect: (T) -> Unit,
     itemLabel: (T) -> String,
-    label: String,
+    label: String?,
     backdrop: Backdrop,
     modifier: Modifier = Modifier,
     placeholder: String = "",
+    onRemove: ((T) -> Unit)? = null,
+    footer: (@Composable (menuBackdrop: Backdrop, close: () -> Unit) -> Unit)? = null,
 ) {
     val colors = KittenTheme.colors
     val focusManager = LocalFocusManager.current
@@ -129,11 +143,13 @@ fun <T> GlassDropdown(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = lerp(colors.textSecondary, colors.accentStrong, open),
-        )
+        if (label != null) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = lerp(colors.textSecondary, colors.accentStrong, open),
+            )
+        }
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -189,6 +205,11 @@ fun <T> GlassDropdown(
             progress = { progress.value },
             backdrop = backdrop,
             onDismiss = { expanded = false },
+            footer = if (footer != null) {
+                { menuBackdrop -> footer(menuBackdrop) { expanded = false } }
+            } else {
+                null
+            },
         ) {
             items.forEach { item ->
                 MenuItem(
@@ -198,6 +219,7 @@ fun <T> GlassDropdown(
                         onSelect(item)
                         expanded = false
                     },
+                    onRemove = onRemove?.let { remove -> { remove(item) } },
                 )
             }
         }
@@ -213,6 +235,7 @@ private fun DropdownMenuPanel(
     progress: () -> Float,
     backdrop: Backdrop,
     onDismiss: () -> Unit,
+    footer: (@Composable (menuBackdrop: Backdrop) -> Unit)?,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = KittenTheme.colors
@@ -222,6 +245,9 @@ private fun DropdownMenuPanel(
     // 背景 + 底下的界面（和模态窗之类先挂上来的浮层）：菜单透出来的是它真正盖住的东西，
     // 见 GlassOverlayHost。
     val menuBackdrop = rememberCombinedBackdrop(backdrop, behind)
+    // 菜单自己那层玻璃（不含里面的内容），给底部那块里的玻璃控件折射：折射菜单背后的东西的话，
+    // 控件透出来的是菜单外面的颜色，像在菜单上挖了个洞。
+    val menuSurface = rememberLayerBackdrop()
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         // 菜单外面：吞掉所有触摸，抬手时收起菜单。
@@ -254,7 +280,8 @@ private fun DropdownMenuPanel(
             val top = insets.getTop(this) + MenuMargin.toPx()
             val bottom = constraints.maxHeight - insets.getBottom(this) - MenuMargin.toPx()
             val gap = MenuGap.toPx()
-            val wanted = (ItemHeight * itemCount + MenuPadding * 2).toPx()
+            val footerHeight = if (footer != null) FooterHeight else 0.dp
+            val wanted = (ItemHeight * itemCount + MenuPadding * 2 + footerHeight).toPx()
             val spaceBelow = bottom - (anchor.bottom + gap)
             val spaceAbove = (anchor.top - gap) - top
             // 下面放得下就往下开；放不下时哪边空间大往哪边开，放不下的部分在菜单里滚动。
@@ -284,11 +311,28 @@ private fun DropdownMenuPanel(
                         },
                         // 浮在页面上面，底下压着卡片里的字，玻璃给实一点。
                         onDrawSurface = { drawRect(colors.glassTintStrong) },
+                        exportedBackdrop = menuSurface,
                     )
-                    .verticalScroll(rememberScrollState())
                     .padding(MenuPadding),
-                content = content,
-            )
+            ) {
+                // 列表在上面、放不下的部分在这一块里滚动；底部那块固定在菜单最下面，不跟着滚。
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                    content = content,
+                )
+                if (footer != null) {
+                    Box(
+                        modifier = Modifier
+                            .padding(vertical = FooterDividerPadding)
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(colors.hairline),
+                    )
+                    footer(menuSurface)
+                }
+            }
         }
     }
 }
@@ -296,9 +340,12 @@ private fun DropdownMenuPanel(
 /**
  * 菜单里的一项。选中项垫一层淡天依蓝、尾部打勾；按下时同一层再叠一遍，手指压着哪一项
  * 一眼就能看出来。
+ *
+ * [onRemove] 不为 null 时最右边多一个"×"，就是一个普通的图标，不做玻璃：它在一项里只占一小块，
+ * 点它删掉这一项。它先消费了按下，所以点"×"时这一项不会跟着被选中。
  */
 @Composable
-private fun MenuItem(text: String, selected: Boolean, onClick: () -> Unit) {
+private fun MenuItem(text: String, selected: Boolean, onClick: () -> Unit, onRemove: (() -> Unit)?) {
     val colors = KittenTheme.colors
     val currentOnClick by rememberUpdatedState(onClick)
     val press = rememberGlassPressState()
@@ -340,11 +387,38 @@ private fun MenuItem(text: String, selected: Boolean, onClick: () -> Unit) {
                 modifier = Modifier.size(18.dp),
             )
         }
+        if (onRemove != null) {
+            Icon(
+                imageVector = Icons.Filled.Close,
+                contentDescription = "删除 $text",
+                tint = colors.textTertiary,
+                modifier = Modifier
+                    .size(RemoveTouchSize)
+                    .clip(CircleShape)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        role = Role.Button,
+                        onClick = onRemove,
+                    )
+                    .padding((RemoveTouchSize - RemoveIconSize) / 2),
+            )
+        }
     }
 }
 
 private val ItemHeight = 44.dp
 private val MenuPadding = 6.dp
+
+/** "×"的触摸区和图标大小：图标小、触摸区比图标大一圈，好点。 */
+private val RemoveTouchSize = 32.dp
+private val RemoveIconSize = 16.dp
+
+/** 底部那块和列表之间那道细线上下的留白。 */
+private val FooterDividerPadding = 6.dp
+
+/** 底部那块整体有多高（细线连同留白 + 一个输入框），算菜单该开多高时用。 */
+private val FooterHeight = FooterDividerPadding * 2 + 1.dp + 44.dp
 
 /** 菜单项高亮的圆角：菜单圆角减去留白，两圈边才同心。 */
 private val ItemRadius = GlassRadius.Medium - MenuPadding
