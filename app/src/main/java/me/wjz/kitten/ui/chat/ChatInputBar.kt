@@ -10,8 +10,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -25,6 +23,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.ui.component.GlassSurface
+import me.wjz.kitten.ui.icon.ArrowUpward
+import me.wjz.kitten.ui.icon.KittenIcons
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
@@ -68,7 +68,7 @@ fun ChatInputBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 18.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
+                .padding(start = 18.dp, end = 6.dp, top = 2.dp, bottom = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -113,7 +113,7 @@ fun ChatInputBar(
                 enabled = enabled && text.isNotBlank(),
             ) {
                 Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Send,
+                    imageVector = KittenIcons.ArrowUpward,
                     contentDescription = "发送",
                     tint = if (enabled && text.isNotBlank()) {
                         KittenTheme.colors.accentStrong
