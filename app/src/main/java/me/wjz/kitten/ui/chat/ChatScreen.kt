@@ -84,6 +84,7 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * @param bottomInsets 输入栏下面要让出来的位置：平时是底部栏，键盘弹起时是键盘。
  * @param onDeleteMessage 删一条消息：它在 messages 里的位置，和那条消息本身（用来核对没删错）。
  * @param onSelectModel 在输入栏的模型菜单里选了哪一家（[ModelGroup.profileId]）的哪个模型。
+ * @param onStop 回复期间点了输入栏上的停止。
  */
 @Composable
 fun ChatScreen(
@@ -96,6 +97,7 @@ fun ChatScreen(
     onDeleteMessage: (index: Int, message: ChatMessage) -> Unit,
     onAnswerQuestion: (String) -> Unit,
     onSelectModel: (profileId: String, model: String) -> Unit,
+    onStop: () -> Unit,
     bottomInsets: WindowInsets,
     modifier: Modifier = Modifier,
 ) {
@@ -163,6 +165,8 @@ fun ChatScreen(
             hint = if (state.isModelConfigured) null else "请先在设置里配置模型",
             onSend = onSend,
             onOpenImage = { viewingImage = it },
+            responding = state.isResponding,
+            onStop = onStop,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 // 量在让位之前：量到的是输入栏加上它下面让出来的那一截。

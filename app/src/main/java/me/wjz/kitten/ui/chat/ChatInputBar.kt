@@ -4,6 +4,15 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -43,6 +52,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
@@ -51,6 +61,7 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.util.lerp
@@ -66,6 +77,7 @@ import me.wjz.kitten.ui.component.rememberGlassPressState
 import me.wjz.kitten.ui.component.rememberImageBitmap
 import me.wjz.kitten.ui.icon.ArrowUpward
 import me.wjz.kitten.ui.icon.KittenIcons
+import me.wjz.kitten.ui.icon.Stop
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
@@ -90,8 +102,17 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *
  * 点附件区的缩略图看大图（[onOpenImage]）。只有图片、不打字也能发。
  *
+ * ## 发送 / 停止
+ *
+ * 回复期间发送按钮换成停止（[responding]），点了喊停这一轮。换的时候图标上下滑：发出去，箭头往上
+ * 飞走、方块从下面升上来；停下来反过来，方块往下沉、箭头从上面落回来（见 [sendStopTransition]）。
+ *
+ * 例外：Agent 在等用户回答、用户已经打了字时，按钮还是发送——打的字就是答案（见 ChatViewModel.send）。
+ *
  * @param onSend 发送：去掉首尾空白的文字（可能是空串），和选好的图片（相册给的地址，复制、
  *   压缩交给 ViewModel）。
+ * @param responding 模型正在回复（或者 Agent 正在干活）。
+ * @param onStop 点了停止。
  * @param modelSwitcher 发送按钮左边放的东西，一般是 [ModelSwitcher]。参数是这块玻璃自己那层，
  *   里面的玻璃按钮该折射它，和"+"、发送一样。做成一个槽，输入栏就不用知道模型配置长什么样。
  */
@@ -102,6 +123,8 @@ fun ChatInputBar(
     hint: String?,
     onSend: (text: String, images: List<Uri>) -> Unit,
     onOpenImage: (Uri) -> Unit,
+    responding: Boolean,
+    onStop: () -> Unit,
     modifier: Modifier = Modifier,
     modelSwitcher: @Composable (buttonBackdrop: Backdrop) -> Unit = {},
 ) {
@@ -113,6 +136,8 @@ fun ChatInputBar(
     val surfaceBackdrop = rememberLayerBackdrop()
     val toast = LocalToast.current
     val canSend = enabled && (text.isNotBlank() || attachments.isNotEmpty())
+    // 回复期间是停止；在等用户回答而且已经打了字（canSend）时还是发送，见类注释。
+    val showStop = responding && !canSend
 
     val pickImages = rememberLauncherForActivityResult(
         ActivityResultContracts.PickMultipleVisualMedia(MaxAttachments),
@@ -199,13 +224,14 @@ fun ChatInputBar(
                 modelSwitcher(surfaceBackdrop)
                 Spacer(modifier = Modifier.width(ModelSwitcherGap))
                 GlassIconButton(
-                    icon = KittenIcons.ArrowUpward,
-                    contentDescription = "发送",
-                    onClick = ::submit,
+                    icon = if (showStop) KittenIcons.Stop else KittenIcons.ArrowUpward,
+                    contentDescription = if (showStop) "停止" else "发送",
+                    onClick = if (showStop) onStop else ::submit,
                     backdrop = surfaceBackdrop,
                     size = ActionButtonSize,
                     style = GlassButtonStyle.Primary,
-                    enabled = canSend,
+                    enabled = showStop || canSend,
+                    iconTransition = { sendStopTransition() },
                 )
             }
         }
@@ -318,6 +344,30 @@ private val InputBarRadius = 26.dp
 
 /** "+"和发送这两个圆有多大，和顶栏按钮一样。 */
 private val ActionButtonSize = 40.dp
+
+/**
+ * 发送和停止互换时图标怎么动，方向跟着"消息往上发出去"走：换成停止时箭头往上飞走、方块从下面
+ * 升上来；换回发送时方块往下沉、箭头从上面落回来。滑动的距离是整个圆的高度，图标裁在圆里，
+ * 正好整个进出玻璃。顺带淡一点，图标碰到圆边被裁掉的那一下不那么硬。
+ */
+private fun AnimatedContentTransitionScope<ImageVector>.sendStopTransition(): ContentTransform {
+    val toStop = targetState == KittenIcons.Stop
+    val enter = slideInVertically(IconSlideSpec) { height -> if (toStop) height else -height } +
+        fadeIn(IconFadeSpec)
+    val exit = slideOutVertically(IconSlideSpec) { height -> if (toStop) -height else height } +
+        fadeOut(IconFadeSpec)
+    return enter togetherWith exit
+}
+
+/** 图标滑动的弹簧：略冲过头一点再落定，像被弹上去 / 落下来。dampingRatio 越小晃得越多。 */
+private val IconSlideSpec = spring(
+    dampingRatio = 0.75f,
+    stiffness = 500f,
+    visibilityThreshold = IntOffset.VisibilityThreshold,
+)
+
+/** 图标淡入淡出：比滑动快，滑到一半就已经看得清了。 */
+private val IconFadeSpec = spring<Float>(stiffness = 900f)
 
 /**
  * 切换模型的按钮和发送之间额外留的空。发送的触摸区每边比圆多出 (48 - 40) / 2 = 4dp，再加这 4dp，

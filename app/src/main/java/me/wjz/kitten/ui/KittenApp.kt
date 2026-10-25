@@ -221,6 +221,7 @@ fun KittenApp(actions: SetupActions) {
                                         onDeleteMessage = chatViewModel::deleteMessage,
                                         onAnswerQuestion = chatViewModel::answerQuestion,
                                         onSelectModel = chatViewModel::selectModel,
+                                        onStop = chatViewModel::stop,
                                         bottomInsets = aboveBarOrIme,
                                     )
 
