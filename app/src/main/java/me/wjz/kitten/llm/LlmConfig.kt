@@ -11,7 +11,8 @@ package me.wjz.kitten.llm
  * @param model 模型名，如 `deepseek-chat`、`claude-sonnet-5-5`、`gpt-4o`。
  * @param maxTokens 单次回复的上限。Agent 的回复通常很短（一句话 + 一次工具调用），
  *        给太大没意义；但也不能太小，否则工具参数会被截断成不合法的 JSON。
- * @param temperature 调低一些，Agent 要的是稳定执行而不是创意。
+ * @param temperature 调低一些，Agent 要的是稳定执行而不是创意。只有 OpenAI 格式会发：Anthropic
+ *        格式的新版 API 不让传温度，见 [AnthropicProvider]。
  */
 data class LlmConfig(
     val format: LlmFormat = LlmFormat.OPENAI_COMPATIBLE,

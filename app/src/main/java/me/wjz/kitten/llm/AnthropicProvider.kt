@@ -34,7 +34,8 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
             put("model", config.model)
             // max_tokens 在这个协议里是必填的，不像 OpenAI 可以省。
             put("max_tokens", config.maxTokens)
-            put("temperature", config.temperature)
+            // 不传 temperature（top_p、top_k 同理）：API 版本 2026-10-21 起，Messages 请求带这三个
+            // 参数在所有模型上都是 400，哪怕传的是默认值。Claude 4.7 及以后的模型本来也只认默认值。
             if (system.isNotBlank()) put("system", system)
             put("messages", buildMessages(messages))
             if (tools.isNotEmpty()) put("tools", buildTools(tools))
@@ -174,7 +175,10 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
         const val TAG = "KittenLlm"
         const val DEFAULT_BASE_URL = "https://api.anthropic.com/v1"
 
-        /** 必填的协议版本头，不带会被拒。 */
-        const val API_VERSION = "2023-06-01"
+        /**
+         * 必填的协议版本头，不带会被拒。2026-10-21 起 Messages 请求不能再带 temperature / top_p /
+         * top_k，所以上面组请求时不传。迁移说明：https://platform.claude.com/docs/en/api/migration-2026-10-21
+         */
+        const val API_VERSION = "2026-10-21"
     }
 }
