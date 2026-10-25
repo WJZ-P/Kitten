@@ -1,6 +1,7 @@
 package me.wjz.kitten.ui.chat
 
 import android.content.ClipData
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
@@ -48,6 +49,7 @@ import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.ui.component.GlassContextMenu
 import me.wjz.kitten.ui.component.GlassIconButton
 import me.wjz.kitten.ui.component.GlassMenuItem
+import me.wjz.kitten.ui.component.ImageViewer
 import me.wjz.kitten.ui.component.rememberGlassContextMenuState
 import me.wjz.kitten.ui.icon.ContentCopy
 import me.wjz.kitten.ui.icon.Delete
@@ -81,7 +83,7 @@ import me.wjz.kitten.ui.theme.KittenTheme
 fun ChatScreen(
     state: ChatUiState,
     backdrop: Backdrop,
-    onSend: (String) -> Unit,
+    onSend: (text: String, images: List<Uri>) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenDrawer: () -> Unit,
     onNewSession: () -> Unit,
@@ -96,6 +98,8 @@ fun ChatScreen(
     val overBackdrop = rememberCombinedBackdrop(backdrop, listBackdrop)
     // 输入栏连同它下面让出来的那一截的高度，列表末尾留出这么多。
     var overlayHeight by remember { mutableStateOf(0.dp) }
+    // 正在看的大图。输入栏的缩略图、气泡里的图片点了都在这里打开，见 ImageViewer。
+    var viewingImage by remember { mutableStateOf<Uri?>(null) }
     // 换一个会话就是一张新列表：滚动位置从头来（倒着排，从头来就是在最底下）。
     val listState = key(state.sessionId) { rememberLazyListState() }
     val awayThreshold = with(density) { AwayFromLatestThreshold.roundToPx() }
@@ -136,6 +140,7 @@ fun ChatScreen(
                             backdrop = backdrop,
                             bottomPadding = overlayHeight,
                             onDeleteMessage = onDeleteMessage,
+                            onOpenImage = { viewingImage = it },
                         )
                     }
                 }
@@ -146,6 +151,7 @@ fun ChatScreen(
             enabled = state.canSend,
             hint = if (state.isModelConfigured) null else "请先在设置里配置模型",
             onSend = onSend,
+            onOpenImage = { viewingImage = it },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 // 量在让位之前：量到的是输入栏加上它下面让出来的那一截。
@@ -161,6 +167,12 @@ fun ChatScreen(
                 .padding(bottom = overlayHeight + ScrollToLatestGap),
         )
     }
+
+    ImageViewer(
+        image = viewingImage,
+        onDismissRequest = { viewingImage = null },
+        backdrop = backdrop,
+    )
 }
 
 /**
@@ -228,6 +240,7 @@ private fun MessageList(
     backdrop: Backdrop,
     bottomPadding: Dp,
     onDeleteMessage: (index: Int, message: ChatMessage) -> Unit,
+    onOpenImage: (Uri) -> Unit,
 ) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
@@ -280,6 +293,7 @@ private fun MessageList(
                         menu.show(it)
                     }
                 },
+                onOpenImage = onOpenImage,
                 streaming = isDraft,
             )
         }
@@ -315,9 +329,9 @@ private class MenuTarget(val index: Int, val message: ChatMessage)
 /** 上一次组合时列表有几项、几条消息，用来看这一次是不是多出了一项、是不是刚发了一条。 */
 private class SeenCounts(var items: Int, var messages: Int)
 
-/** 能复制的文字：用户说的话、模型回复里的文字。只调了工具、没说话的那条没得复制。 */
+/** 能复制的文字：用户说的话、模型回复里的文字。只发了图片、只调了工具的那条没得复制。 */
 private fun ChatMessage.copyableText(): String? = when (this) {
-    is ChatMessage.User -> text
+    is ChatMessage.User -> text.takeIf { it.isNotBlank() }
     is ChatMessage.Assistant -> text?.takeIf { it.isNotBlank() }
     is ChatMessage.ToolResult -> null
 }

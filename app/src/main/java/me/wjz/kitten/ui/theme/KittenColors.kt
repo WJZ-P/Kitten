@@ -77,6 +77,11 @@ data class KittenColors(
     /** 模态窗背后压暗的那一层，叠在模糊过的界面上。 */
     val scrim: Color,
     /**
+     * 看大图时背后压暗的那一层。比 [scrim] 重得多：照片什么颜色都有，背后压暗了才看得清照片
+     * 本身，相册、图库也都是这么做的。
+     */
+    val viewerScrim: Color,
+    /**
      * Toast 的底色和字色。深底白字：Toast 不读背后，压在什么上面都要读得清，浅色界面上用
      * 深色也最醒目。
      */
@@ -146,6 +151,7 @@ val LightKittenColors = KittenColors(
     drawer = Tianyi50,
     // 浅色主题压得很轻：界面本来就糊开了，再压重就成了一块脏灰。
     scrim = Ink.copy(alpha = 0.10f),
+    viewerScrim = Ink.copy(alpha = 0.6f),
     toast = Ink.copy(alpha = 0.88f),
     onToast = Color.White,
     // 和背景顶部同色：再叠上 glassTint，窗体和页面上的卡片颜色接近。

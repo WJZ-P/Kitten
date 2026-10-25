@@ -1,6 +1,7 @@
 package me.wjz.kitten.ui.chat
 
 import android.app.Application
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -9,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import me.wjz.kitten.data.attachment.AttachmentStore
 import me.wjz.kitten.data.session.SessionRepository
 import me.wjz.kitten.data.session.sqlite.SqliteSessionRepository
 import me.wjz.kitten.llm.ChatMessage
@@ -36,6 +38,7 @@ import me.wjz.kitten.llm.createProvider
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: SessionRepository = SqliteSessionRepository(application)
+    private val attachmentStore = AttachmentStore(application)
 
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
@@ -137,15 +140,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * 是同一个位置的同一个气泡，不会闪。失败了临时的那条直接丢掉，和以前一样不入库。
      *
      * 回复期间用户切到了别的会话：字照样收完、照样存进原来那个会话，只是不往眼前这个会话里画。
+     *
+     * ## 图片
+     *
+     * [images] 是相册给的地址，只是临时授权。发之前先复制、压缩一份进应用私有目录（见
+     * [AttachmentStore]），消息里存的是这一份。读不出来的那几张不带，用一条提示告诉用户。
+     * 可以只发图片不打字。
      */
-    fun send(text: String) {
+    fun send(text: String, images: List<Uri> = emptyList()) {
         val content = text.trim()
-        if (content.isEmpty() || !_uiState.value.canSend) return
+        if ((content.isEmpty() && images.isEmpty()) || !_uiState.value.canSend) return
 
         viewModelScope.launch {
-            val userMessage = ChatMessage.User(content)
+            val attachments = images.mapNotNull { attachmentStore.importImage(it) }
+            val dropped = images.size - attachments.size
+            if (dropped > 0) {
+                _uiState.update { it.copy(error = "有 $dropped 张图片读不出来，没有发出去") }
+            }
+            if (content.isEmpty() && attachments.isEmpty()) return@launch
+
+            val userMessage = ChatMessage.User(content, attachments)
             // 先落库再请求：请求可能失败或超时，但用户说过的话不该因此丢掉。
-            val sessionId = ensureSession(content)
+            val sessionId = ensureSession(content.ifEmpty { IMAGE_ONLY_TITLE })
             repository.appendMessage(sessionId, userMessage)
             _uiState.update {
                 it.copy(
@@ -246,6 +262,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         const val TAG = "KittenChat"
         const val TITLE_MAX_LENGTH = 20
+
+        /** 第一条消息只有图片、没有字时，会话的标题。 */
+        const val IMAGE_ONLY_TITLE = "图片"
 
         /**
          * 临时的系统提示词。
