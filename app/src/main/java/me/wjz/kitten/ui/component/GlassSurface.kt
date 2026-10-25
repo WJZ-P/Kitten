@@ -13,6 +13,7 @@ import androidx.compose.ui.unit.min
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.BackdropEffectScope
+import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
@@ -42,6 +43,10 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *
  * 它只是反馈，不触发任何动作。里面的控件按下时会消费按下事件（见 [detectGlassPress]），
  * 这里只接没被消费的，所以按在按钮上时玻璃不会跟着一起动。按住后开始滚动页面，反馈收回。
+ *
+ * @param exportedBackdrop 把这块玻璃自己画出来的那一层（不含里面的内容）录进去，给里面的玻璃
+ *   按钮折射。里面的按钮要是折射外面的 [backdrop]，透出来的是这块玻璃背后的东西，像在玻璃上
+ *   挖了个洞。
  */
 @Composable
 fun GlassSurface(
@@ -53,6 +58,7 @@ fun GlassSurface(
     interactive: Boolean = false,
     mist: Boolean = false,
     refraction: Float = DefaultRefraction,
+    exportedBackdrop: LayerBackdrop? = null,
     content: @Composable () -> Unit,
 ) {
     val press = rememberGlassPressState()
@@ -91,6 +97,7 @@ fun GlassSurface(
                 } else {
                     null
                 },
+                exportedBackdrop = exportedBackdrop,
                 onDrawSurface = {
                     drawRect(tint)
                     if (interactive) {

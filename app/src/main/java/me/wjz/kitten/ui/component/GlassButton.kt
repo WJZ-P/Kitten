@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
@@ -33,6 +34,7 @@ import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.shadow.InnerShadow
 import com.kyant.backdrop.shadow.Shadow
+import me.wjz.kitten.ui.theme.KittenColors
 import me.wjz.kitten.ui.theme.KittenTheme
 
 enum class GlassButtonStyle {
@@ -138,24 +140,7 @@ fun GlassButton(
                     // 磨砂的那层底色：按下时退场，把舞台交给折射。
                     val frost = 1f - morph.value.coerceIn(0f, 1f)
                     if (isPrimary) {
-                        // 上浅下深：一块有厚度的染色玻璃，而不是平涂。
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(
-                                    colors.accent.copy(alpha = PrimaryTopAlpha),
-                                    colors.accentDeep.copy(alpha = PrimaryBottomAlpha),
-                                ),
-                            ),
-                            alpha = frost,
-                        )
-                        // 上半截一道渐隐的亮光：没有它，染色玻璃看起来就是一块平涂的色块。
-                        drawRect(
-                            brush = Brush.verticalGradient(
-                                colors = listOf(Color.White.copy(alpha = 0.22f), Color.Transparent),
-                                endY = size.height * 0.55f,
-                            ),
-                            alpha = frost,
-                        )
+                        drawPrimaryTint(colors, alpha = frost)
                     } else {
                         drawRect(colors.controlTint, alpha = frost)
                     }
@@ -211,6 +196,33 @@ fun GlassButton(
             )
         }
     }
+}
+
+/**
+ * 主按钮那层染色：强调色上浅下深，上半截一道渐隐的亮光。[GlassButton] 和 [GlassIconButton] 的主
+ * 款式共用，同一页上的主按钮才是同一种染色玻璃。
+ *
+ * @param alpha 整层的不透明度。按下变成透镜时它跟着磨砂一起退场。
+ */
+internal fun DrawScope.drawPrimaryTint(colors: KittenColors, alpha: Float) {
+    // 上浅下深：一块有厚度的染色玻璃，而不是平涂。
+    drawRect(
+        brush = Brush.verticalGradient(
+            colors = listOf(
+                colors.accent.copy(alpha = PrimaryTopAlpha),
+                colors.accentDeep.copy(alpha = PrimaryBottomAlpha),
+            ),
+        ),
+        alpha = alpha,
+    )
+    // 上半截一道渐隐的亮光：没有它，染色玻璃看起来就是一块平涂的色块。
+    drawRect(
+        brush = Brush.verticalGradient(
+            colors = listOf(Color.White.copy(alpha = 0.22f), Color.Transparent),
+            endY = size.height * 0.55f,
+        ),
+        alpha = alpha,
+    )
 }
 
 private val RegularHeight = 48.dp

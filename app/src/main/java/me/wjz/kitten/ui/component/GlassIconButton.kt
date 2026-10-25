@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
@@ -17,6 +18,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -44,6 +46,9 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * @param touchSize 触摸区多大。默认至少 [MinTouchSize]；只有放在挤不下的地方（比如输入框的槽里，
  *   槽只有 44dp 高）才往小里给，不能比 [size] 小。
  * @param iconModifier 加在图标上的，比如加载时让图标转起来。
+ * @param style 默认是透明玻璃；[GlassButtonStyle.Primary] 是和主按钮同一种的染色玻璃（比如发送），
+ *   图标换成压在天依蓝上的颜色。
+ * @param enabled 为 false 时整个淡下去，不响应按压。
  */
 @Composable
 fun GlassIconButton(
@@ -56,12 +61,15 @@ fun GlassIconButton(
     iconSize: Dp = size * IconSizeRatio,
     touchSize: Dp = max(MinTouchSize, size),
     iconModifier: Modifier = Modifier,
+    style: GlassButtonStyle = GlassButtonStyle.Secondary,
+    enabled: Boolean = true,
 ) {
     val currentOnClick by rememberUpdatedState(onClick)
     val press = rememberGlassPressState()
     val morph = rememberPressMorph(press, MinMorphMillis, MorphInSpec, MorphOutSpec)
     val glow = rememberGlassGlow { press.pressProgress.coerceIn(0f, 1f) }
     val colors = KittenTheme.colors
+    val isPrimary = style == GlassButtonStyle.Primary
 
     Box(
         modifier = modifier
@@ -69,12 +77,19 @@ fun GlassIconButton(
             .semantics {
                 role = Role.Button
                 this.contentDescription = contentDescription
-                this.onClick(label = null) {
-                    currentOnClick()
-                    true
+                if (enabled) {
+                    this.onClick(label = null) {
+                        currentOnClick()
+                        true
+                    }
+                } else {
+                    disabled()
                 }
             }
-            .pointerInput(press) { detectGlassPress(press, followDrag = true) { currentOnClick() } },
+            .pointerInput(press, enabled) {
+                if (enabled) detectGlassPress(press, followDrag = true) { currentOnClick() }
+            }
+            .alpha(if (enabled) 1f else DisabledAlpha),
         contentAlignment = Alignment.Center,
     ) {
         Box(
@@ -109,8 +124,9 @@ fun GlassIconButton(
                         )
                     },
                     onDrawSurface = {
-                        // 磨砂的那层底色：按下时退场，把舞台交给折射。
-                        drawRect(colors.controlTint, alpha = 1f - morph.value.coerceIn(0f, 1f))
+                        // 磨砂的那层底色（主款式是染色）：按下时退场，把舞台交给折射。
+                        val frost = 1f - morph.value.coerceIn(0f, 1f)
+                        if (isPrimary) drawPrimaryTint(colors, alpha = frost) else drawRect(colors.controlTint, alpha = frost)
                         // 手指位置是外面触摸区的坐标，换算到圆里。
                         val inset = (touchSize - size).toPx() / 2f
                         val position = press.position
@@ -118,7 +134,8 @@ fun GlassIconButton(
                             glow = glow,
                             intensity = press.pressProgress.coerceIn(0f, 1f) * GlowStrength,
                             center = if (position.isSpecified) position - Offset(inset, inset) else position,
-                            colors = colors.glowOnGlass,
+                            // 天依蓝的染色上用白雾，白玻璃上用蓝雾，和按钮一样。
+                            colors = if (isPrimary) colors.glowOnAccent else colors.glowOnGlass,
                         )
                     },
                 ),
@@ -127,7 +144,7 @@ fun GlassIconButton(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = colors.textSecondary,
+                tint = if (isPrimary) colors.onAccent else colors.textSecondary,
                 modifier = iconModifier.size(iconSize),
             )
         }
@@ -163,5 +180,8 @@ private val IconButtonDragStyle = GlassDragStyle(range = 60.dp, stretch = 0.15f,
 
 /** 光雾的最大亮度，和按钮一样。 */
 private const val GlowStrength = 0.25f
+
+/** 不能点时淡到多少，和按钮一样。 */
+private const val DisabledAlpha = 0.4f
 
 private val IconButtonShadow = Shadow(radius = 6.dp, color = Color.Black.copy(alpha = 0.12f))
