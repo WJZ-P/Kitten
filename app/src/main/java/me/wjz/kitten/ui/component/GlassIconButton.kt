@@ -1,7 +1,11 @@
 package me.wjz.kitten.ui.component
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
@@ -11,6 +15,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Color
@@ -49,6 +54,9 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * @param style 默认是透明玻璃；[GlassButtonStyle.Primary] 是和主按钮同一种的染色玻璃（比如发送），
  *   图标换成压在天依蓝上的颜色。
  * @param enabled 为 false 时整个淡下去，不响应按压。
+ * @param iconTransition 传了的话，[icon] 换成另一个时按它做过渡（比如发送换成停止时上下滑动），
+ *   图标在圆里进出、裁在圆里，滑出去的那一截不会露在玻璃外面；不传就是直接换。过渡里拿得到换之前
+ *   和换之后的图标（initialState / targetState），可以按方向选不同的动画。
  */
 @Composable
 fun GlassIconButton(
@@ -63,6 +71,7 @@ fun GlassIconButton(
     iconModifier: Modifier = Modifier,
     style: GlassButtonStyle = GlassButtonStyle.Secondary,
     enabled: Boolean = true,
+    iconTransition: (AnimatedContentTransitionScope<ImageVector>.() -> ContentTransform)? = null,
 ) {
     val currentOnClick by rememberUpdatedState(onClick)
     val press = rememberGlassPressState()
@@ -141,12 +150,36 @@ fun GlassIconButton(
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (isPrimary) colors.onAccent else colors.textSecondary,
-                modifier = iconModifier.size(iconSize),
-            )
+            val tint = if (isPrimary) colors.onAccent else colors.textSecondary
+            if (iconTransition == null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = iconModifier.size(iconSize),
+                )
+            } else {
+                // 铺满整个圆再裁成圆：滑动的距离按圆的高度算，滑出去的图标正好整个离开玻璃，
+                // 露在外面的那一截被裁掉。
+                AnimatedContent(
+                    targetState = icon,
+                    transitionSpec = iconTransition,
+                    contentAlignment = Alignment.Center,
+                    label = "glassIconButtonIcon",
+                    modifier = Modifier
+                        .matchParentSize()
+                        .clip(CircleShape),
+                ) { target ->
+                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = target,
+                            contentDescription = null,
+                            tint = tint,
+                            modifier = iconModifier.size(iconSize),
+                        )
+                    }
+                }
+            }
         }
     }
 }
