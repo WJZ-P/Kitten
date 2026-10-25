@@ -131,6 +131,15 @@ sealed interface LlmError {
     data class MalformedResponse(val detail: String) : LlmError {
         override fun describe() = "模型返回了无法解析的内容：$detail"
     }
+
+    /**
+     * 地址打到了网站页面上，而不是接口：回来的是一张网页。中转站的控制台对不认识的路径
+     * 一律回首页，地址少拼了 /v1 时就是这样。会先试着自己补上 /v1，见 [EndpointRepair]。
+     */
+    data class WrongEndpoint(val url: String) : LlmError {
+        override fun describe() =
+            "地址返回的是网页，不是接口数据。多半是地址少了 /v1 之类的路径，实际请求的是：$url"
+    }
 }
 
 /** 调用结果。失败带原因，不用异常——这些失败都是预期内的，不是程序错误。 */

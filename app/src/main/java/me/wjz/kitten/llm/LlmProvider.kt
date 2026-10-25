@@ -1,5 +1,7 @@
 package me.wjz.kitten.llm
 
+import org.json.JSONObject
+
 /**
  * 一家模型服务的接入方式。
  *
@@ -46,4 +48,29 @@ interface LlmProvider {
         messages: List<ChatMessage>,
         tools: List<ToolSpec> = emptyList(),
     ): LlmResult
+
+    /**
+     * 这家服务能用的模型名，给设置页的下拉条用。
+     *
+     * 两家协议都有 `GET /models`，兼容 OpenAI 的服务（DeepSeek、Ollama…）大多也有。没有的
+     * 会返回 404 之类的失败，用户可以手填模型名。失败不抛异常，和 [chat] 一样归类成 [LlmError]。
+     */
+    suspend fun listModels(): ModelListResult
+}
+
+sealed interface ModelListResult {
+    /** 按名字排好序。 */
+    data class Ok(val models: List<String>) : ModelListResult
+    data class Failed(val error: LlmError) : ModelListResult
+}
+
+/** 从 `{"data": [{"id": "..."}, ...]}` 里取出模型名。两家的列表都是这个形状。 */
+internal fun JSONObject.modelIds(): ModelListResult {
+    val data = optJSONArray("data")
+        ?: return ModelListResult.Failed(LlmError.MalformedResponse("模型列表里没有 data 字段：${toString().take(200)}"))
+    val ids = (0 until data.length())
+        .mapNotNull { data.optJSONObject(it)?.optString("id")?.takeIf { id -> id.isNotBlank() } }
+        .distinct()
+        .sorted()
+    return ModelListResult.Ok(ids)
 }

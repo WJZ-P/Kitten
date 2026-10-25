@@ -51,10 +51,22 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
         return parse(json)
     }
 
-    private fun endpoint(): String {
-        val base = config.baseUrl.ifBlank { DEFAULT_BASE_URL }.trimEnd('/')
-        return if (base.endsWith("/messages")) base else "$base/messages"
+    override suspend fun listModels(): ModelListResult {
+        val headers = Headers.Builder()
+            .add("x-api-key", config.apiKey)
+            .add("anthropic-version", API_VERSION)
+            .build()
+        // 默认一页只给 20 个，要一次拿全。
+        val result = HttpTransport.getJson("${base()}/models?limit=$MODELS_PAGE_LIMIT", headers)
+        val json = result.getOrElse { return ModelListResult.Failed(result.toLlmFailure().error) }
+        return json.modelIds()
     }
+
+    private fun endpoint(): String = "${base()}/messages"
+
+    /** 根地址。有些用户填的是完整的 /messages 地址，去掉它。 */
+    private fun base(): String =
+        config.baseUrl.ifBlank { DEFAULT_BASE_URL }.trimEnd('/').removeSuffix("/messages")
 
     /**
      * 组装 messages。
@@ -180,5 +192,8 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
          * top_k，所以上面组请求时不传。迁移说明：https://platform.claude.com/docs/en/api/migration-2026-10-21
          */
         const val API_VERSION = "2026-10-21"
+
+        /** 模型列表一页最多要多少个（接口允许的上限是 1000）。 */
+        const val MODELS_PAGE_LIMIT = 1000
     }
 }

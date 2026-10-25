@@ -50,11 +50,21 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
         return parse(json)
     }
 
-    private fun endpoint(): String {
-        val base = config.baseUrl.ifBlank { DEFAULT_BASE_URL }.trimEnd('/')
-        // 有些服务商给的地址已经带了 /v1，有些没有，两种都收下免得用户反复试。
-        return if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
+    override suspend fun listModels(): ModelListResult {
+        // 本地 Ollama 这类服务不需要 Key，有就带上，没有就不带。
+        val headers = Headers.Builder()
+            .apply { if (config.apiKey.isNotBlank()) add("Authorization", "Bearer ${config.apiKey}") }
+            .build()
+        val result = HttpTransport.getJson("${base()}/models", headers)
+        val json = result.getOrElse { return ModelListResult.Failed(result.toLlmFailure().error) }
+        return json.modelIds()
     }
+
+    private fun endpoint(): String = "${base()}/chat/completions"
+
+    /** 根地址。有些用户填的是完整的 /chat/completions 地址，去掉它，两种都收下免得反复试。 */
+    private fun base(): String =
+        config.baseUrl.ifBlank { DEFAULT_BASE_URL }.trimEnd('/').removeSuffix("/chat/completions")
 
     /**
      * system 在这个协议里是 messages 的第一条，而不是独立字段（Anthropic 那边才是）。

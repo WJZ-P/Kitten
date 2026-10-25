@@ -45,19 +45,39 @@ internal object HttpTransport {
      * 预期内的，调用方要据此分流处理。
      */
     suspend fun postJson(url: String, headers: Headers, body: JSONObject): Result<JSONObject> =
-        withContext(Dispatchers.IO) {
-            val request = Request.Builder()
+        execute(
+            Request.Builder()
                 .url(url)
                 .headers(headers)
                 .post(body.toString().toRequestBody(JSON))
-                .build()
+                .build(),
+        )
+
+    /** GET 一个 JSON 接口（比如模型列表），失败的归类和 [postJson] 一样。 */
+    suspend fun getJson(url: String, headers: Headers): Result<JSONObject> =
+        execute(
+            Request.Builder()
+                .url(url)
+                .headers(headers)
+                .get()
+                .build(),
+        )
+
+    private suspend fun execute(request: Request): Result<JSONObject> =
+        withContext(Dispatchers.IO) {
+            val url = request.url.toString()
             try {
                 client.newCall(request).execute().use { response ->
                     val text = response.body?.string().orEmpty()
                     if (!response.isSuccessful) {
                         return@withContext Result.failure(
-                            LlmException(classify(response.code, text, response.headers)),
+                            LlmException(classify(response.code, text, response.headers, url)),
                         )
+                    }
+                    // 状态码是 200 但回的是网页：地址打到了网站页面上（比如中转站的控制台对不认识的
+                    // 路径一律回首页），而不是接口。把一大段 HTML 甩给用户没用，告诉他该查什么。
+                    if (looksLikeHtml(text, response.header("Content-Type"))) {
+                        return@withContext Result.failure(LlmException(LlmError.WrongEndpoint(url)))
                     }
                     runCatching { JSONObject(text) }.fold(
                         onSuccess = { Result.success(it) },
@@ -86,17 +106,25 @@ internal object HttpTransport {
      * 国产兼容端点五花八门），所以尽力提取，提不到就把原文截一段带上——排查时
      * 有原文比一句"服务异常"有用得多。
      */
-    private fun classify(code: Int, body: String, headers: Headers): LlmError {
-        val detail = extractMessage(body) ?: body.take(200).ifBlank { null }
+    private fun classify(code: Int, body: String, headers: Headers, url: String): LlmError {
+        val html = looksLikeHtml(body, headers["Content-Type"])
+        // 网页原文对用户没用，说一句"回的是网页"就够了。
+        val detail = if (html) "返回的是一张网页" else extractMessage(body) ?: body.take(200).ifBlank { null }
         return when {
             code == 401 || code == 403 -> LlmError.Unauthorized(detail)
             code == 429 -> LlmError.RateLimited(
                 headers["retry-after"]?.toIntOrNull(),
             )
             code >= 500 -> LlmError.ServerError(code, detail)
+            // 404 之类的客户端错误、还回了一张网页：地址打到网站页面上了。
+            html -> LlmError.WrongEndpoint(url)
             else -> LlmError.ServerError(code, detail)
         }
     }
+
+    /** 回的是网页而不是 JSON。 */
+    private fun looksLikeHtml(body: String, contentType: String?): Boolean =
+        contentType?.contains("text/html", ignoreCase = true) == true || body.trimStart().startsWith("<")
 
     /** 从错误体里捞一句人话。两家主流格式都是 `{"error": {"message": "..."}}`。 */
     private fun extractMessage(body: String): String? = runCatching {
