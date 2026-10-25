@@ -29,4 +29,14 @@
     <string name="setup_privilege_step_launching">starting privileged process</string>
     <string name="setup_privilege_step_launched">started, waiting for binder</string>
     <string name="setup_privilege_step_failed">failed: %1$s</string>
+
+    <!-- Agent task notification -->
+    <string name="agent_channel_name">Running tasks</string>
+    <string name="agent_channel_description">Shows progress and a stop button while Kitten operates your phone</string>
+    <string name="agent_running_title">Kitten is using your phone</string>
+    <string name="agent_running_thinking">Thinking…</string>
+    <string name="agent_running_step">%1$s…</string>
+    <string name="agent_question_title">Kitten has a question</string>
+    <string name="agent_action_stop">Stop</string>
+    <string name="agent_answer_in_app">Answer in Kitten</string>
 </resources>

@@ -37,7 +37,22 @@
     -->
     <uses-permission
         android:name="android.permission.QUERY_ALL_PACKAGES"
-        tools:ignore="QueryAllPackagesPermission" />
+        tools:ignore="PackageVisibilityPolicy,QueryAllPackagesPermission" />
+
+    <!--
+        Agent 执行任务时要挂一条常驻通知（见 AgentForegroundService）：进程不会在用户切走
+        之后被系统收走，用户也能看到进度、随时喊停。
+
+        privilege 模块也声明了这三个（配对通知要用），清单合并后本来就有；这里再写一遍是
+        因为 app 侧自己也在用——哪天 privilege 模块被拆走，这边不该跟着失效。
+
+        POST_NOTIFICATIONS 是运行时权限。没授予时前台服务照常跑，只是那条通知看不见，
+        用户也就失去了"停止"按钮，所以界面上该引导用户开。
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"
+        tools:ignore="ForegroundServicesPolicy" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <application
         android:allowBackup="false"
@@ -88,6 +103,20 @@
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <!--
+            Agent 跑任务时的常驻通知宿主。用 specialUse 而不是 shortService，理由和配对
+            服务一样：shortService 在 API 34+ 有 3 分钟硬超时，到点不停会 ANR，而"在应用里
+            翻到历史订单再下单"这类任务跑几分钟很正常。
+        -->
+        <service
+            android:name=".service.AgentForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="agent_task" />
         </service>
 
         <service

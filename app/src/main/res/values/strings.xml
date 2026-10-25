@@ -31,6 +31,16 @@
     <string name="setup_privilege_state_ready">已就绪（uid=%1$d）</string>
     <string name="setup_privilege_state_error">错误：%1$s</string>
 
+    <!-- Agent 执行任务时的常驻通知 -->
+    <string name="agent_channel_name">执行任务</string>
+    <string name="agent_channel_description">Kitten 替你操作手机时，显示进度和停止按钮</string>
+    <string name="agent_running_title">Kitten 正在操作手机</string>
+    <string name="agent_running_thinking">正在思考…</string>
+    <string name="agent_running_step">正在%1$s</string>
+    <string name="agent_question_title">Kitten 想问一下</string>
+    <string name="agent_action_stop">停止</string>
+    <string name="agent_answer_in_app">回 Kitten 里回答</string>
+
     <!-- 引导页 · ADB 链路进度 -->
     <string name="setup_privilege_step_pairing">配对中</string>
     <string name="setup_privilege_step_connecting">连接中</string>

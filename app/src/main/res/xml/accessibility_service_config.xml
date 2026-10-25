@@ -34,6 +34,11 @@
         声明这是无障碍工具类服务（API 30+），系统据此把它归到设置里的工具分组。
         Kitten 确实是靠无障碍 API 代替用户操作界面的工具，如实声明。
 
+    canTakeScreenshot
+        让服务能截屏（AccessibilityService.takeScreenshot，API 30+）。主屏截图只有这条路不用
+        每次弹窗授权、也不用 ADB（见 A11yScreenshot）。副屏截图还是走特权进程，不靠它。
+        截图会发给模型服务商，所以只在 Agent 自己需要看画面时截，不在后台定时截。
+
     有三类属性是刻意不加的：
     - canRequestTouchExplorationMode：触摸探索是给视障用户的交互模式，一旦启用，
       单指触摸变成"朗读探索"、要双击才能激活控件，整台手机的操作方式都会变。
@@ -49,6 +54,7 @@
     android:accessibilityFlags="flagIncludeNotImportantViews|flagReportViewIds|flagRetrieveInteractiveWindows"
     android:canPerformGestures="true"
     android:canRetrieveWindowContent="true"
+    android:canTakeScreenshot="true"
     android:isAccessibilityTool="true"
     android:settingsActivity="me.wjz.kitten.MainActivity"
     android:description="@string/accessibility_service_description"
