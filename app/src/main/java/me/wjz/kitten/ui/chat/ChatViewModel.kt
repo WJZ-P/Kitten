@@ -11,8 +11,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import me.wjz.kitten.agent.AgentProgress
 import me.wjz.kitten.agent.AgentResult
 import me.wjz.kitten.agent.AgentQuestion
@@ -37,6 +39,7 @@ import me.wjz.kitten.agent.tools.SwipeTool
 import me.wjz.kitten.agent.tools.TapTool
 import me.wjz.kitten.agent.tools.UserAsker
 import me.wjz.kitten.agent.tools.WaitTool
+import me.wjz.kitten.agent.withInterruptedResults
 import me.wjz.kitten.data.attachment.AttachmentStore
 import me.wjz.kitten.data.session.SessionRepository
 import me.wjz.kitten.data.session.sqlite.SqliteSessionRepository
@@ -46,6 +49,7 @@ import me.wjz.kitten.llm.LlmConfigStore
 import me.wjz.kitten.llm.LlmResult
 import me.wjz.kitten.llm.createProvider
 import me.wjz.kitten.service.AgentForegroundService
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.coroutines.resume
 
 /**
@@ -255,14 +259,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
+            // 这一段回复已经冒出来、还没成为正式消息的字。用户中途喊停时把它留下来（见下面的 catch），
+            // 单独记一份而不是读界面状态：用户可能已经切到别的会话去了。
+            var streamed = ""
+
             // 新冒出来的一段字接到临时回复后面。用户切到了别的会话就不画。
             fun onTextDelta(delta: String) {
+                streamed += delta
                 _uiState.update {
                     if (it.sessionId != sessionId) it else it.copy(streamingReply = (it.streamingReply ?: "") + delta)
                 }
             }
 
-            val history = _uiState.value.messages
+            // 上次被喊停时没等到结果的工具调用，补上"被中断"的结果再发，不然请求会被拒，见
+            // withInterruptedResults。
+            val history = _uiState.value.messages.withInterruptedResults()
             // 这一轮的工具和现场。用完要 release，副屏得收掉。
             val device = DeviceSession(getApplication())
             val registry = ToolRegistry(deviceTools(device))
@@ -285,6 +296,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         config = config.copy(baseUrl = repaired)
                         repairedUrl = repaired
                         // 重发之前把已经冒出来的半截字清掉，不然会接在后面重复一遍。
+                        streamed = ""
                         _uiState.update { it.copy(streamingReply = null) }
                         result = config.createProvider().chat(systemPrompt, messages, tools, onDelta)
                     }
@@ -299,6 +311,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     history = history,
                     onTextDelta = ::onTextDelta,
                     onMessage = { message ->
+                        // 冒出来的字已经变成正式消息了，下一段从头记。
+                        if (message is ChatMessage.Assistant) streamed = ""
                         // 模型说完一段话，常驻通知的正文换成它，用户不在 Kitten 里也看得到。
                         (message as? ChatMessage.Assistant)?.text?.trim()?.takeIf { it.isNotEmpty() }
                             ?.let(AgentTaskHandle::say)
@@ -329,6 +343,21 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     },
                 )
+            } catch (e: CancellationException) {
+                // 用户喊停了。已经冒出来的半截回复留下来当一条正式消息，和别的聊天应用一样——用户
+                // 看着字一个个冒出来再点的停止，点完字全没了会以为出了错。协程已经被取消，落库
+                // 得放进 NonCancellable，不然一挂起就直接抛出来。
+                val partial = streamed.trim()
+                if (partial.isNotEmpty()) {
+                    withContext(NonCancellable) {
+                        val stored = ChatMessage.Assistant(text = partial)
+                        repository.appendMessage(sessionId, stored)
+                        _uiState.update {
+                            if (it.sessionId != sessionId) it else it.copy(messages = it.messages + stored, streamingReply = null)
+                        }
+                    }
+                }
+                throw e
             } finally {
                 // 不管成功、失败还是被取消，副屏都要收掉。
                 device.release()
@@ -395,6 +424,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 AgentTaskHandle.clearQuestion()
             }
         }
+    }
+
+    /**
+     * 停下正在跑的这一轮：输入栏上的停止按钮。和常驻通知上的"停止"走同一条路——取消这一轮的
+     * 协程（见 send 里交给 AgentTaskHandle 的 onStop），后面的收尾（副屏收掉、通知收掉、界面
+     * 放出来、半截回复留下）都在 send 里。
+     */
+    fun stop() {
+        AgentTaskHandle.requestStop()
     }
 
     /** 用户回答了 Agent 的提问：对话里点了选项、通知上点了按钮、或者直接在输入框里打字。 */

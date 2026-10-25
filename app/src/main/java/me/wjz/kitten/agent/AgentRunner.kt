@@ -131,3 +131,45 @@ class AgentRunner(private val registry: ToolRegistry) {
         const val TAG = "KittenAgent"
     }
 }
+
+/**
+ * 给没等到结果的工具调用补一个"被中断"的结果，插在那条调用后面。发请求之前对历史调一次。
+ *
+ * ## 为什么要补
+ *
+ * 用户喊停（输入栏上的停止、通知上的停止）时，模型要求的工具可能还没跑完，历史里就留下一条有
+ * 调用、没结果的消息。两家接口都要求每个工具调用后面跟着它的结果，缺了整个请求直接 400——
+ * 用户喊停之后，下一句话就再也发不出去了。
+ *
+ * ## 为什么不落库
+ *
+ * 只补在发出去的那份历史上。界面上这些调用显示成"已中断"本来就对（见 ToolCallList）；补的结果是
+ * 给模型看的：告诉它上次是用户停掉的，别当成工具出错了自己接着重做。
+ *
+ * 插的位置不要求紧挨着：同一方挨着的消息组请求时会合并（见 AnthropicProvider 的 buildMessages），
+ * OpenAI 那边工具结果只要在调用之后就行。
+ */
+fun List<ChatMessage>.withInterruptedResults(): List<ChatMessage> {
+    val answered = filterIsInstance<ChatMessage.ToolResult>().mapTo(HashSet()) { it.callId }
+    val hasDangling = any { message ->
+        message is ChatMessage.Assistant && message.toolCalls.any { it.id !in answered }
+    }
+    if (!hasDangling) return this
+    return buildList {
+        this@withInterruptedResults.forEach { message ->
+            add(message)
+            if (message is ChatMessage.Assistant) {
+                message.toolCalls.filter { it.id !in answered }.forEach { call ->
+                    add(ChatMessage.ToolResult(callId = call.id, name = call.name, content = INTERRUPTED_RESULT))
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 补给被中断的调用的结果。说清楚"结果未知"：喊停的时候这一步可能已经做了一半（点下去了、字输进去了）。
+ * 再叮嘱一句别自己接着做，等用户的新指示——用户喊停多半就是不想让它继续。
+ */
+private const val INTERRUPTED_RESULT =
+    "STOPPED 用户中途停止了任务，这一步没有执行完，结果未知。不要自己接着做下去，按用户接下来说的办。"
