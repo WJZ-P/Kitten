@@ -1,6 +1,12 @@
 package me.wjz.kitten.ui.chat
 
 import android.content.ClipData
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,13 +17,15 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -38,10 +46,12 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.launch
 import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.ui.component.GlassContextMenu
+import me.wjz.kitten.ui.component.GlassIconButton
 import me.wjz.kitten.ui.component.GlassMenuItem
 import me.wjz.kitten.ui.component.rememberGlassContextMenuState
 import me.wjz.kitten.ui.icon.ContentCopy
 import me.wjz.kitten.ui.icon.Delete
+import me.wjz.kitten.ui.icon.KeyboardArrowDown
 import me.wjz.kitten.ui.icon.KittenIcons
 import me.wjz.kitten.ui.theme.KittenTheme
 
@@ -59,6 +69,11 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *
  * 列表末尾留出"输入栏 + 它下面让出来的那一截"的高度，最后一条消息才滚得上来。
  *
+ * ## 回到最新消息
+ *
+ * 用户往上翻着看以前的消息时，新的字照样在底下冒，但不会把人拽下去；输入栏上方浮出一个
+ * 玻璃小圆（[ScrollToLatestButton]），点了回到最底下。
+ *
  * @param bottomInsets 输入栏下面要让出来的位置：平时是底部栏，键盘弹起时是键盘。
  * @param onDeleteMessage 删一条消息：它在 messages 里的位置，和那条消息本身（用来核对没删错）。
  */
@@ -75,9 +90,20 @@ fun ChatScreen(
     modifier: Modifier = Modifier,
 ) {
     val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
     val listBackdrop = rememberLayerBackdrop()
+    // 浮在列表上面的东西（输入栏、回到最新的按钮）折射的是"背景 + 消息列表"。
+    val overBackdrop = rememberCombinedBackdrop(backdrop, listBackdrop)
     // 输入栏连同它下面让出来的那一截的高度，列表末尾留出这么多。
     var overlayHeight by remember { mutableStateOf(0.dp) }
+    // 换一个会话就是一张新列表：滚动位置从头来（倒着排，从头来就是在最底下）。
+    val listState = key(state.sessionId) { rememberLazyListState() }
+    val awayThreshold = with(density) { AwayFromLatestThreshold.roundToPx() }
+    val awayFromLatest by remember(listState) {
+        derivedStateOf {
+            listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > awayThreshold
+        }
+    }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -100,18 +126,23 @@ fun ChatScreen(
                         modifier = Modifier.padding(bottom = overlayHeight),
                     )
                 } else {
-                    MessageList(
-                        messages = state.messages,
-                        isResponding = state.isResponding,
-                        backdrop = backdrop,
-                        bottomPadding = overlayHeight,
-                        onDeleteMessage = onDeleteMessage,
-                    )
+                    // 列表里记着的东西（长按菜单对着哪一条……）也跟着会话换新的。
+                    key(state.sessionId) {
+                        MessageList(
+                            listState = listState,
+                            messages = state.messages,
+                            streamingReply = state.streamingReply,
+                            isResponding = state.isResponding,
+                            backdrop = backdrop,
+                            bottomPadding = overlayHeight,
+                            onDeleteMessage = onDeleteMessage,
+                        )
+                    }
                 }
             }
         }
         ChatInputBar(
-            backdrop = rememberCombinedBackdrop(backdrop, listBackdrop),
+            backdrop = overBackdrop,
             enabled = state.canSend,
             hint = if (state.isModelConfigured) null else "请先在设置里配置模型",
             onSend = onSend,
@@ -121,57 +152,136 @@ fun ChatScreen(
                 .onSizeChanged { overlayHeight = with(density) { it.height.toDp() } }
                 .windowInsetsPadding(bottomInsets),
         )
+        ScrollToLatestButton(
+            visible = !state.isEmpty && awayFromLatest,
+            onClick = { scope.launch { listState.animateScrollToItem(0) } },
+            backdrop = overBackdrop,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = overlayHeight + ScrollToLatestGap),
+        )
     }
 }
 
 /**
- * 消息列表。长按一条气泡弹出菜单（[GlassContextMenu]）：复制、删除。整个列表共用一个菜单，
- * 记着长按的是哪一条；菜单在列表外面，删掉那一条之后收起的动画照样放得完。
+ * 回到最新消息的按钮：输入栏正上方一个玻璃小圆，里面一个向下的尖角。弹出来、收回去都是
+ * 弹簧，从小长大、缩回去。
+ */
+@Composable
+private fun ScrollToLatestButton(
+    visible: Boolean,
+    onClick: () -> Unit,
+    backdrop: Backdrop,
+    modifier: Modifier = Modifier,
+) {
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = fadeIn(spring(stiffness = 600f)) + scaleIn(spring(dampingRatio = 0.6f, stiffness = 500f), initialScale = 0.5f),
+        exit = fadeOut(spring(stiffness = 900f)) + scaleOut(spring(stiffness = 900f), targetScale = 0.5f),
+    ) {
+        GlassIconButton(
+            icon = KittenIcons.KeyboardArrowDown,
+            contentDescription = "回到最新消息",
+            onClick = onClick,
+            backdrop = backdrop,
+            size = ScrollToLatestSize,
+        )
+    }
+}
+
+/**
+ * 消息列表。
+ *
+ * ## 倒着排
+ *
+ * 列表是倒过来排的（reverseLayout）：第 0 项是最新的那条，钉在最底下。这是聊天列表的标准
+ * 做法，好处是"贴底"不用自己去滚：
+ *
+ * - 在最底下时，回复越写越长，上面的内容在同一帧被推上去，最新的字一直看得见；
+ * - 用户往上翻着时，列表钉住的是他正看着的那一条，底下怎么长都不影响他；
+ * - 刚打开会话，本来就在最底下。
+ *
+ * 唯一要自己管的是"底下多出一项"：每一项都有稳定的 key，列表会钉住原来最底下那一项，新进来
+ * 的那项落在屏幕下面看不见。所以本来就在最底下（或者是用户自己刚发的消息）时，让列表这一次
+ * 把第 0 项摆在最底下（requestScrollToItem），同一帧生效，不会先错一下再跳。
+ *
+ * 消息不满一屏时照样贴顶（Arrangement 带 Alignment.Top），和正着排的时候一个样。
+ *
+ * ## key
+ *
+ * 每一项的 key 是它在对话里的序号（从 0 数起），发消息、收回复都是往后加，前面的不会变。正在
+ * 生成的那条排在 messages.size 这个序号上，生成完的正式消息也是这个序号：对列表来说是同一项，
+ * 气泡和里面没冒完的字都接着来，不会闪一下。还没冒出第一个字时显示"正在思考…"。
+ *
+ * ## 长按菜单
+ *
+ * 长按一条气泡弹出菜单（[GlassContextMenu]）：复制、删除。整个列表共用一个菜单，记着长按的
+ * 是哪一条；菜单在列表外面，删掉那一条之后收起的动画照样放得完。还在生成的那条不响应长按。
  */
 @Composable
 private fun MessageList(
+    listState: LazyListState,
     messages: List<ChatMessage>,
+    streamingReply: String?,
     isResponding: Boolean,
     backdrop: Backdrop,
     bottomPadding: Dp,
     onDeleteMessage: (index: Int, message: ChatMessage) -> Unit,
 ) {
-    val listState = rememberLazyListState()
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
     val menu = rememberGlassContextMenuState()
     // 长按的是哪一条。菜单收起后也留着：收起的动画还在放，菜单里的东西不能跟着变。
     var menuTarget by remember { mutableStateOf<MenuTarget?>(null) }
+    val shown = remember(messages, streamingReply) {
+        if (streamingReply != null) messages + ChatMessage.Assistant(text = streamingReply) else messages
+    }
+    val showTyping = isResponding && streamingReply == null
+    val itemCount = shown.size + if (showTyping) 1 else 0
 
-    // 新消息进来就滚到底。看的是最后一条变没变，不是条数：用户往上翻历史时不会被不停拽回来，
-    // 删掉中间的一条也不会被拽到底下去；新消息进来、换了会话，最后一条都会变。
-    LaunchedEffect(messages.lastOrNull(), isResponding) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.lastIndex)
-        }
+    // 底下多出一项时要不要把它摆到最底下，见类注释。读的是这次数据变化之前的位置。
+    val atLatest by remember(listState) { derivedStateOf { !listState.canScrollBackward } }
+    val seen = remember { SeenCounts(items = itemCount, messages = messages.size) }
+    SideEffect {
+        val justSent = messages.size > seen.messages && messages.lastOrNull() is ChatMessage.User
+        if (justSent || (itemCount > seen.items && atLatest)) listState.requestScrollToItem(0)
+        seen.items = itemCount
+        seen.messages = messages.size
     }
 
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize(),
+        reverseLayout = true,
         contentPadding = PaddingValues(
             start = 16.dp, end = 16.dp, top = 8.dp, bottom = 8.dp + bottomPadding,
         ),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.Top),
     ) {
-        itemsIndexed(messages) { index, message ->
+        // 倒着排，先写的在最底下。
+        if (showTyping) {
+            item(key = TypingKey) { TypingIndicator() }
+        }
+        items(count = shown.size, key = { shown.lastIndex - it }) { reversedIndex ->
+            // 在对话里的序号：0 是最早的那条。
+            val index = shown.lastIndex - reversedIndex
+            val message = shown[index]
+            val isDraft = index >= messages.size
             MessageBubble(
                 message = message,
                 backdrop = backdrop,
-                lifted = menu.expanded && menuTarget?.index == index,
-                onLongPress = {
-                    menuTarget = MenuTarget(index, message)
-                    menu.show(it)
+                lifted = !isDraft && menu.expanded && menuTarget?.index == index,
+                onLongPress = if (isDraft) {
+                    null
+                } else {
+                    {
+                        menuTarget = MenuTarget(index, message)
+                        menu.show(it)
+                    }
                 },
+                streaming = isDraft,
             )
-        }
-        if (isResponding) {
-            item { TypingIndicator() }
         }
     }
 
@@ -199,8 +309,11 @@ private fun MessageList(
     )
 }
 
-/** 长按菜单对着的那一条：它在列表里的位置，和长按那一刻的消息本身。 */
+/** 长按菜单对着的那一条：它在对话里的序号，和长按那一刻的消息本身。 */
 private class MenuTarget(val index: Int, val message: ChatMessage)
+
+/** 上一次组合时列表有几项、几条消息，用来看这一次是不是多出了一项、是不是刚发了一条。 */
+private class SeenCounts(var items: Int, var messages: Int)
 
 /** 能复制的文字：用户说的话、模型回复里的文字。只调了工具、没说话的那条没得复制。 */
 private fun ChatMessage.copyableText(): String? = when (this) {
@@ -261,3 +374,15 @@ private fun TypingIndicator() {
         )
     }
 }
+
+/** "正在思考…"那一项的 key。消息的 key 是序号（Int），用字符串不会撞上。 */
+private const val TypingKey = "typing"
+
+/** 离最底下多远才算"翻上去了"、浮出回到最新的按钮：差一点点就冒出来会一闪一闪的。 */
+private val AwayFromLatestThreshold = 48.dp
+
+/** 回到最新的按钮看得见的那个圆有多大，和顶栏按钮一样。 */
+private val ScrollToLatestSize = 40.dp
+
+/** 按钮离输入栏上沿多远。按钮的触摸区（48dp）比圆大一圈，看起来的间距比这个再大 4dp。 */
+private val ScrollToLatestGap = 4.dp

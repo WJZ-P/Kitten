@@ -28,19 +28,21 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 气泡里的内容一段一段往下排：现在只有文字，以后的图片作为单独的一段放进去，见 [ChatBubble]。
  *
  * @param lifted 这一条的长按菜单正开着：气泡一直鼓着。
- * @param onLongPress 长按气泡，参数是手指的窗口坐标。
+ * @param onLongPress 长按气泡，参数是手指的窗口坐标。为 null 时不响应长按（比如还在生成的回复）。
+ * @param streaming 这是一条还在流式生成的回复：字一个个冒出来，见 [StreamingText]。
  */
 @Composable
 fun MessageBubble(
     message: ChatMessage,
     backdrop: Backdrop,
     lifted: Boolean,
-    onLongPress: (positionInWindow: Offset) -> Unit,
+    onLongPress: ((positionInWindow: Offset) -> Unit)?,
     modifier: Modifier = Modifier,
+    streaming: Boolean = false,
 ) {
     when (message) {
         is ChatMessage.User -> UserBubble(message.text, backdrop, lifted, onLongPress, modifier)
-        is ChatMessage.Assistant -> AssistantBubble(message, backdrop, lifted, onLongPress, modifier)
+        is ChatMessage.Assistant -> AssistantBubble(message, backdrop, lifted, onLongPress, streaming, modifier)
         // 工具结果本身不展示——它是给模型看的原始数据（整屏节点树能有几千字符），
         // 塞进对话里只会淹没真正的内容。用户需要知道的是"调用了什么工具"，
         // 那个信息在 Assistant 消息的 toolCalls 里已经显示了。
@@ -53,7 +55,7 @@ private fun UserBubble(
     text: String,
     backdrop: Backdrop,
     lifted: Boolean,
-    onLongPress: (Offset) -> Unit,
+    onLongPress: ((Offset) -> Unit)?,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
@@ -81,7 +83,8 @@ private fun AssistantBubble(
     message: ChatMessage.Assistant,
     backdrop: Backdrop,
     lifted: Boolean,
-    onLongPress: (Offset) -> Unit,
+    onLongPress: ((Offset) -> Unit)?,
+    streaming: Boolean,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
@@ -94,8 +97,11 @@ private fun AssistantBubble(
         ) {
             Column(modifier = Modifier.padding(BubbleTextPadding)) {
                 message.text?.takeIf { it.isNotBlank() }?.let {
-                    Text(
+                    // 历史消息也走它，只是直接整段显示：生成完的回复换成正式消息时还是同一个
+                    // 组件，没冒完的字接着冒，不会一下子全跳出来。
+                    StreamingText(
                         text = it,
+                        streaming = streaming,
                         style = MaterialTheme.typography.bodyMedium,
                         color = KittenTheme.colors.textPrimary,
                     )
