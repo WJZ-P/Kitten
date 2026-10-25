@@ -1,31 +1,30 @@
 package me.wjz.kitten.ui.chat
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.llm.ChatMessage
-import me.wjz.kitten.ui.component.GlassSurface
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
  * 一条消息。
  *
- * 三种角色的呈现差别很大，所以没有做成"一个气泡组件配不同参数"：
- * - 用户消息靠右，实心高亮，是"我说的话"；
- * - 模型回复靠左，用玻璃材质，和背景融为一体；
+ * 用户的话和模型的回复都是带小尾巴的半透明气泡（[ChatBubble]，背后只模糊、不做液态玻璃），
+ * 尾巴指向说话的那一边：
+ * - 用户消息靠右，染成浅天依蓝，是"我说的话"；
+ * - 模型回复靠左，薄薄一层底色，和背景融为一体；
  * - 工具调用/结果是**过程信息**，不是对话，所以压扁成一行小字。
+ *
+ * 气泡里的内容一段一段往下排：现在只有文字，以后的图片作为单独的一段放进去，见 [ChatBubble]。
  */
 @Composable
 fun MessageBubble(
@@ -34,7 +33,7 @@ fun MessageBubble(
     modifier: Modifier = Modifier,
 ) {
     when (message) {
-        is ChatMessage.User -> UserBubble(message.text, modifier)
+        is ChatMessage.User -> UserBubble(message.text, backdrop, modifier)
         is ChatMessage.Assistant -> AssistantBubble(message, backdrop, modifier)
         // 工具结果本身不展示——它是给模型看的原始数据（整屏节点树能有几千字符），
         // 塞进对话里只会淹没真正的内容。用户需要知道的是"调用了什么工具"，
@@ -44,19 +43,26 @@ fun MessageBubble(
 }
 
 @Composable
-private fun UserBubble(text: String, modifier: Modifier = Modifier) {
+private fun UserBubble(
+    text: String,
+    backdrop: Backdrop,
+    modifier: Modifier = Modifier,
+) {
     Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = KittenTheme.colors.onAccent,
-            modifier = Modifier
-                // 不占满整行，留出左边的空白，视觉上才有"从右边来"的感觉。
-                .widthIn(max = 280.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(KittenTheme.colors.accent)
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-        )
+        ChatBubble(
+            side = BubbleSide.End,
+            backdrop = backdrop,
+            tinted = true,
+            // 不占满整行，留出左边的空白，视觉上才有"从右边来"的感觉。
+            modifier = Modifier.widthIn(max = 280.dp),
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodyMedium,
+                color = KittenTheme.colors.onAccent,
+                modifier = Modifier.padding(BubbleTextPadding),
+            )
+        }
     }
 }
 
@@ -67,12 +73,12 @@ private fun AssistantBubble(
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
-        GlassSurface(
+        ChatBubble(
+            side = BubbleSide.Start,
             backdrop = backdrop,
-            cornerRadius = 18.dp,
             modifier = Modifier.widthIn(max = 300.dp),
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Column(modifier = Modifier.padding(BubbleTextPadding)) {
                 message.text?.takeIf { it.isNotBlank() }?.let {
                     Text(
                         text = it,
@@ -93,5 +99,3 @@ private fun AssistantBubble(
         }
     }
 }
-
-/** 用户自己的消息用天依蓝本色填满，和助手那边的白玻璃一眼分开。 */
