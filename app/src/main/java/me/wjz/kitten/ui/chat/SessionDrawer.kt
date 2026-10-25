@@ -19,11 +19,10 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -34,12 +33,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.selected
@@ -47,6 +50,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.toSize
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
@@ -55,12 +59,17 @@ import com.kyant.backdrop.shadow.Shadow
 import me.wjz.kitten.data.session.SessionSummary
 import me.wjz.kitten.ui.component.GlassButton
 import me.wjz.kitten.ui.component.GlassButtonStyle
-import me.wjz.kitten.ui.component.GlassIconButton
+import me.wjz.kitten.ui.component.GlassContextMenu
+import me.wjz.kitten.ui.component.GlassMenuItem
+import me.wjz.kitten.ui.component.GlassOverlayHost
 import me.wjz.kitten.ui.component.GlassRadius
 import me.wjz.kitten.ui.component.GlassRim
 import me.wjz.kitten.ui.component.detectGlassPress
 import me.wjz.kitten.ui.component.glassEffects
+import me.wjz.kitten.ui.component.rememberGlassContextMenuState
 import me.wjz.kitten.ui.component.rememberGlassPressState
+import me.wjz.kitten.ui.icon.Delete
+import me.wjz.kitten.ui.icon.KittenIcons
 import me.wjz.kitten.ui.theme.KittenTheme
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -86,6 +95,13 @@ import java.util.Locale
  * 抽屉收起时停在屏幕外面，但还在渲染树里：玻璃会跟着背后的界面每一帧重新模糊、折射，
  * 白白耗电。所以按位置判断，滑出屏幕就不画（同光雾的判断，见 GlassMistNode）。
  *
+ * ## 长按会话弹出菜单
+ *
+ * 删除这类不常用的操作收在长按菜单（[GlassContextMenu]）里，不在每一条上摆按钮。菜单要画在
+ * 浮层上，可抽屉不在主界面的 GlassOverlayHost 里（ModalNavigationDrawer 把它画在整个界面
+ * 上面），所以抽屉自己带一个 host，菜单就在抽屉里开、跟着抽屉走。整个列表共用一个菜单，记着
+ * 长按的是哪一条。
+ *
  * @param backdrop 抽屉背后的整个界面。
  */
 @Composable
@@ -98,11 +114,17 @@ fun SessionDrawer(
     backdrop: Backdrop,
     modifier: Modifier = Modifier,
 ) {
-    val colors = KittenTheme.colors
-    val surfaceBackdrop = rememberLayerBackdrop()
     var onScreen by remember { mutableStateOf(false) }
+    val menu = rememberGlassContextMenuState()
+    // 长按的是哪一条。菜单收起后也留着：收起的动画还在放，菜单里的东西不能跟着变。
+    var menuTarget by remember { mutableStateOf<String?>(null) }
 
-    Box(
+    // 抽屉收走了（比如点了外面），菜单也收起，不然下次拉开抽屉它还开着。
+    LaunchedEffect(onScreen) {
+        if (!onScreen) menu.dismiss()
+    }
+
+    GlassOverlayHost(
         modifier = modifier
             .fillMaxHeight()
             .width(DrawerWidth)
@@ -110,6 +132,48 @@ fun SessionDrawer(
             .onGloballyPositioned { onScreen = !it.boundsInWindow().isEmpty }
             .drawWithContent { if (onScreen) drawContent() },
     ) {
+        DrawerPanel(
+            sessions = sessions,
+            currentSessionId = currentSessionId,
+            menuTargetId = menuTarget.takeIf { menu.expanded },
+            onOpenSession = onOpenSession,
+            onLongPressSession = { id, positionInWindow ->
+                menuTarget = id
+                menu.show(positionInWindow)
+            },
+            onNewSession = onNewSession,
+            backdrop = backdrop,
+        )
+        GlassContextMenu(
+            state = menu,
+            items = listOf(
+                GlassMenuItem(text = "删除会话", icon = KittenIcons.Delete, destructive = true) {
+                    menuTarget?.let(onDeleteSession)
+                },
+            ),
+            backdrop = backdrop,
+        )
+    }
+}
+
+/**
+ * 抽屉本体：玻璃面板 + 表头 + 会话列表。
+ *
+ * @param menuTargetId 长按菜单正开着的那一条，它一直亮着，看得出菜单是对哪一条的。
+ */
+@Composable
+private fun DrawerPanel(
+    sessions: List<SessionSummary>,
+    currentSessionId: String?,
+    menuTargetId: String?,
+    onOpenSession: (String) -> Unit,
+    onLongPressSession: (id: String, positionInWindow: Offset) -> Unit,
+    onNewSession: () -> Unit,
+    backdrop: Backdrop,
+) {
+    val colors = KittenTheme.colors
+    val surfaceBackdrop = rememberLayerBackdrop()
+    Box(modifier = Modifier.fillMaxSize()) {
         Box(
             modifier = Modifier
                 .matchParentSize()
@@ -176,9 +240,9 @@ fun SessionDrawer(
                     SessionRow(
                         session = session,
                         isCurrent = session.id == currentSessionId,
+                        isMenuTarget = session.id == menuTargetId,
                         onClick = { onOpenSession(session.id) },
-                        onDelete = { onDeleteSession(session.id) },
-                        backdrop = surfaceBackdrop,
+                        onLongPress = { onLongPressSession(session.id, it) },
                     )
                 }
             }
@@ -188,23 +252,30 @@ fun SessionDrawer(
 
 /**
  * 一条会话。当前打开的那条垫一层淡天依蓝；按下时同一层再叠一遍，手指压着哪一条一眼就能
- * 看出来（和下拉菜单的选项一样）。按在删除按钮上时按钮先消费了按下，这一条不跟着亮。
+ * 看出来（和下拉菜单的选项一样）。长按弹出菜单，菜单开着时这一条一直亮着。
+ *
+ * @param onLongPress 参数是手指的位置，窗口坐标：菜单从那里弹出来。
  */
 @Composable
 private fun SessionRow(
     session: SessionSummary,
     isCurrent: Boolean,
+    isMenuTarget: Boolean,
     onClick: () -> Unit,
-    onDelete: () -> Unit,
-    backdrop: Backdrop,
+    onLongPress: (positionInWindow: Offset) -> Unit,
 ) {
     val colors = KittenTheme.colors
     val currentOnClick by rememberUpdatedState(onClick)
+    val currentOnLongPress by rememberUpdatedState(onLongPress)
     val press = rememberGlassPressState()
+    // 这一条在窗口里的位置，把长按时手指的位置（这一条自己的坐标）换成窗口坐标。只在长按时
+    // 读，滚动时更新它不会引起重组。
+    var bounds by remember { mutableStateOf(Rect.Zero) }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .onGloballyPositioned { bounds = Rect(it.positionInWindow(), it.size.toSize()) }
             .semantics {
                 role = Role.Button
                 selected = isCurrent
@@ -212,15 +283,26 @@ private fun SessionRow(
                     currentOnClick()
                     true
                 }
+                // 读屏用户没法长按到某个点，菜单从这一条的正中间弹出来。
+                onLongClick(label = "更多操作") {
+                    currentOnLongPress(bounds.center)
+                    true
+                }
             }
-            .pointerInput(press) { detectGlassPress(press) { currentOnClick() } }
+            .pointerInput(press) {
+                detectGlassPress(
+                    state = press,
+                    onLongPress = { currentOnLongPress(bounds.topLeft + it) },
+                ) { currentOnClick() }
+            }
             .drawBehind {
                 val radius = CornerRadius(RowRadius.toPx())
                 if (isCurrent) drawRoundRect(colors.sliderIdle, cornerRadius = radius)
+                if (isMenuTarget) drawRoundRect(colors.sliderIdle, cornerRadius = radius)
                 val pressed = press.pressProgress.coerceIn(0f, 1f)
                 if (pressed > 0f) drawRoundRect(colors.sliderIdle, cornerRadius = radius, alpha = pressed)
             }
-            .padding(start = 12.dp, end = 2.dp, top = 6.dp, bottom = 6.dp),
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column(modifier = Modifier.weight(1f)) {
@@ -248,12 +330,6 @@ private fun SessionRow(
                 color = colors.textTertiary,
             )
         }
-        GlassIconButton(
-            icon = Icons.Filled.Delete,
-            contentDescription = "删除会话",
-            onClick = onDelete,
-            backdrop = backdrop,
-        )
     }
 }
 
