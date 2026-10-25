@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,6 +26,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
@@ -44,6 +46,7 @@ import androidx.compose.ui.unit.toSize
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.llm.ImageAttachment
+import me.wjz.kitten.ui.component.GlassRadius
 import me.wjz.kitten.ui.component.detectGlassPress
 import me.wjz.kitten.ui.component.rememberGlassPressState
 import me.wjz.kitten.ui.component.rememberImageBitmap
@@ -121,11 +124,12 @@ private fun UserBubble(
 }
 
 /**
- * 气泡里的图片：铺满气泡的宽度、不留白，圆角跟着气泡的形状走（见 [ChatBubble]）。
+ * 气泡里的图片：四周和气泡的边留 [ImagesInset]，自己带圆角（[ImagesShape]，比气泡的圆角小一圈，
+ * 两圈边同心）。
  *
  * - 一张：按原始宽高比显示，宽 [ImagesWidth]；太长、太扁的截到 [MinAspect]..[MaxAspect] 之间，
  *   居中裁切，免得一张长截图把气泡撑得一屏都装不下。
- * - 好几张：方格，两张、四张一行两格，其他一行三格。
+ * - 好几张：方格，两张、四张一行两格，其他一行三格。整块方格是圆角，里面的格子是直角。
  *
  * 点一张看大图；按在图片上长按和长按气泡一样弹菜单（图片先接住了按下，气泡那边收不到）。
  */
@@ -143,15 +147,20 @@ private fun BubbleImages(
             onOpen = onOpen,
             onLongPress = onLongPress,
             modifier = Modifier
+                .padding(ImagesInset)
                 .width(ImagesWidth)
-                .aspectRatio(aspect),
+                .aspectRatio(aspect)
+                .clip(ImagesShape),
         )
         return
     }
     val columns = if (images.size == 2 || images.size == 4) 2 else 3
     val cell = (ImagesWidth - ImagesGap * (columns - 1)) / columns
     Column(
-        modifier = Modifier.width(ImagesWidth),
+        modifier = Modifier
+            .padding(ImagesInset)
+            .width(ImagesWidth)
+            .clip(ImagesShape),
         verticalArrangement = Arrangement.spacedBy(ImagesGap),
     ) {
         images.chunked(columns).forEach { row ->
@@ -229,6 +238,12 @@ private val ImagesWidth = 220.dp
 
 /** 方格之间的缝。 */
 private val ImagesGap = 2.dp
+
+/** 图片和气泡四边之间留多少。 */
+private val ImagesInset = 4.dp
+
+/** 图片的圆角：气泡的圆角（16dp）减去留白，两圈边才同心。 */
+private val ImagesShape = RoundedCornerShape(GlassRadius.Large - ImagesInset)
 
 /** 一张图时宽高比最多截到多扁、多长（宽 / 高）。 */
 private const val MinAspect = 0.5f
