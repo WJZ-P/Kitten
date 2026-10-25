@@ -25,6 +25,14 @@ data class ChatUiState(
     val isResponding: Boolean = false,
 
     /**
+     * 正在流式生成的那条回复，已经冒出来的字。还没冒出第一个字、或者不在生成时是 null。
+     *
+     * 它不在 [messages] 里：回复完之前不入库，也不该被当成上下文发给模型。界面把它画在列表
+     * 最后，当成一条临时的回复。
+     */
+    val streamingReply: String? = null,
+
+    /**
      * 模型是否已配置。
      *
      * 没配就别让用户对着输入框打半天字再被告知发不出去——直接在界面上提示去设置页。

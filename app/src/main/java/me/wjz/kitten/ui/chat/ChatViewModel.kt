@@ -67,7 +67,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** 开一个新会话。当前会话不会被删，只是不再显示。 */
     fun startNewSession() {
         _uiState.update {
-            it.copy(sessionId = null, title = "", messages = emptyList(), error = null)
+            it.copy(sessionId = null, title = "", messages = emptyList(), streamingReply = null, error = null)
         }
     }
 
@@ -84,6 +84,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     sessionId = session.id,
                     title = session.title,
                     messages = session.messages,
+                    streamingReply = null,
                     error = null,
                 )
             }
@@ -128,6 +129,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      *
      * 这里还是**纯对话**，没有接工具调用——Agent 循环（模型要求执行工具 → 我们执行 →
      * 结果回灌 → 模型继续）是下一步的事。现在先把"输入 → 模型 → 显示"这条链路跑通。
+     *
+     * ## 流式
+     *
+     * 回复是流式拿的：字一段段冒出来，先攒在 [ChatUiState.streamingReply] 里，界面把它画成一条
+     * 临时的回复；整条回复完了，在同一次状态更新里清掉它、换成真正的消息（这时才落库），界面上
+     * 是同一个位置的同一个气泡，不会闪。失败了临时的那条直接丢掉，和以前一样不入库。
+     *
+     * 回复期间用户切到了别的会话：字照样收完、照样存进原来那个会话，只是不往眼前这个会话里画。
      */
     fun send(text: String) {
         val content = text.trim()
@@ -147,10 +156,19 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
+            // 新冒出来的一段字接到临时回复后面。用户切到了别的会话就不画。
+            fun onTextDelta(delta: String) {
+                _uiState.update {
+                    if (it.sessionId != sessionId) it else it.copy(streamingReply = (it.streamingReply ?: "") + delta)
+                }
+            }
+
+            val history = _uiState.value.messages
             var config = LlmConfigStore.load(getApplication())
-            var result = config.createProvider().chat(SYSTEM_PROMPT, _uiState.value.messages)
+            var result = config.createProvider().chat(SYSTEM_PROMPT, history, onTextDelta = ::onTextDelta)
 
             // 地址像是少拼了 /v1：补上试一下，通了就直接改掉设置、用新地址重发这一条。见 EndpointRepair。
+            // 这种失败发生在回复开始之前，还没有字冒出来，直接重发就行。
             val failed = result as? LlmResult.Failed
             val repairedUrl = if (failed != null && EndpointRepair.isWrongPath(failed.error)) {
                 EndpointRepair.tryAppendV1(config)
@@ -160,7 +178,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             if (repairedUrl != null) {
                 LlmConfigStore.updateActiveBaseUrl(getApplication(), repairedUrl)
                 config = config.copy(baseUrl = repairedUrl)
-                result = config.createProvider().chat(SYSTEM_PROMPT, _uiState.value.messages)
+                _uiState.update { it.copy(streamingReply = null) }
+                result = config.createProvider().chat(SYSTEM_PROMPT, history, onTextDelta = ::onTextDelta)
             }
 
             when (result) {
@@ -172,7 +191,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     repository.appendMessage(sessionId, reply)
                     _uiState.update {
                         it.copy(
-                            messages = it.messages + reply,
+                            // 临时回复和真正的消息在同一次更新里交接，界面上不会空一下再冒出来。
+                            messages = if (it.sessionId == sessionId) it.messages + reply else it.messages,
+                            streamingReply = null,
                             isResponding = false,
                             notice = repairedUrl?.let { url -> "API 地址少了 /v1，已经自动补上：$url" },
                         )
@@ -188,9 +209,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         result.error.describe()
                     }
-                    // 失败的回复不入库：下次重试时不该把一条错误消息当成上下文发给模型。
+                    // 失败的回复不入库：下次重试时不该把一条错误消息当成上下文发给模型。回复到一半
+                    // 断掉的也一样，冒出来的那半截一起丢掉。
                     _uiState.update {
-                        it.copy(isResponding = false, error = message)
+                        it.copy(isResponding = false, streamingReply = null, error = message)
                     }
                 }
             }
