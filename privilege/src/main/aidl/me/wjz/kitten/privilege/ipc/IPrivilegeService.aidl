@@ -45,6 +45,17 @@ interface IPrivilegeService {
     // 而且 launchMode=singleTask/singleInstance 的 Activity 会无视这个标志。
     boolean launchAppOnDisplay(String packageName, int displayId, boolean forceNewInstance);
 
+    // 取一帧副屏画面，压成 JPEG 返回；拿不到返回 null。
+    //
+    // 只对 Kitten 自己创建的副屏有效：画面是从创建时挂上去的 ImageReader 里读的。
+    // 副屏正显示在某个 Surface 上时（setDisplaySurface 传了非 null），画面不再往
+    // ImageReader 写，这时取不到帧——Agent 用的副屏本来就是隐藏的，不受影响。
+    //
+    // maxEdge：长边最多多少像素，超了等比缩小；quality：JPEG 质量 1..100。
+    // 两个参数都由调用方给：给模型看的截图不需要原始清晰度，缩小 + 压缩之后
+    // 文字照样读得清，而字节数要受 Binder 单次事务的限制（见 VirtualDisplayHost）。
+    byte[] captureDisplay(int displayId, int maxEdge, int quality);
+
     // 把副屏的画面接到 surface 上，让用户看见；传 null 则切回离屏缓冲、重新隐身。
     //
     // 副屏可见与否，取决于它往哪个 Surface 渲染：

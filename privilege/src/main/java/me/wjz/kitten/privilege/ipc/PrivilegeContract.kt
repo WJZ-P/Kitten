@@ -40,5 +40,5 @@ object PrivilegeContract {
      * 有了这个号，App 每次连上都会核对一次，不一致就把特权进程重新拉起
      * （见 [me.wjz.kitten.privilege.PrivilegeManager.isStale]）。
      */
-    const val PROTOCOL_VERSION = 3
+    const val PROTOCOL_VERSION = 5
 }

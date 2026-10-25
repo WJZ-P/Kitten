@@ -152,6 +152,25 @@ object VirtualDisplayManager {
             .getOrDefault(false)
     }
 
+    /**
+     * 截一张副屏的图，返回 JPEG 字节；拿不到返回 null。
+     *
+     * 只对自己创建的副屏有效，而且副屏得是隐藏状态（正显示在某个 Surface 上时画面不往
+     * 截图通道写）。细节见 `VirtualDisplayHost.capture`。
+     *
+     * @param maxEdge 长边最多多少像素，超了等比缩小。
+     * @param quality JPEG 质量 1..100。结果太大时特权侧会自己再降，见那边的 MAX_BYTES。
+     */
+    fun captureDisplay(displayId: Int, maxEdge: Int, quality: Int): ByteArray? {
+        val service = PrivilegeManager.get() ?: run {
+            Log.w(TAG, "特权进程未就绪，截不了图")
+            return null
+        }
+        return runCatching { service.captureDisplay(displayId, maxEdge, quality) }
+            .onFailure { Log.e(TAG, "截取副屏 $displayId 失败", it) }
+            .getOrNull()
+    }
+
     /** 隐藏副屏：画面切回离屏缓冲。 */
     fun hide(displayId: Int): Boolean = setSurface(displayId, null)
 

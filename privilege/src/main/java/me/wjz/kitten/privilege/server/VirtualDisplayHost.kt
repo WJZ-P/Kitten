@@ -1,12 +1,16 @@
 package me.wjz.kitten.privilege.server
 
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
+import android.media.Image
 import android.media.ImageReader
 import android.util.Log
 import android.view.Surface
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.roundToInt
 
 /**
  * 在特权进程里持有虚拟副屏。
@@ -58,6 +62,22 @@ internal object VirtualDisplayHost {
     private const val FLAG_TRUSTED = 1 shl 10   //  所以这个其实是API里面没有暴露的，写的一个魔法数
 
     /**
+     * `DisplayManager.VIRTUAL_DISPLAY_FLAG_DESTROY_CONTENT_ON_REMOVAL`：副屏移除时，上面的应用
+     * 跟着关掉。
+     *
+     * 不带它的话，公开副屏（PUBLIC）移除时系统会把上面的 task 挪到主屏、而且放在最前面。实测：
+     * Agent 在副屏里用完 QQ，一轮结束回收副屏，QQ 突然盖在了用户眼前（日志里是
+     * `moveTaskToFront: Task{… com.tencent.mobileqq}`，preDisplayId 是副屏、displayId 变成 0）。
+     * 副屏是 Agent 自己的工作台，收工时台面上的东西一起收掉，不该甩到用户面前。
+     *
+     * 代价：用户原本在主屏开着的那个应用，被 Agent 拉到副屏用过之后也会一起关掉（单实例的应用，
+     * 拉起时系统会把已有的 task 挪过去）。应用进程不会被杀，下次打开从它的首页开始。
+     *
+     * 也是 `@hide`，只能写字面量。AOSP 里创建副屏时没有为它查权限，只是把它记进显示设备的标志位。
+     */
+    private const val FLAG_DESTROY_CONTENT_ON_REMOVAL = 1 shl 8
+
+    /**
      * 画面缓冲区的张数。
      *
      * 2 张够用：一张正在被系统写入、一张可以被读走。给多了只是白占内存。
@@ -107,8 +127,10 @@ internal object VirtualDisplayHost {
             )
             // PUBLIC：别的应用的 Activity 才能被放到这块屏上。
             // OWN_CONTENT_ONLY：只显示扔上来的内容，不镜像主屏。
+            // DESTROY_CONTENT_ON_REMOVAL：收掉副屏时上面的应用一起关，不挪到主屏，见常量注释。
             val baseFlags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC or
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY or
+                FLAG_DESTROY_CONTENT_ON_REMOVAL
 
             // 先按 trusted 建，这是应用内部跳转能留在副屏的前提（见类注释）。
             var trusted = true
@@ -181,6 +203,93 @@ internal object VirtualDisplayHost {
         }
     }
 
+    /**
+     * 取一帧副屏画面，压成 JPEG 返回；拿不到返回 null。
+     *
+     * ## 画面是从哪来的
+     *
+     * 副屏创建时就把 [ImageReader] 的 Surface 当成了渲染目标（见 [create]），画面一直在往
+     * 那里写，取帧只是把最新的一张读出来，不需要 MediaProjection 那套要用户授权的流程。
+     *
+     * 副屏正显示在别的 Surface 上时（[setSurface] 传了非 null）画面不再往 ImageReader 写，
+     * 这时取不到帧。Agent 用的副屏本来就是隐藏的，不受影响。
+     *
+     * ## 为什么要缩小、压缩
+     *
+     * 字节数要走 Binder 一次事务带回去，而一个进程的事务缓冲区总共才 1MB 左右，塞一张原始
+     * 分辨率的位图（1080×2400×4 ≈ 10MB）必炸。好在给模型看的截图也不需要原始清晰度——缩到
+     * 长边一千多像素、JPEG 压一下，界面上的字照样读得清。质量按 [MAX_BYTES] 兜底，太大就
+     * 一档档降，降到 [MIN_QUALITY] 为止。
+     */
+    fun capture(displayId: Int, maxEdge: Int, quality: Int): ByteArray? {
+        val holder = holders[displayId] ?: run {
+            Log.w(TAG, "displayId=$displayId 不是 Kitten 创建的，截不了图")
+            return null
+        }
+        return runCatching {
+            // acquireLatestImage 会丢掉积压的旧帧只留最新一张，正是我们要的。
+            // 返回 null 说明这块屏还没渲染过任何东西。
+            val image = holder.reader.acquireLatestImage() ?: run {
+                Log.w(TAG, "display=$displayId 还没有可用的画面")
+                return null
+            }
+            // 必须 close，否则缓冲区占满之后副屏就不再出新帧了。
+            val raw = image.use(::toBitmap)
+            val scaled = raw.scaleToMaxEdge(maxEdge)
+            compressToJpeg(scaled, quality).also {
+                Log.i(TAG, "display=$displayId 截图 ${scaled.width}x${scaled.height}，${it.size / 1024}KB")
+            }
+        }.getOrElse {
+            Log.e(TAG, "截取 display=$displayId 失败", it)
+            null
+        }
+    }
+
+    /**
+     * 把 ImageReader 给的一帧转成位图。
+     *
+     * 每行末尾可能有对齐填充（rowStride 比 width×pixelStride 大），所以先按"带填充的宽度"
+     * 建位图再裁掉多出来的那几列。不裁的话图会整体斜着错开。
+     */
+    private fun toBitmap(image: Image): Bitmap {
+        val plane = image.planes[0]
+        val pixelStride = plane.pixelStride
+        val rowPadding = plane.rowStride - pixelStride * image.width
+        val padded = Bitmap.createBitmap(
+            image.width + rowPadding / pixelStride,
+            image.height,
+            Bitmap.Config.ARGB_8888,
+        )
+        padded.copyPixelsFromBuffer(plane.buffer)
+        if (padded.width == image.width) return padded
+        return Bitmap.createBitmap(padded, 0, 0, image.width, image.height)
+    }
+
+    private fun Bitmap.scaleToMaxEdge(maxEdge: Int): Bitmap {
+        val longest = maxOf(width, height)
+        if (maxEdge <= 0 || longest <= maxEdge) return this
+        val scale = maxEdge.toFloat() / longest
+        return Bitmap.createScaledBitmap(
+            this,
+            (width * scale).roundToInt().coerceAtLeast(1),
+            (height * scale).roundToInt().coerceAtLeast(1),
+            true,
+        )
+    }
+
+    /** 压成 JPEG，太大就一档档降质量，见 [capture] 里关于 Binder 事务大小的说明。 */
+    private fun compressToJpeg(bitmap: Bitmap, quality: Int): ByteArray {
+        var current = quality.coerceIn(MIN_QUALITY, 100)
+        while (true) {
+            val out = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.JPEG, current, out)
+            val bytes = out.toByteArray()
+            if (bytes.size <= MAX_BYTES || current <= MIN_QUALITY) return bytes
+            Log.i(TAG, "截图 ${bytes.size / 1024}KB 偏大，质量 $current 再降一档")
+            current = (current - QUALITY_STEP).coerceAtLeast(MIN_QUALITY)
+        }
+    }
+
     /** 释放指定副屏；不是我们创建的就忽略。 */
     fun release(displayId: Int) {
         val holder = holders.remove(displayId)
@@ -199,4 +308,18 @@ internal object VirtualDisplayHost {
     }
 
     const val INVALID_DISPLAY_ID = -1
+
+    /**
+     * 一张截图最多多少字节。
+     *
+     * Binder 一个进程的事务缓冲区总共 1MB 左右，而且是所有并发调用共用的，所以单张留一半
+     * 出头做上限，超了就降质量。实测界面截图缩到长边一千多像素之后，JPEG 普遍在 100～300KB，
+     * 很少撞到这个线。
+     */
+    private const val MAX_BYTES = 512 * 1024
+
+    /** 质量降到这里就不再降了，再低字会糊得认不出来。 */
+    private const val MIN_QUALITY = 40
+
+    private const val QUALITY_STEP = 15
 }

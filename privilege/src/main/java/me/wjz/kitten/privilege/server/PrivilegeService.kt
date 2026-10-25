@@ -30,6 +30,9 @@ class PrivilegeService : IPrivilegeService.Stub() {
 
     override fun releaseAllVirtualDisplays() = VirtualDisplayHost.releaseAll()
 
+    override fun captureDisplay(displayId: Int, maxEdge: Int, quality: Int): ByteArray? =
+        VirtualDisplayHost.capture(displayId, maxEdge, quality)
+
     override fun setDisplaySurface(displayId: Int, surface: Surface?): Boolean =
         VirtualDisplayHost.setSurface(displayId, surface)
 
