@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import me.wjz.kitten.data.session.SessionRepository
 import me.wjz.kitten.data.session.sqlite.SqliteSessionRepository
 import me.wjz.kitten.llm.ChatMessage
+import me.wjz.kitten.llm.EndpointRepair
 import me.wjz.kitten.llm.LlmConfigStore
 import me.wjz.kitten.llm.LlmResult
 import me.wjz.kitten.llm.createProvider
@@ -121,8 +122,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            val config = LlmConfigStore.load(getApplication())
-            when (val result = config.createProvider().chat(SYSTEM_PROMPT, _uiState.value.messages)) {
+            var config = LlmConfigStore.load(getApplication())
+            var result = config.createProvider().chat(SYSTEM_PROMPT, _uiState.value.messages)
+
+            // 地址像是少拼了 /v1：补上试一下，通了就直接改掉设置、用新地址重发这一条。见 EndpointRepair。
+            val failed = result as? LlmResult.Failed
+            val repairedUrl = if (failed != null && EndpointRepair.isWrongPath(failed.error)) {
+                EndpointRepair.tryAppendV1(config)
+            } else {
+                null
+            }
+            if (repairedUrl != null) {
+                LlmConfigStore.updateActiveBaseUrl(getApplication(), repairedUrl)
+                config = config.copy(baseUrl = repairedUrl)
+                result = config.createProvider().chat(SYSTEM_PROMPT, _uiState.value.messages)
+            }
+
+            when (result) {
                 is LlmResult.Ok -> {
                     val reply = ChatMessage.Assistant(
                         text = result.response.text,
@@ -130,15 +146,26 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     repository.appendMessage(sessionId, reply)
                     _uiState.update {
-                        it.copy(messages = it.messages + reply, isResponding = false)
+                        it.copy(
+                            messages = it.messages + reply,
+                            isResponding = false,
+                            notice = repairedUrl?.let { url -> "API 地址少了 /v1，已经自动补上：$url" },
+                        )
                     }
                 }
 
                 is LlmResult.Failed -> {
                     Log.w(TAG, "模型调用失败：${result.error.describe()}")
+                    // 补上 /v1 之后还是失败（比如 Key 的问题）：地址已经改了，要在同一条提示里说，
+                    // 不然另弹一条会被这条错误马上顶掉。
+                    val message = if (repairedUrl != null) {
+                        "已把 API 地址自动补上 /v1，但请求还是失败了：${result.error.describe()}"
+                    } else {
+                        result.error.describe()
+                    }
                     // 失败的回复不入库：下次重试时不该把一条错误消息当成上下文发给模型。
                     _uiState.update {
-                        it.copy(isResponding = false, error = result.error.describe())
+                        it.copy(isResponding = false, error = message)
                     }
                 }
             }
@@ -162,6 +189,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     /** 错误提示展示过就清掉，否则切回这个页面会再弹一次。 */
     fun consumeError() {
         _uiState.update { it.copy(error = null) }
+    }
+
+    /** 普通提示同理。 */
+    fun consumeNotice() {
+        _uiState.update { it.copy(notice = null) }
     }
 
     private companion object {

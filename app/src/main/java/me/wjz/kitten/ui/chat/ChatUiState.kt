@@ -33,6 +33,9 @@ data class ChatUiState(
 
     /** 一次性的错误提示，展示过就该被 [ChatViewModel.consumeError] 清掉。 */
     val error: String? = null,
+
+    /** 一次性的普通提示（比如"已自动补上 /v1"），展示过就该被 [ChatViewModel.consumeNotice] 清掉。 */
+    val notice: String? = null,
 ) {
     val isEmpty: Boolean get() = messages.isEmpty()
 

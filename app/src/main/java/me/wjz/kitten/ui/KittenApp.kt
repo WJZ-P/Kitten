@@ -118,11 +118,17 @@ fun KittenApp(actions: SetupActions) {
         pagerState.animateScrollToPage(currentTab.ordinal, animationSpec = PageSlideSpec)
     }
 
-    // 错误弹一条 Toast 就清掉，否则切走再回来会重复弹。
+    // 错误和普通提示都弹一条 Toast 就清掉，否则切走再回来会重复弹。
     LaunchedEffect(chatState.error) {
         chatState.error?.let {
             toast.show(it, tone = ToastTone.Error)
             chatViewModel.consumeError()
+        }
+    }
+    LaunchedEffect(chatState.notice) {
+        chatState.notice?.let {
+            toast.show(it, tone = ToastTone.Success)
+            chatViewModel.consumeNotice()
         }
     }
 

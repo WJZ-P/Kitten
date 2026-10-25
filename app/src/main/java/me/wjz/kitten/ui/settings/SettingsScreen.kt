@@ -21,6 +21,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -35,6 +36,8 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.R
 import me.wjz.kitten.llm.LlmConfigStore
+import me.wjz.kitten.llm.LlmProfile
+import me.wjz.kitten.llm.LlmProfiles
 import me.wjz.kitten.permission.PermissionStatus
 import me.wjz.kitten.permission.SelfConfigurator
 import me.wjz.kitten.privilege.client.WirelessDebugController
@@ -80,9 +83,21 @@ fun SettingsScreen(
     val controller = remember(context) { WirelessDebugController.getInstance(context) }
     var status by remember { mutableStateOf(PermissionStatus.read(context)) }
     // 已保存的配置，和模态窗里正在改的草稿分开：不保存就关掉，草稿直接丢掉。
-    var config by remember { mutableStateOf(LlmConfigStore.load(context)) }
-    var draft by remember { mutableStateOf(config) }
+    // 别处改了配置（比如对话页自动补了 /v1）时重读：设置页一直活着，不重读的话手里那份是旧的，
+    // 下次保存会把别处的改动盖回去。
+    val revision by LlmConfigStore.revision.collectAsState()
+    var profiles by remember(revision) { mutableStateOf(LlmConfigStore.loadProfiles(context)) }
+    var draft by remember { mutableStateOf(LlmProfile.create()) }
+    // 草稿是新加的一家还是在改已有的：决定保存时是追加还是替换，以及有没有删除按钮。
+    var draftIsNew by remember { mutableStateOf(true) }
     var editingModel by remember { mutableStateOf(false) }
+
+    // 存下来，并通知对话页：它的"模型是否已配置"是启动时读的，要主动让它重读。
+    fun commit(next: LlmProfiles) {
+        profiles = next
+        LlmConfigStore.saveProfiles(context, next)
+        onModelConfigChanged()
+    }
 
     LifecycleResumeEffect(context) {
         // 拿到 WRITE_SECURE_SETTINGS 之后，无障碍和通知使用权由 Kitten 自己开。
@@ -104,11 +119,25 @@ fun SettingsScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        ModelConfigEntry(
+        ModelProfilesSection(
             backdrop = backdrop,
-            config = config,
+            profiles = profiles,
+            onSelectModel = { profile, model ->
+                commit(
+                    profiles.copy(
+                        profiles = profiles.profiles.map { if (it.id == profile.id) it.copy(model = model) else it },
+                    ),
+                )
+            },
+            onActivate = { commit(profiles.copy(activeId = it.id)) },
             onEdit = {
-                draft = config
+                draft = it
+                draftIsNew = false
+                editingModel = true
+            },
+            onAdd = {
+                draft = LlmProfile.create()
+                draftIsNew = true
                 editingModel = true
             },
         )
@@ -144,12 +173,23 @@ fun SettingsScreen(
     ModelConfigDialog(
         visible = editingModel,
         draft = draft,
+        isNew = draftIsNew,
         onDraftChange = { draft = it },
         onSave = {
-            config = draft
-            LlmConfigStore.save(context, draft)
-            // 对话页的"模型是否已配置"是启动时读的，这里要主动通知它重读。
-            onModelConfigChanged()
+            val list = if (draftIsNew) {
+                profiles.profiles + draft
+            } else {
+                profiles.profiles.map { if (it.id == draft.id) draft else it }
+            }
+            // 第一家配好的服务直接设为当前，不用用户再点一次"使用"。
+            commit(LlmProfiles(list, profiles.activeId ?: draft.id))
+            editingModel = false
+        },
+        onDelete = {
+            val list = profiles.profiles.filterNot { it.id == draft.id }
+            // 删的是正在用的那一家：换成剩下的第一家，一家都不剩就没有当前。
+            val active = if (profiles.activeId == draft.id) list.firstOrNull()?.id else profiles.activeId
+            commit(LlmProfiles(list, active))
             editingModel = false
         },
         onDismiss = { editingModel = false },

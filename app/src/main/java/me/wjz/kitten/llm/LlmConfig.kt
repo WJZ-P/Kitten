@@ -1,5 +1,7 @@
 package me.wjz.kitten.llm
 
+import java.util.UUID
+
 /**
  * 模型接入的配置。
  *
@@ -24,6 +26,39 @@ data class LlmConfig(
 ) {
     val isConfigured: Boolean
         get() = apiKey.isNotBlank() && model.isNotBlank()
+}
+
+/**
+ * 一家配置好的模型服务。可以配好几家，随时切换用哪一家（见 [LlmConfigStore]）；设置页上一家
+ * 一张卡片。
+ *
+ * 不单独存名字：从预设建的显示预设名，自定义的显示地址里的主机名，见设置页。
+ *
+ * @param id 内部标识，增删改按它找。
+ * @param models 这家可选的模型，从服务商的 /models 接口拉下来的（见 [LlmProvider.listModels]）。
+ * @param model 当前选中的模型。不一定在 [models] 里：拉不到列表的服务，用户可以手填。
+ */
+data class LlmProfile(
+    val id: String,
+    val format: LlmFormat = LlmFormat.OPENAI_COMPATIBLE,
+    val baseUrl: String = "",
+    val apiKey: String = "",
+    val models: List<String> = emptyList(),
+    val model: String = "",
+) {
+    val isConfigured: Boolean
+        get() = apiKey.isNotBlank() && model.isNotBlank()
+
+    /** 下拉条里的选项：拉到的列表，加上当前选中、但不在列表里的那个（手填的）。 */
+    val modelChoices: List<String>
+        get() = if (model.isNotBlank() && model !in models) listOf(model) + models else models
+
+    fun toConfig(maxTokens: Int, temperature: Double): LlmConfig =
+        LlmConfig(format, baseUrl, apiKey, model, maxTokens, temperature)
+
+    companion object {
+        fun create(): LlmProfile = LlmProfile(id = UUID.randomUUID().toString())
+    }
 }
 
 /** 报文格式。 */
