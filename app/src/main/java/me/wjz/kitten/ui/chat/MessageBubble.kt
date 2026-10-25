@@ -10,6 +10,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.llm.ChatMessage
@@ -25,16 +26,21 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * - 工具调用/结果是**过程信息**，不是对话，所以压扁成一行小字。
  *
  * 气泡里的内容一段一段往下排：现在只有文字，以后的图片作为单独的一段放进去，见 [ChatBubble]。
+ *
+ * @param lifted 这一条的长按菜单正开着：气泡一直鼓着。
+ * @param onLongPress 长按气泡，参数是手指的窗口坐标。
  */
 @Composable
 fun MessageBubble(
     message: ChatMessage,
     backdrop: Backdrop,
+    lifted: Boolean,
+    onLongPress: (positionInWindow: Offset) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     when (message) {
-        is ChatMessage.User -> UserBubble(message.text, backdrop, modifier)
-        is ChatMessage.Assistant -> AssistantBubble(message, backdrop, modifier)
+        is ChatMessage.User -> UserBubble(message.text, backdrop, lifted, onLongPress, modifier)
+        is ChatMessage.Assistant -> AssistantBubble(message, backdrop, lifted, onLongPress, modifier)
         // 工具结果本身不展示——它是给模型看的原始数据（整屏节点树能有几千字符），
         // 塞进对话里只会淹没真正的内容。用户需要知道的是"调用了什么工具"，
         // 那个信息在 Assistant 消息的 toolCalls 里已经显示了。
@@ -46,6 +52,8 @@ fun MessageBubble(
 private fun UserBubble(
     text: String,
     backdrop: Backdrop,
+    lifted: Boolean,
+    onLongPress: (Offset) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
@@ -53,6 +61,8 @@ private fun UserBubble(
             side = BubbleSide.End,
             backdrop = backdrop,
             tinted = true,
+            lifted = lifted,
+            onLongPress = onLongPress,
             // 不占满整行，留出左边的空白，视觉上才有"从右边来"的感觉。
             modifier = Modifier.widthIn(max = 280.dp),
         ) {
@@ -70,12 +80,16 @@ private fun UserBubble(
 private fun AssistantBubble(
     message: ChatMessage.Assistant,
     backdrop: Backdrop,
+    lifted: Boolean,
+    onLongPress: (Offset) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Box(modifier = modifier.fillMaxWidth(), contentAlignment = Alignment.CenterStart) {
         ChatBubble(
             side = BubbleSide.Start,
             backdrop = backdrop,
+            lifted = lifted,
+            onLongPress = onLongPress,
             modifier = Modifier.widthIn(max = 300.dp),
         ) {
             Column(modifier = Modifier.padding(BubbleTextPadding)) {

@@ -1,5 +1,6 @@
 package me.wjz.kitten.ui.chat
 
+import android.content.ClipData
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,7 +11,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -19,10 +20,13 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -31,7 +35,14 @@ import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import kotlinx.coroutines.launch
 import me.wjz.kitten.llm.ChatMessage
+import me.wjz.kitten.ui.component.GlassContextMenu
+import me.wjz.kitten.ui.component.GlassMenuItem
+import me.wjz.kitten.ui.component.rememberGlassContextMenuState
+import me.wjz.kitten.ui.icon.ContentCopy
+import me.wjz.kitten.ui.icon.Delete
+import me.wjz.kitten.ui.icon.KittenIcons
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
@@ -49,6 +60,7 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 列表末尾留出"输入栏 + 它下面让出来的那一截"的高度，最后一条消息才滚得上来。
  *
  * @param bottomInsets 输入栏下面要让出来的位置：平时是底部栏，键盘弹起时是键盘。
+ * @param onDeleteMessage 删一条消息：它在 messages 里的位置，和那条消息本身（用来核对没删错）。
  */
 @Composable
 fun ChatScreen(
@@ -58,6 +70,7 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
     onOpenDrawer: () -> Unit,
     onNewSession: () -> Unit,
+    onDeleteMessage: (index: Int, message: ChatMessage) -> Unit,
     bottomInsets: WindowInsets,
     modifier: Modifier = Modifier,
 ) {
@@ -92,6 +105,7 @@ fun ChatScreen(
                         isResponding = state.isResponding,
                         backdrop = backdrop,
                         bottomPadding = overlayHeight,
+                        onDeleteMessage = onDeleteMessage,
                     )
                 }
             }
@@ -110,17 +124,28 @@ fun ChatScreen(
     }
 }
 
+/**
+ * 消息列表。长按一条气泡弹出菜单（[GlassContextMenu]）：复制、删除。整个列表共用一个菜单，
+ * 记着长按的是哪一条；菜单在列表外面，删掉那一条之后收起的动画照样放得完。
+ */
 @Composable
 private fun MessageList(
     messages: List<ChatMessage>,
     isResponding: Boolean,
     backdrop: Backdrop,
     bottomPadding: Dp,
+    onDeleteMessage: (index: Int, message: ChatMessage) -> Unit,
 ) {
     val listState = rememberLazyListState()
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    val menu = rememberGlassContextMenuState()
+    // 长按的是哪一条。菜单收起后也留着：收起的动画还在放，菜单里的东西不能跟着变。
+    var menuTarget by remember { mutableStateOf<MenuTarget?>(null) }
 
-    // 新消息进来就滚到底。只在数量变化时滚，否则用户往上翻历史会被不停拽回来。
-    LaunchedEffect(messages.size, isResponding) {
+    // 新消息进来就滚到底。看的是最后一条变没变，不是条数：用户往上翻历史时不会被不停拽回来，
+    // 删掉中间的一条也不会被拽到底下去；新消息进来、换了会话，最后一条都会变。
+    LaunchedEffect(messages.lastOrNull(), isResponding) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.lastIndex)
         }
@@ -134,13 +159,54 @@ private fun MessageList(
         ),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        items(messages) { message ->
-            MessageBubble(message = message, backdrop = backdrop)
+        itemsIndexed(messages) { index, message ->
+            MessageBubble(
+                message = message,
+                backdrop = backdrop,
+                lifted = menu.expanded && menuTarget?.index == index,
+                onLongPress = {
+                    menuTarget = MenuTarget(index, message)
+                    menu.show(it)
+                },
+            )
         }
         if (isResponding) {
             item { TypingIndicator() }
         }
     }
+
+    val target = menuTarget
+    GlassContextMenu(
+        state = menu,
+        items = buildList {
+            target?.message?.copyableText()?.let { text ->
+                add(
+                    GlassMenuItem(text = "复制", icon = KittenIcons.ContentCopy) {
+                        // Android 13 起系统会自己弹"已复制"的提示，这里不再另弹一条。
+                        scope.launch { clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("消息", text))) }
+                    },
+                )
+            }
+            if (target != null) {
+                add(
+                    GlassMenuItem(text = "删除", icon = KittenIcons.Delete, destructive = true) {
+                        onDeleteMessage(target.index, target.message)
+                    },
+                )
+            }
+        },
+        backdrop = backdrop,
+    )
+}
+
+/** 长按菜单对着的那一条：它在列表里的位置，和长按那一刻的消息本身。 */
+private class MenuTarget(val index: Int, val message: ChatMessage)
+
+/** 能复制的文字：用户说的话、模型回复里的文字。只调了工具、没说话的那条没得复制。 */
+private fun ChatMessage.copyableText(): String? = when (this) {
+    is ChatMessage.User -> text
+    is ChatMessage.Assistant -> text?.takeIf { it.isNotBlank() }
+    is ChatMessage.ToolResult -> null
 }
 
 /** 空会话时的引导。模型没配好的话，这里是用户最该看到提示的地方。 */
