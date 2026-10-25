@@ -1,6 +1,8 @@
 package me.wjz.kitten.llm
 
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.Headers
 import org.json.JSONArray
 import org.json.JSONObject
@@ -34,12 +36,15 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
     ): LlmResult {
         if (!config.isConfigured) return LlmResult.Failed(LlmError.NotConfigured)
 
-        val body = JSONObject().apply {
-            put("model", config.model)
-            put("max_tokens", config.maxTokens)
-            put("temperature", config.temperature)
-            put("messages", buildMessages(system, messages))
-            if (tools.isNotEmpty()) put("tools", buildTools(tools))
+        // 组请求要把消息里的图片读出来编码，是磁盘 IO，不能在主线程做。
+        val body = withContext(Dispatchers.IO) {
+            JSONObject().apply {
+                put("model", config.model)
+                put("max_tokens", config.maxTokens)
+                put("temperature", config.temperature)
+                put("messages", buildMessages(system, messages))
+                if (tools.isNotEmpty()) put("tools", buildTools(tools))
+            }
         }
         val headers = Headers.Builder()
             .add("Authorization", "Bearer ${config.apiKey}")
@@ -179,7 +184,7 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
             messages.forEach { message ->
                 when (message) {
                     is ChatMessage.User ->
-                        put(JSONObject().put("role", "user").put("content", message.text))
+                        put(JSONObject().put("role", "user").put("content", userContent(message)))
 
                     is ChatMessage.Assistant -> put(
                         JSONObject().apply {
@@ -218,6 +223,24 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
                 }
             }
         }
+
+    /**
+     * 用户消息的 content。只有字时是一个字符串，所有兼容服务都认；带图片时是一个数组：字一块，
+     * 每张图一块，图用 data URL 把 base64 直接内嵌进去。不支持看图的服务会报错，错误原样告诉
+     * 用户。图片文件读不到（被清理了）就跳过那一张。
+     */
+    private fun userContent(message: ChatMessage.User): Any {
+        val images = message.images.mapNotNull { image ->
+            image.readBase64()?.let { "data:${image.mediaType};base64,$it" }
+        }
+        if (images.isEmpty()) return message.text
+        return JSONArray().apply {
+            if (message.text.isNotBlank()) put(JSONObject().put("type", "text").put("text", message.text))
+            images.forEach { url ->
+                put(JSONObject().put("type", "image_url").put("image_url", JSONObject().put("url", url)))
+            }
+        }
+    }
 
     private fun buildTools(tools: List<ToolSpec>): JSONArray = JSONArray().apply {
         tools.forEach { tool ->

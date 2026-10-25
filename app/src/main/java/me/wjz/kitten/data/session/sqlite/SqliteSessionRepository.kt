@@ -11,12 +11,14 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.withContext
+import me.wjz.kitten.data.attachment.AttachmentStore
 import me.wjz.kitten.data.session.Session
 import me.wjz.kitten.data.session.SessionRepository
 import me.wjz.kitten.data.session.SessionSummary
 import me.wjz.kitten.data.session.sqlite.KittenOpenHelper.Columns
 import me.wjz.kitten.data.session.sqlite.KittenOpenHelper.Tables
 import me.wjz.kitten.llm.ChatMessage
+import me.wjz.kitten.llm.ImageAttachment
 import java.util.UUID
 
 /**
@@ -47,6 +49,9 @@ class SqliteSessionRepository(
 ) : SessionRepository {
 
     private val helper = KittenOpenHelper(context.applicationContext)
+
+    /** 消息里的图片文件。删消息、删会话时跟着删，不然越积越多。 */
+    private val attachments = AttachmentStore(context)
 
     /**
      * 数据变更信号。
@@ -130,15 +135,16 @@ class SqliteSessionRepository(
         if (indices.isEmpty()) return
         withContext(io) {
             val db = helper.writableDatabase
-            db.transaction {
+            val doomed = db.transaction {
                 // 和 load() 走同一个查询、同一套跳过坏行的规则，下标才对得上。
-                val rowIds = queryMessageRows(this, sessionId)
-                    .filterIndexed { i, _ -> i in indices }
-                    .map { it.rowId }
-                rowIds.forEach { rowId ->
-                    delete(Tables.MESSAGES, "$ROW_ID = ?", arrayOf(rowId.toString()))
+                val rows = queryMessageRows(this, sessionId).filterIndexed { i, _ -> i in indices }
+                rows.forEach { row ->
+                    delete(Tables.MESSAGES, "$ROW_ID = ?", arrayOf(row.rowId.toString()))
                 }
+                rows.map { it.message }
             }
+            // 库里删成功了再删文件：反过来的话事务失败，消息还在、图片却没了。
+            attachments.delete(doomed.imagesOf())
             notifyChanged()
         }
     }
@@ -157,22 +163,32 @@ class SqliteSessionRepository(
 
     override suspend fun delete(id: String) {
         withContext(io) {
-            // 消息靠外键 ON DELETE CASCADE 跟着删——前提是 onConfigure 里开了外键约束。
-            helper.writableDatabase.delete(Tables.SESSIONS, "${Columns.ID} = ?", arrayOf(id))
+            val db = helper.writableDatabase
+            // 消息靠外键 ON DELETE CASCADE 跟着删——前提是 onConfigure 里开了外键约束。图片文件
+            // 不在库里，删之前先记下来。
+            val images = queryMessages(db, id).imagesOf()
+            db.delete(Tables.SESSIONS, "${Columns.ID} = ?", arrayOf(id))
+            attachments.delete(images)
             notifyChanged()
         }
     }
 
     override suspend fun clearMessages(id: String) {
         withContext(io) {
-            helper.writableDatabase.delete(
+            val db = helper.writableDatabase
+            val images = queryMessages(db, id).imagesOf()
+            db.delete(
                 Tables.MESSAGES,
                 "${Columns.SESSION_ID} = ?",
                 arrayOf(id),
             )
+            attachments.delete(images)
             notifyChanged()
         }
     }
+
+    private fun List<ChatMessage>.imagesOf(): List<ImageAttachment> =
+        flatMap { (it as? ChatMessage.User)?.images.orEmpty() }
 
     /**
      * 会话列表。
@@ -185,7 +201,11 @@ class SqliteSessionRepository(
             SELECT s.${Columns.ID}, s.${Columns.TITLE}, s.${Columns.UPDATED_AT},
                    (SELECT COUNT(*) FROM ${Tables.MESSAGES} m
                      WHERE m.${Columns.SESSION_ID} = s.${Columns.ID}) AS msg_count,
-                   (SELECT m.${Columns.CONTENT} FROM ${Tables.MESSAGES} m
+                   (SELECT COALESCE(
+                               NULLIF(m.${Columns.CONTENT}, ''),
+                               CASE WHEN m.${Columns.IMAGES} IS NOT NULL THEN '${MessageMapper.IMAGE_PREVIEW}' END
+                           )
+                      FROM ${Tables.MESSAGES} m
                      WHERE m.${Columns.SESSION_ID} = s.${Columns.ID}
                      ORDER BY m.${Columns.CREATED_AT} DESC, m.rowid DESC LIMIT 1) AS last_content
               FROM ${Tables.SESSIONS} s

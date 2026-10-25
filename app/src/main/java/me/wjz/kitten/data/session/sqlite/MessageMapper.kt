@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.database.Cursor
 import me.wjz.kitten.data.session.sqlite.KittenOpenHelper.Columns
 import me.wjz.kitten.llm.ChatMessage
+import me.wjz.kitten.llm.ImageAttachment
 import me.wjz.kitten.llm.ToolCall
 import org.json.JSONArray
 import org.json.JSONObject
@@ -23,6 +24,9 @@ internal object MessageMapper {
     private const val ROLE_ASSISTANT = "assistant"
     private const val ROLE_TOOL = "tool"
 
+    /** 只发了图片、没有字的那条消息，在会话列表里的副标题。 */
+    const val IMAGE_PREVIEW = "[图片]"
+
     fun toContentValues(
         sessionId: String,
         message: ChatMessage,
@@ -34,6 +38,8 @@ internal object MessageMapper {
             is ChatMessage.User -> {
                 put(Columns.ROLE, ROLE_USER)
                 put(Columns.CONTENT, message.text)
+                // 同工具调用：没有图片存 null。
+                put(Columns.IMAGES, message.images.takeIf { it.isNotEmpty() }?.imagesToJson())
             }
 
             is ChatMessage.Assistant -> {
@@ -63,7 +69,12 @@ internal object MessageMapper {
         val role = cursor.getStringOrNull(Columns.ROLE) ?: return null
         val content = cursor.getStringOrNull(Columns.CONTENT)
         return when (role) {
-            ROLE_USER -> content?.let { ChatMessage.User(it) }
+            ROLE_USER -> content?.let {
+                ChatMessage.User(
+                    text = it,
+                    images = cursor.getStringOrNull(Columns.IMAGES)?.toImages().orEmpty(),
+                )
+            }
 
             ROLE_ASSISTANT -> ChatMessage.Assistant(
                 text = content,
@@ -85,7 +96,7 @@ internal object MessageMapper {
 
     /** 列表页的副标题：取最后一条消息的可读摘要。 */
     fun preview(message: ChatMessage): String? = when (message) {
-        is ChatMessage.User -> message.text
+        is ChatMessage.User -> message.text.ifBlank { if (message.images.isNotEmpty()) IMAGE_PREVIEW else "" }
         is ChatMessage.Assistant -> message.text
             // 纯工具调用那轮没有文字，显示在干什么比显示空白有用。
             ?: message.toolCalls.firstOrNull()?.let { "正在${it.name}…" }
@@ -102,6 +113,30 @@ internal object MessageMapper {
             )
         }
     }.toString()
+
+    private fun List<ImageAttachment>.imagesToJson(): String = JSONArray().apply {
+        this@imagesToJson.forEach { image ->
+            put(
+                JSONObject()
+                    .put("path", image.path)
+                    .put("width", image.width)
+                    .put("height", image.height),
+            )
+        }
+    }.toString()
+
+    /** 解析失败就当没有图片，同工具调用：不要因为一条坏数据整个会话打不开。 */
+    private fun String.toImages(): List<ImageAttachment> = runCatching {
+        val array = JSONArray(this)
+        (0 until array.length()).mapNotNull { i ->
+            val item = array.optJSONObject(i) ?: return@mapNotNull null
+            ImageAttachment(
+                path = item.optString("path").ifBlank { return@mapNotNull null },
+                width = item.optInt("width"),
+                height = item.optInt("height"),
+            )
+        }
+    }.getOrDefault(emptyList())
 
     /** 解析失败就当没有工具调用——宁可少显示一轮细节，也不要整个会话打不开。 */
     private fun String.toToolCalls(): List<ToolCall> = runCatching {

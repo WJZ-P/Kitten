@@ -1,6 +1,8 @@
 package me.wjz.kitten.llm
 
 import org.json.JSONObject
+import java.io.File
+import java.util.Base64
 
 /**
  * 一轮对话里的消息。
@@ -12,8 +14,13 @@ import org.json.JSONObject
  */
 sealed interface ChatMessage {
 
-    /** 用户说的话。 */
-    data class User(val text: String) : ChatMessage
+    /**
+     * 用户说的话，可以带图片。只发图片时 [text] 是空串。
+     */
+    data class User(
+        val text: String,
+        val images: List<ImageAttachment> = emptyList(),
+    ) : ChatMessage
 
     /**
      * 模型的回复。
@@ -37,6 +44,29 @@ sealed interface ChatMessage {
         val name: String,
         val content: String,
     ) : ChatMessage
+}
+
+/**
+ * 消息里的一张图片。
+ *
+ * 发送时从相册复制、压缩成 JPEG 存进应用私有目录（见 AttachmentStore），[path] 是那个文件的
+ * 绝对路径：相册给的地址只是临时授权，过一阵就读不到了，存进消息里的必须是自己的一份。
+ * 每次请求都现读现编码，不把几百 KB 的 base64 塞进数据库。
+ *
+ * @param width 压缩后的像素宽高。界面靠它在图片解码出来之前就把气泡的大小排好，不会先空着再撑开。
+ */
+data class ImageAttachment(
+    val path: String,
+    val width: Int,
+    val height: Int,
+) {
+    /** 存下来的都压成了 JPEG。 */
+    val mediaType: String get() = "image/jpeg"
+
+    /** 读出文件、编码成 base64，给请求用。文件没了（被清理、换了设备）返回 null。阻塞 IO。 */
+    internal fun readBase64(): String? = runCatching {
+        Base64.getEncoder().encodeToString(File(path).readBytes())
+    }.getOrNull()
 }
 
 /**

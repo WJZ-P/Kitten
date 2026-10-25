@@ -4,6 +4,7 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import android.util.Log
+import me.wjz.kitten.data.attachment.AttachmentStore
 
 /**
  * 数据库的建表与升级。
@@ -23,7 +24,7 @@ import android.util.Log
  * SQLite 默认**不启用**外键约束，必须每条连接都显式打开（见 [onConfigure]）。
  * 不开的话 `ON DELETE CASCADE` 是摆设，删会话时消息会变成孤儿留在表里。
  */
-internal class KittenOpenHelper(context: Context) :
+internal class KittenOpenHelper(private val context: Context) :
     SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 
     override fun onConfigure(db: SQLiteDatabase) {
@@ -52,6 +53,8 @@ internal class KittenOpenHelper(context: Context) :
         Log.w(TAG, "数据库从 v$oldVersion 升到 v$newVersion，当前策略是重建，历史会话会丢失")
         db.execSQL("DROP TABLE IF EXISTS ${Tables.MESSAGES}")
         db.execSQL("DROP TABLE IF EXISTS ${Tables.SESSIONS}")
+        // 消息都没了，消息里的图片文件留着就是没人认领的垃圾。
+        AttachmentStore(context).deleteAll()
         onCreate(db)
     }
 
@@ -79,12 +82,18 @@ internal class KittenOpenHelper(context: Context) :
         const val TOOL_CALLS = "tool_calls"
         const val TOOL_CALL_ID = "tool_call_id"
         const val TOOL_NAME = "tool_name"
+        const val IMAGES = "images"
     }
 
     private companion object {
         const val TAG = "KittenDb"
         const val DATABASE_NAME = "kitten.db"
-        const val DATABASE_VERSION = 1
+
+        /**
+         * - v1：只有文字。
+         * - v2：用户消息可以带图片（[Columns.IMAGES]）。
+         */
+        const val DATABASE_VERSION = 2
 
         val CREATE_SESSIONS = """
             CREATE TABLE ${Tables.SESSIONS} (
@@ -104,7 +113,8 @@ internal class KittenOpenHelper(context: Context) :
          *
          * tool_calls 存 JSON 字符串：模型一轮可以并发调用多个工具，数量不定，
          * 而我们从不按工具名去查消息——这种"只整存整取、不参与查询"的结构，
-         * 塞一列 JSON 比专门开一张表合适。
+         * 塞一列 JSON 比专门开一张表合适。images 同理：一条消息几张图，存的是图片文件的
+         * 路径和宽高，图片本身在文件里，不进数据库。
          */
         val CREATE_MESSAGES = """
             CREATE TABLE ${Tables.MESSAGES} (
@@ -115,6 +125,7 @@ internal class KittenOpenHelper(context: Context) :
                 ${Columns.TOOL_CALLS} TEXT,
                 ${Columns.TOOL_CALL_ID} TEXT,
                 ${Columns.TOOL_NAME} TEXT,
+                ${Columns.IMAGES} TEXT,
                 ${Columns.CREATED_AT} INTEGER NOT NULL,
                 FOREIGN KEY (${Columns.SESSION_ID})
                     REFERENCES ${Tables.SESSIONS}(${Columns.ID}) ON DELETE CASCADE

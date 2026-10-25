@@ -1,6 +1,8 @@
 package me.wjz.kitten.llm
 
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.Headers
 import org.json.JSONArray
 import org.json.JSONObject
@@ -31,15 +33,18 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
     ): LlmResult {
         if (!config.isConfigured) return LlmResult.Failed(LlmError.NotConfigured)
 
-        val body = JSONObject().apply {
-            put("model", config.model)
-            // max_tokens 在这个协议里是必填的，不像 OpenAI 可以省。
-            put("max_tokens", config.maxTokens)
-            // 不传 temperature（top_p、top_k 同理）：API 版本 2026-10-21 起，Messages 请求带这三个
-            // 参数在所有模型上都是 400，哪怕传的是默认值。Claude 4.7 及以后的模型本来也只认默认值。
-            if (system.isNotBlank()) put("system", system)
-            put("messages", buildMessages(messages))
-            if (tools.isNotEmpty()) put("tools", buildTools(tools))
+        // 组请求要把消息里的图片读出来编码，是磁盘 IO，不能在主线程做。
+        val body = withContext(Dispatchers.IO) {
+            JSONObject().apply {
+                put("model", config.model)
+                // max_tokens 在这个协议里是必填的，不像 OpenAI 可以省。
+                put("max_tokens", config.maxTokens)
+                // 不传 temperature（top_p、top_k 同理）：API 版本 2026-10-21 起，Messages 请求带这三个
+                // 参数在所有模型上都是 400，哪怕传的是默认值。Claude 4.7 及以后的模型本来也只认默认值。
+                if (system.isNotBlank()) put("system", system)
+                put("messages", buildMessages(messages))
+                if (tools.isNotEmpty()) put("tools", buildTools(tools))
+            }
         }
         val headers = Headers.Builder()
             .add("x-api-key", config.apiKey)
@@ -231,10 +236,7 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                     ),
                 )
 
-                is ChatMessage.User -> append(
-                    "user",
-                    JSONArray().put(JSONObject().put("type", "text").put("text", message.text)),
-                )
+                is ChatMessage.User -> append("user", userBlocks(message))
 
                 is ChatMessage.Assistant -> {
                     val content = JSONArray()
@@ -256,6 +258,28 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
             }
         }
         return array
+    }
+
+    /**
+     * 用户消息的内容块：每张图一块 base64 的 image，再是字。图放在字前面，官方建议先给图、
+     * 再问问题。字是空的就不放文字块（这个协议不收空的文字块）；图片文件读不到就跳过那一张。
+     */
+    private fun userBlocks(message: ChatMessage.User): JSONArray = JSONArray().apply {
+        message.images.forEach { image ->
+            val data = image.readBase64() ?: return@forEach
+            put(
+                JSONObject()
+                    .put("type", "image")
+                    .put(
+                        "source",
+                        JSONObject()
+                            .put("type", "base64")
+                            .put("media_type", image.mediaType)
+                            .put("data", data),
+                    ),
+            )
+        }
+        if (message.text.isNotBlank()) put(JSONObject().put("type", "text").put("text", message.text))
     }
 
     private fun buildTools(tools: List<ToolSpec>): JSONArray = JSONArray().apply {
