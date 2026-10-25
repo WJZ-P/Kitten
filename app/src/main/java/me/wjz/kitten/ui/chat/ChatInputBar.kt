@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.ui.component.GlassSurface
 import me.wjz.kitten.ui.theme.KittenTheme
@@ -71,14 +72,22 @@ fun ChatInputBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            // 最小高度放在外面这层、内容居中：放在输入框自己身上的话，框被撑到 40dp 高，字却画在
+            // 框的顶上，一行字看起来贴着上沿。
+            val textStyle = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = InputFontSize,
+                lineHeight = InputLineHeight,
+            )
             androidx.compose.foundation.layout.Box(
-                modifier = Modifier.weight(1f),
+                modifier = Modifier
+                    .weight(1f)
+                    .heightIn(min = 40.dp),
                 contentAlignment = Alignment.CenterStart,
             ) {
                 if (text.isEmpty()) {
                     Text(
                         text = hint ?: "说点什么…",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = textStyle,
                         color = KittenTheme.colors.textTertiary,
                     )
                 }
@@ -86,7 +95,7 @@ fun ChatInputBar(
                     value = text,
                     onValueChange = { text = it },
                     enabled = enabled,
-                    textStyle = MaterialTheme.typography.bodyMedium.copy(color = KittenTheme.colors.textPrimary),
+                    textStyle = textStyle.copy(color = KittenTheme.colors.textPrimary),
                     cursorBrush = SolidColor(KittenTheme.colors.accentStrong),
                     // 多行但有上限：长文本不该把整个屏幕顶掉。
                     maxLines = 5,
@@ -96,9 +105,7 @@ fun ChatInputBar(
                     keyboardActions = androidx.compose.foundation.text.KeyboardActions(
                         onSend = { submit() },
                     ),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 40.dp),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
             IconButton(
@@ -118,6 +125,13 @@ fun ChatInputBar(
         }
     }
 }
+
+/**
+ * 输入栏里字的大小和行高。栏有 60dp 高（发送按钮的 48dp 触摸区加上下留白），字给得小了一行
+ * 字缩在中间显得很空；给到这么大，一行字刚好把栏撑满。
+ */
+private val InputFontSize = 18.sp
+private val InputLineHeight = 26.sp
 
 /**
  * 输入栏的模糊。比卡片（2dp）重一点、和底部栏一样：背后滚过的是一行行字，糊得太轻会和正在
