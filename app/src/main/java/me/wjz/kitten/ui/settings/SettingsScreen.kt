@@ -35,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.R
+import me.wjz.kitten.agent.SystemPrompt
 import me.wjz.kitten.llm.LlmConfigStore
 import me.wjz.kitten.llm.LlmProfile
 import me.wjz.kitten.llm.LlmProfiles
@@ -59,7 +60,7 @@ import kotlin.math.roundToInt
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
- * 设置页：模型配置 + 权限管理。
+ * 设置页：模型配置 + 系统提示词 + 权限管理。
  *
  * 原先这些内容独占一个启动页（SetupScreen），现在收进 tab。权限引导本来就是
  * 一次性的事，配好之后不该还占着首屏——首屏该是对话。
@@ -91,6 +92,10 @@ fun SettingsScreen(
     // 草稿是新加的一家还是在改已有的：决定保存时是追加还是替换，以及有没有删除按钮。
     var draftIsNew by remember { mutableStateOf(true) }
     var editingModel by remember { mutableStateOf(false) }
+    // 系统提示词里用户能改的人设：存着的（没改过是 null）和模态窗里的草稿分开，同上。
+    var customPrompt by remember { mutableStateOf(SystemPrompt.loadCustomPersona(context)) }
+    var promptDraft by remember { mutableStateOf("") }
+    var editingPrompt by remember { mutableStateOf(false) }
 
     // 存下来，并通知对话页：它的"模型是否已配置"是启动时读的，要主动让它重读。
     fun commit(next: LlmProfiles) {
@@ -139,6 +144,16 @@ fun SettingsScreen(
                 draft = LlmProfile.create()
                 draftIsNew = true
                 editingModel = true
+            },
+        )
+
+        SystemPromptSection(
+            backdrop = backdrop,
+            customPrompt = customPrompt,
+            onEdit = {
+                // 打开时拷一份当前在用的：没改过就是默认人设，用户看得到原本写了什么再改。
+                promptDraft = customPrompt ?: SystemPrompt.DEFAULT_PERSONA
+                editingPrompt = true
             },
         )
 
@@ -193,6 +208,20 @@ fun SettingsScreen(
             editingModel = false
         },
         onDismiss = { editingModel = false },
+        backdrop = backdrop,
+    )
+
+    SystemPromptDialog(
+        visible = editingPrompt,
+        draft = promptDraft,
+        onDraftChange = { promptDraft = it },
+        onSave = {
+            SystemPrompt.savePersona(context, promptDraft)
+            // 存的时候会把"和默认的一样""清空了"都归成没改过，从存储里读回来才准。
+            customPrompt = SystemPrompt.loadCustomPersona(context)
+            editingPrompt = false
+        },
+        onDismiss = { editingPrompt = false },
         backdrop = backdrop,
     )
 }

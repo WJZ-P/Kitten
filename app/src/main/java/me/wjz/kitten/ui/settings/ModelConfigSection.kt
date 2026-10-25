@@ -75,7 +75,6 @@ import me.wjz.kitten.ui.component.ToastTone
 import me.wjz.kitten.ui.component.detectGlassPress
 import me.wjz.kitten.ui.component.rememberGlassPressState
 import me.wjz.kitten.ui.theme.KittenTheme
-import java.net.URI
 
 /**
  * 设置页上的"模型"：一张大卡片，里面每家服务一张小卡，最后是"添加服务商"。
@@ -174,7 +173,7 @@ private fun ProviderTile(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = profile.displayName(),
+                text = profile.displayName,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = colors.textPrimary,
@@ -367,7 +366,7 @@ private fun ModelConfigForm(
     ) {
         GlassDropdown(
             items = LlmPreset.ALL,
-            selected = config.matchingPreset(),
+            selected = config.matchingPreset,
             onSelect = { preset ->
                 // 只填地址、格式和一个常用模型，不碰 API Key——换服务商时密钥本来就得重填，
                 // 但如果用户只是想换个模型名，清掉 key 会很烦。上一家拉到的模型列表对新的一家
@@ -429,7 +428,7 @@ private fun ModelConfigForm(
 
         // 选了预设时格式是那一家定死的，不用问；地址对不上任何预设（自定义）时，不知道它说
         // 哪种协议，让用户选。不显示的话，先选 Anthropic 预设再改地址，格式会悄悄停在 Anthropic。
-        AnimatedVisibility(visible = config.matchingPreset() == null) {
+        AnimatedVisibility(visible = config.matchingPreset == null) {
             FormatPicker(
                 format = config.format,
                 onFormatChange = { onConfigChange(config.copy(format = it)) },
@@ -660,18 +659,3 @@ private fun FormatPicker(
 private const val FormatPressedScale = 1.05f
 
 private val LlmFormat.isAnthropic: Boolean get() = this == LlmFormat.ANTHROPIC
-
-/**
- * 预设没有单独存，按"地址 + 协议都对得上"反推当前用的是哪一家。对不上就是用户自己填的。
- *
- * 协议只分 OpenAI 和 Anthropic 两种：OPENAI 和 OPENAI_COMPATIBLE 是同一种协议，地址填的是
- * OpenAI 官方、格式存的是 OPENAI_COMPATIBLE 时，也该认成 OpenAI 预设。
- */
-private fun LlmProfile.matchingPreset(): LlmPreset? =
-    LlmPreset.ALL.firstOrNull { it.baseUrl == baseUrl && it.format.isAnthropic == format.isAnthropic }
-
-/** 卡片上的名字：对得上预设就用预设名，否则用地址里的主机名。 */
-private fun LlmProfile.displayName(): String =
-    matchingPreset()?.label
-        ?: runCatching { URI(baseUrl.trim()).host }.getOrNull()?.takeIf { it.isNotBlank() }
-        ?: "自定义服务"

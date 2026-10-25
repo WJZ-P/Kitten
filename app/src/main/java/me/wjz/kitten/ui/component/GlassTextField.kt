@@ -54,6 +54,9 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * [BasicTextField] 自己画。
  *
  * @param label 槽上方的标签。为 null 时不占那一行，给嵌在别的控件里（比如下拉菜单底部）用。
+ * @param minLines 多行（[singleLine] 为 false）时至少多高，按行数算。长文本的编辑框给大一点，
+ *   空着的时候也看得出是一大块能写东西的地方。
+ * @param maxLines 多行时最多长到多高，再多就在框里滚动。
  * @param trailing 槽里右边的控件，参数是它该折射的 backdrop：槽自己画出来的那一层。尾部要是
  *   放玻璃按钮，就用它，不要用外面的 [backdrop]——那样按钮透出来的是槽外面的颜色，像在槽上
  *   挖了一块。
@@ -67,6 +70,8 @@ fun GlassTextField(
     modifier: Modifier = Modifier,
     placeholder: String = "",
     singleLine: Boolean = true,
+    minLines: Int = 1,
+    maxLines: Int = Int.MAX_VALUE,
     visualTransformation: VisualTransformation = VisualTransformation.None,
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
@@ -96,6 +101,9 @@ fun GlassTextField(
             value = value,
             onValueChange = onValueChange,
             singleLine = singleLine,
+            // singleLine 时 BasicTextField 自己会把行数定成 1，这两个不起作用。
+            minLines = minLines,
+            maxLines = maxLines,
             visualTransformation = visualTransformation,
             keyboardOptions = keyboardOptions,
             keyboardActions = keyboardActions,
