@@ -27,6 +27,7 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
         system: String,
         messages: List<ChatMessage>,
         tools: List<ToolSpec>,
+        onTextDelta: ((String) -> Unit)?,
     ): LlmResult {
         if (!config.isConfigured) return LlmResult.Failed(LlmError.NotConfigured)
 
@@ -46,9 +47,134 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
             .add("Content-Type", "application/json")
             .build()
 
+        if (onTextDelta != null) return chatStreaming(body, headers, onTextDelta)
+
         val result = HttpTransport.postJson(endpoint(), headers, body)
         val json = result.getOrElse { return result.toLlmFailure() }
         return parse(json)
+    }
+
+    /**
+     * 流式。回来的是一串带名字的事件，按 data 里的 type 分流：
+     *
+     * - `message_start`：里面有输入 token 数；
+     * - `content_block_start`：开一个新块，text 或 tool_use（还可能是 thinking，用不上，跳过）；
+     * - `content_block_delta`：往那个块里接东西，text_delta 是字，input_json_delta 是工具参数的
+     *   一截 JSON；
+     * - `message_delta`：stop_reason 和输出 token 数；`message_stop`：收尾；
+     * - `error`：服务端在流里报错（比如过载）；`ping`：心跳，不用管。
+     *
+     * 有好几个文字块时用换行接起来，和非流式的 [parse] 一样：一路交出去的字接起来，就是最后
+     * 返回的文字。
+     */
+    private suspend fun chatStreaming(
+        body: JSONObject,
+        headers: Headers,
+        onTextDelta: (String) -> Unit,
+    ): LlmResult {
+        body.put("stream", true)
+        val text = StringBuilder()
+        // 按块的 index 记工具调用，参数一截截接上。
+        val calls = sortedMapOf<Int, PartialToolCall>()
+        var stopReason: String? = null
+        var inputTokens = 0
+        var outputTokens = 0
+        var stopped = false
+        var whole: LlmResult? = null
+
+        try {
+            HttpTransport.postSse(endpoint(), headers, body).collect { chunk ->
+                when (chunk) {
+                    is StreamChunk.Whole -> {
+                        // 中转站不支持流式，回了一整个：按非流式解析，字一次全交出去。
+                        val result = parse(chunk.json)
+                        (result as? LlmResult.Ok)?.response?.text?.let(onTextDelta)
+                        whole = result
+                    }
+
+                    is StreamChunk.Event -> {
+                        val json = runCatching { JSONObject(chunk.data) }.getOrNull() ?: return@collect
+                        when (json.optString("type")) {
+                            "message_start" -> json.optJSONObject("message")?.optJSONObject("usage")?.let {
+                                inputTokens = it.optInt("input_tokens")
+                            }
+
+                            "content_block_start" -> {
+                                val block = json.optJSONObject("content_block") ?: return@collect
+                                when (block.optString("type")) {
+                                    "text" -> if (text.isNotBlank()) {
+                                        text.append('\n')
+                                        onTextDelta("\n")
+                                    }
+
+                                    "tool_use" -> calls[json.optInt("index")] =
+                                        PartialToolCall(id = block.optString("id"), name = block.optString("name"))
+                                }
+                            }
+
+                            "content_block_delta" -> {
+                                val delta = json.optJSONObject("delta") ?: return@collect
+                                when (delta.optString("type")) {
+                                    "text_delta" -> delta.optStringOrNull("text")?.takeIf { it.isNotEmpty() }?.let {
+                                        text.append(it)
+                                        onTextDelta(it)
+                                    }
+
+                                    "input_json_delta" ->
+                                        calls[json.optInt("index")]?.arguments?.append(delta.optString("partial_json"))
+                                }
+                            }
+
+                            "message_delta" -> {
+                                json.optJSONObject("delta")?.optStringOrNull("stop_reason")?.let { stopReason = it }
+                                json.optJSONObject("usage")?.let { outputTokens = it.optInt("output_tokens") }
+                            }
+
+                            "message_stop" -> stopped = true
+
+                            "error" -> throw LlmException(streamError(json.optJSONObject("error")))
+                        }
+                    }
+                }
+            }
+        } catch (e: LlmException) {
+            return LlmResult.Failed(e.error)
+        }
+
+        whole?.let { return it }
+        // 没等到 message_stop：连接没收尾就断了，回复多半不完整。
+        if (!stopped) return LlmResult.Failed(LlmError.Interrupted("连接没收尾就断了"))
+
+        val toolCalls = calls.values.map { call ->
+            ToolCall(id = call.id, name = call.name, arguments = call.arguments.toString().ifBlank { "{}" })
+        }
+        val finalText = text.toString().takeIf { it.isNotBlank() }
+        if (finalText == null && toolCalls.isEmpty()) {
+            Log.w(TAG, "模型既没说话也没调工具（流式），stop_reason=$stopReason")
+        }
+        return LlmResult.Ok(
+            ChatResponse(
+                text = finalText,
+                toolCalls = toolCalls,
+                stopReason = stopReason,
+                usage = TokenUsage(inputTokens = inputTokens, outputTokens = outputTokens),
+            ),
+        )
+    }
+
+    /** 流里的 error 事件：限流、认证照常归类，过载之类的归成"回复到一半中断"。 */
+    private fun streamError(error: JSONObject?): LlmError {
+        val message = error?.optStringOrNull("message")
+        return when (error?.optString("type")) {
+            "rate_limit_error" -> LlmError.RateLimited(retryAfterSeconds = null)
+            "authentication_error", "permission_error" -> LlmError.Unauthorized(message)
+            else -> LlmError.Interrupted(message)
+        }
+    }
+
+    /** 流式时一次工具调用的半成品：id、名字在块开头就给了，参数一截截地接。 */
+    private class PartialToolCall(val id: String, val name: String) {
+        val arguments = StringBuilder()
     }
 
     override suspend fun listModels(): ModelListResult {

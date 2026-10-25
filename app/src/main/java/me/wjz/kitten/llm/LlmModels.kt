@@ -127,6 +127,14 @@ sealed interface LlmError {
         override fun describe() = "网络错误${detail?.let { "：$it" } ?: ""}"
     }
 
+    /**
+     * 流式回复到一半出了问题：服务端在流里报了错（比如过载），或者连接没收尾就断了。
+     * HTTP 状态码早就是 200 了，归不进 [ServerError]。
+     */
+    data class Interrupted(val detail: String?) : LlmError {
+        override fun describe() = "回复到一半中断了${detail?.let { "：$it" } ?: ""}"
+    }
+
     /** 响应能拿到，但结构不是预期的样子。 */
     data class MalformedResponse(val detail: String) : LlmError {
         override fun describe() = "模型返回了无法解析的内容：$detail"

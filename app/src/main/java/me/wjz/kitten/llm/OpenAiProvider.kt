@@ -30,6 +30,7 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
         system: String,
         messages: List<ChatMessage>,
         tools: List<ToolSpec>,
+        onTextDelta: ((String) -> Unit)?,
     ): LlmResult {
         if (!config.isConfigured) return LlmResult.Failed(LlmError.NotConfigured)
 
@@ -45,9 +46,110 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
             .add("Content-Type", "application/json")
             .build()
 
+        if (onTextDelta != null) return chatStreaming(body, headers, onTextDelta)
+
         val result = HttpTransport.postJson(endpoint(), headers, body)
         val json = result.getOrElse { return result.toLlmFailure() }
         return parse(json)
+    }
+
+    /**
+     * 流式。每一块是 `data: {"choices":[{"delta":{...}}]}`，最后一条是 `data: [DONE]`：
+     *
+     * - 文字在 delta.content 里，一段段接起来；
+     * - 工具调用也是拆开给的：delta.tool_calls[] 带着 index，第一块给 id 和名字，后面的块只给
+     *   arguments 的一截，按 index 拼回去；
+     * - finish_reason 在最后一块里；服务端在流里报错时，那一块是 `{"error": {...}}`。
+     */
+    private suspend fun chatStreaming(
+        body: JSONObject,
+        headers: Headers,
+        onTextDelta: (String) -> Unit,
+    ): LlmResult {
+        body.put("stream", true)
+        val text = StringBuilder()
+        val calls = sortedMapOf<Int, PartialToolCall>()
+        var finishReason: String? = null
+        var usage: TokenUsage? = null
+        var done = false
+        var whole: LlmResult? = null
+
+        try {
+            HttpTransport.postSse(endpoint(), headers, body).collect { chunk ->
+                when (chunk) {
+                    is StreamChunk.Whole -> {
+                        // 服务端不支持流式，回了一整个：按非流式解析，字一次全交出去。
+                        val result = parse(chunk.json)
+                        (result as? LlmResult.Ok)?.response?.text?.let(onTextDelta)
+                        whole = result
+                    }
+
+                    is StreamChunk.Event -> {
+                        if (chunk.data == "[DONE]") {
+                            done = true
+                            return@collect
+                        }
+                        val json = runCatching { JSONObject(chunk.data) }.getOrNull() ?: return@collect
+                        json.optJSONObject("error")?.let { error ->
+                            throw LlmException(LlmError.Interrupted(error.optStringOrNull("message")))
+                        }
+                        json.optJSONObject("usage")?.let {
+                            usage = TokenUsage(
+                                inputTokens = it.optInt("prompt_tokens"),
+                                outputTokens = it.optInt("completion_tokens"),
+                            )
+                        }
+                        val choice = json.optJSONArray("choices")?.optJSONObject(0) ?: return@collect
+                        choice.optStringOrNull("finish_reason")?.takeIf { it.isNotBlank() }?.let { finishReason = it }
+                        val delta = choice.optJSONObject("delta") ?: return@collect
+                        delta.optStringOrNull("content")?.takeIf { it.isNotEmpty() }?.let {
+                            text.append(it)
+                            onTextDelta(it)
+                        }
+                        delta.optJSONArray("tool_calls")?.let { array ->
+                            for (i in 0 until array.length()) {
+                                val item = array.optJSONObject(i) ?: continue
+                                val call = calls.getOrPut(item.optInt("index", i)) { PartialToolCall() }
+                                item.optStringOrNull("id")?.takeIf { it.isNotBlank() }?.let { call.id = it }
+                                item.optJSONObject("function")?.let { function ->
+                                    function.optStringOrNull("name")?.takeIf { it.isNotBlank() }?.let { call.name = it }
+                                    function.optStringOrNull("arguments")?.let { call.arguments.append(it) }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (e: LlmException) {
+            return LlmResult.Failed(e.error)
+        }
+
+        whole?.let { return it }
+        // 既没等到 [DONE]、也没有 finish_reason：连接没收尾就断了，回复多半不完整。
+        if (!done && finishReason == null) return LlmResult.Failed(LlmError.Interrupted("连接没收尾就断了"))
+
+        val toolCalls = calls.map { (index, call) ->
+            ToolCall(
+                // 同非流式：少数兼容端点不给 id，用下标顶上。
+                id = call.id ?: "call_$index",
+                name = call.name.orEmpty(),
+                arguments = call.arguments.toString().ifBlank { "{}" },
+            )
+        }
+        val finalText = text.toString().takeIf { it.isNotBlank() }
+        if (finalText == null && toolCalls.isEmpty()) {
+            Log.w(TAG, "模型既没说话也没调工具（流式），finish_reason=$finishReason")
+        }
+        return LlmResult.Ok(
+            ChatResponse(text = finalText, toolCalls = toolCalls, stopReason = finishReason, usage = usage),
+        )
+    }
+
+    /** 流式时一次工具调用的半成品：id、名字先到，参数一截截地接。 */
+    private class PartialToolCall {
+        var id: String? = null
+        var name: String? = null
+        val arguments = StringBuilder()
     }
 
     override suspend fun listModels(): ModelListResult {
@@ -141,7 +243,7 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
         val message = choice.optJSONObject("message")
             ?: return LlmResult.Failed(LlmError.MalformedResponse("choices[0] 里没有 message"))
 
-        val text = message.optString("content").takeIf { it.isNotBlank() }
+        val text = message.optStringOrNull("content")?.takeIf { it.isNotBlank() }
         val toolCalls = message.optJSONArray("tool_calls")?.let { array ->
             (0 until array.length()).mapNotNull { i ->
                 val item = array.optJSONObject(i) ?: return@mapNotNull null

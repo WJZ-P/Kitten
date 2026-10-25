@@ -2,12 +2,21 @@ package me.wjz.kitten.llm
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.channels.trySendBlocking
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okio.Buffer
+import okio.BufferedSource
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -62,6 +71,132 @@ internal object HttpTransport {
                 .get()
                 .build(),
         )
+
+    /**
+     * POST 一段 JSON，把回复按 SSE 一条条交出来：流式输出用。
+     *
+     * ## SSE 是什么
+     *
+     * Server-Sent Events，一种"服务器边生成边往回写"的 HTTP 响应：响应头先回来，正文不一次
+     * 给完，而是一段段地推。每段是几行 `字段: 值`，空行隔开一条事件。两家的流式接口都用它：
+     * 模型每生成一小段字就推一条 `data: {JSON}`。
+     *
+     * ## 失败和取消
+     *
+     * HTTP 层面的失败（状态码、网页、断网）和 [postJson] 归类得一样，以 [LlmException] 结束这个
+     * Flow。收集方取消（比如页面关了）时取消这次请求，连接立刻断开，不会在后台接着收、接着
+     * 计费。
+     *
+     * 有的兼容服务不支持流式，不理会请求里的 stream、照常回一整个 JSON：这时交出一条
+     * [StreamChunk.Whole]，由 provider 按非流式的格式解析。
+     */
+    fun postSse(url: String, headers: Headers, body: JSONObject): Flow<StreamChunk> = callbackFlow {
+        val request = Request.Builder()
+            .url(url)
+            .headers(headers)
+            .header("Accept", "text/event-stream")
+            .post(body.toString().toRequestBody(JSON))
+            .build()
+        val call = client.newCall(request)
+        call.enqueue(
+            object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    // 收集方取消时 OkHttp 也走这里，那不是失败，安静结束就好。
+                    if (call.isCanceled()) {
+                        this@callbackFlow.close()
+                        return
+                    }
+                    Log.w(TAG, "请求失败：$url", e)
+                    this@callbackFlow.close(LlmException(LlmError.Network(e.message)))
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    response.use {
+                        this@callbackFlow.close(readStream(call, response, url))
+                    }
+                }
+
+                /** 读完整个响应。正常读完返回 null，出错返回原因。 */
+                private fun readStream(call: Call, response: Response, url: String): Throwable? {
+                    val contentType = response.header("Content-Type")
+                    if (!response.isSuccessful) {
+                        val text = response.body?.string().orEmpty()
+                        return LlmException(classify(response.code, text, response.headers, url))
+                    }
+                    val source = response.body?.source() ?: return LlmException(LlmError.MalformedResponse("响应没有正文"))
+                    return try {
+                        if (contentType?.contains("text/event-stream", ignoreCase = true) == true) {
+                            readEvents(source) { this@callbackFlow.trySendBlocking(it).isSuccess }
+                            null
+                        } else {
+                            // 没标成 SSE：要么是不支持流式、回了一整个 JSON，要么是打到了网页上（同 postJson），
+                            // 也有中转站推的明明是 SSE、类型却标成 text/plain 的——看正文认。
+                            val text = source.readUtf8()
+                            val trimmed = text.trimStart()
+                            when {
+                                trimmed.startsWith("data:") || trimmed.startsWith("event:") -> {
+                                    readEvents(Buffer().writeUtf8(text)) { this@callbackFlow.trySendBlocking(it).isSuccess }
+                                    null
+                                }
+                                looksLikeHtml(text, contentType) -> LlmException(LlmError.WrongEndpoint(url))
+                                else -> runCatching { JSONObject(text) }.fold(
+                                    onSuccess = {
+                                        this@callbackFlow.trySendBlocking(StreamChunk.Whole(it))
+                                        null
+                                    },
+                                    onFailure = { LlmException(LlmError.MalformedResponse("不是合法 JSON：${text.take(200)}")) },
+                                )
+                            }
+                        }
+                    } catch (e: IOException) {
+                        if (call.isCanceled()) {
+                            null
+                        } else {
+                            Log.w(TAG, "读回复时断开：$url", e)
+                            LlmException(LlmError.Network(e.message))
+                        }
+                    }
+                }
+            },
+        )
+        awaitClose { call.cancel() }
+    }
+
+    /**
+     * 按 SSE 的格式一行行读，攒够一条事件（遇到空行）就交给 [emit]。[emit] 返回 false 表示
+     * 收集方已经不要了，停止读。
+     *
+     * 只认 `event:` 和 `data:`；`id:`、`retry:` 用不上，冒号开头的是注释（有的服务拿它当心跳）。
+     * 一条事件可以有好几行 data，按规范用换行接起来。
+     */
+    private fun readEvents(source: BufferedSource, emit: (StreamChunk.Event) -> Boolean) {
+        var event: String? = null
+        val data = StringBuilder()
+        fun dispatch(): Boolean {
+            if (data.isEmpty()) {
+                event = null
+                return true
+            }
+            val keepGoing = emit(StreamChunk.Event(event, data.toString()))
+            event = null
+            data.setLength(0)
+            return keepGoing
+        }
+        while (true) {
+            val line = source.readUtf8Line() ?: break
+            when {
+                line.isEmpty() -> if (!dispatch()) return
+                line.startsWith(":") -> Unit
+                line.startsWith("event:") -> event = line.substring("event:".length).trim()
+                line.startsWith("data:") -> {
+                    if (data.isNotEmpty()) data.append('\n')
+                    data.append(line.substring("data:".length).removePrefix(" "))
+                }
+            }
+        }
+        // 最后一条后面没有空行就结束了，也交出去。
+        dispatch()
+    }
 
     private suspend fun execute(request: Request): Result<JSONObject> =
         withContext(Dispatchers.IO) {
@@ -132,6 +267,15 @@ internal object HttpTransport {
         json.optJSONObject("error")?.optString("message")?.takeIf { it.isNotBlank() }
             ?: json.optString("message").takeIf { it.isNotBlank() }
     }.getOrNull()
+}
+
+/** 流式请求读回来的一块。 */
+internal sealed interface StreamChunk {
+    /** SSE 的一条事件：`event:` 那一行（没有就是 null）和 `data:` 的内容。 */
+    data class Event(val event: String?, val data: String) : StreamChunk
+
+    /** 服务端没理会 stream，回的是一整个 JSON。 */
+    data class Whole(val json: JSONObject) : StreamChunk
 }
 
 /** 内部用的异常，只为了借 [Result] 的失败通道把 [LlmError] 带出来。 */

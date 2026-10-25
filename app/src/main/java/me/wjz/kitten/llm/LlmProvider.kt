@@ -40,6 +40,9 @@ interface LlmProvider {
      * @param system 系统提示词。告诉模型它是谁、节点树怎么读、错误码什么意思。
      * @param messages 历史消息，按时间顺序。
      * @param tools 这一轮可用的工具；空列表表示纯聊天。
+     * @param onTextDelta 传了就走流式：模型每生成一小段字就调一次，参数是新冒出来的那一段，
+     *        把它们按顺序接起来就是最终回复的文字。在调用方的协程里调用。最后照样返回完整的
+     *        结果，失败的处理和不传时一样——只是失败前可能已经交出过一些字了。
      * @return 失败不抛异常——网络错误、限流、key 失效都是预期内的情况，
      *         调用方需要据此分流（重试 / 提示用户改配置 / 放弃）。
      */
@@ -47,6 +50,7 @@ interface LlmProvider {
         system: String,
         messages: List<ChatMessage>,
         tools: List<ToolSpec> = emptyList(),
+        onTextDelta: ((String) -> Unit)? = null,
     ): LlmResult
 
     /**
@@ -63,6 +67,15 @@ sealed interface ModelListResult {
     data class Ok(val models: List<String>) : ModelListResult
     data class Failed(val error: LlmError) : ModelListResult
 }
+
+/**
+ * 取一个字符串字段，没有或者是 JSON 的 null 时返回 null。
+ *
+ * 别用 optString 代替：org.json 碰到 null 值会把它转成字符串 "null"——纯工具调用那一轮
+ * content 就是 null，用 optString 会变成一句"null"显示出来。
+ */
+internal fun JSONObject.optStringOrNull(name: String): String? =
+    if (isNull(name)) null else optString(name)
 
 /** 从 `{"data": [{"id": "..."}, ...]}` 里取出模型名。两家的列表都是这个形状。 */
 internal fun JSONObject.modelIds(): ModelListResult {
