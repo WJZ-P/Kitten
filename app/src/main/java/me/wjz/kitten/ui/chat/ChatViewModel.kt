@@ -99,6 +99,31 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * 删掉当前会话里的一条消息。
+     *
+     * 消息在领域模型里没有 id，按位置删：[index] 是它在 messages 里的位置，[message] 是长按
+     * 那一刻看到的那条，对不上就不删（比如这期间换了会话），宁可不删也不能删错。
+     *
+     * 模型那条带着工具调用的话，对应的工具结果一起删：留着没人认领的工具结果，下次发给模型
+     * 会被拒（tool_result 找不到对应的 tool_use）。
+     *
+     * 删完以后对话可能以模型的回复开头、或者两条同一方的消息挨在一起，这些在组请求时处理，
+     * 见 AnthropicProvider 的 buildMessages。
+     */
+    fun deleteMessage(index: Int, message: ChatMessage) {
+        val state = _uiState.value
+        val sessionId = state.sessionId ?: return
+        if (state.messages.getOrNull(index) != message) return
+
+        val callIds = (message as? ChatMessage.Assistant)?.toolCalls?.map { it.id }?.toSet().orEmpty()
+        val doomed = state.messages.indices.filter { i ->
+            i == index || (state.messages[i] as? ChatMessage.ToolResult)?.callId in callIds
+        }.toSet()
+        _uiState.update { it.copy(messages = it.messages.filterIndexed { i, _ -> i !in doomed }) }
+        viewModelScope.launch { repository.deleteMessages(sessionId, doomed) }
+    }
+
+    /**
      * 发送一条用户消息，并把模型的回复接回来。
      *
      * 这里还是**纯对话**，没有接工具调用——Agent 循环（模型要求执行工具 → 我们执行 →

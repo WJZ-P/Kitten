@@ -48,6 +48,16 @@ interface SessionRepository {
      */
     suspend fun appendMessage(sessionId: String, message: ChatMessage)
 
+    /**
+     * 删掉会话里的几条消息，按位置：[indices] 是它们在 [load] 读出来的 messages 里的下标。
+     *
+     * 按位置而不是按 id：[ChatMessage] 是领域模型，不带存储的主键（见 [Session]）。实现要保证
+     * 这里的下标和 [load] 的顺序、跳过坏行的规则一模一样，否则会删错。
+     *
+     * 不更新会话的"最近更新"时间：删一条旧消息不该把整个会话顶到列表最上面。
+     */
+    suspend fun deleteMessages(sessionId: String, indices: Set<Int>)
+
     /** 改标题。第一轮对话后通常会用首句话自动命名。 */
     suspend fun rename(id: String, title: String)
 

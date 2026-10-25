@@ -126,6 +126,23 @@ class SqliteSessionRepository(
         }
     }
 
+    override suspend fun deleteMessages(sessionId: String, indices: Set<Int>) {
+        if (indices.isEmpty()) return
+        withContext(io) {
+            val db = helper.writableDatabase
+            db.transaction {
+                // 和 load() 走同一个查询、同一套跳过坏行的规则，下标才对得上。
+                val rowIds = queryMessageRows(this, sessionId)
+                    .filterIndexed { i, _ -> i in indices }
+                    .map { it.rowId }
+                rowIds.forEach { rowId ->
+                    delete(Tables.MESSAGES, "$ROW_ID = ?", arrayOf(rowId.toString()))
+                }
+            }
+            notifyChanged()
+        }
+    }
+
     override suspend fun rename(id: String, title: String) {
         withContext(io) {
             helper.writableDatabase.update(
@@ -198,6 +215,10 @@ class SqliteSessionRepository(
     }
 
     private fun queryMessages(db: SQLiteDatabase, sessionId: String): List<ChatMessage> =
+        queryMessageRows(db, sessionId).map { it.message }
+
+    /** 一个会话的全部消息，带着各自的 rowid（按位置删消息时要用）。 */
+    private fun queryMessageRows(db: SQLiteDatabase, sessionId: String): List<MessageRow> =
         db.query(
             Tables.MESSAGES,
             null,
@@ -212,10 +233,12 @@ class SqliteSessionRepository(
             buildList {
                 while (cursor.moveToNext()) {
                     // 坏行跳过，不让一条脏数据毁掉整个会话。
-                    MessageMapper.fromCursor(cursor)?.let(::add)
+                    MessageMapper.fromCursor(cursor)?.let { add(MessageRow(cursor.getLongOrZero(ROW_ID), it)) }
                 }
             }
         }
+
+    private class MessageRow(val rowId: Long, val message: ChatMessage)
 
     private suspend fun notifyChanged() {
         changes.emit(Unit)
@@ -235,5 +258,8 @@ class SqliteSessionRepository(
 
     private companion object {
         const val TAG = "KittenDb"
+
+        /** 消息表的自增主键。建表时显式声明了这一列（见 KittenOpenHelper），SELECT * 会带上它。 */
+        const val ROW_ID = "rowid"
     }
 }
