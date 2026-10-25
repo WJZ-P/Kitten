@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    允许明文 HTTP。
+
+    Android 9 起默认只放行 HTTPS，可模型服务的地址是用户自己填的：本地 Ollama（127.0.0.1）、
+    局域网里自建的 vLLM、不少中转站都只有 HTTP。拦下来的话这些都用不了，报的错用户也看不懂。
+
+    代价：走 HTTP 时 API Key 和对话内容都是明文传的，同一个网络里的人能看到。地址是用户自己
+    选的，这个取舍留给用户。
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
