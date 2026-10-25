@@ -219,6 +219,8 @@ fun KittenApp(actions: SetupActions) {
                                         onOpenDrawer = { scope.launch { drawerState.open() } },
                                         onNewSession = chatViewModel::startNewSession,
                                         onDeleteMessage = chatViewModel::deleteMessage,
+                                        onAnswerQuestion = chatViewModel::answerQuestion,
+                                        onSelectModel = chatViewModel::selectModel,
                                         bottomInsets = aboveBarOrIme,
                                     )
 

@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -72,7 +73,7 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *
  * - 上层是要发的内容：选了图片的话最上面一排缩略图（附件区，每张右上角一个"×"），下面是
  *   输入的文字。
- * - 下层是按钮：左边"+"，右边发送。
+ * - 下层是按钮：左边"+"，右边发送，发送左边是切换模型（[modelSwitcher]）。
  *
  * 用 [BasicTextField] 而不是 Material 的 `TextField`：后者自带一整套容器样式
  * （背景、下划线、浮动标签），放在玻璃上会多出一层不透明的底，把折射效果盖住。
@@ -91,6 +92,8 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *
  * @param onSend 发送：去掉首尾空白的文字（可能是空串），和选好的图片（相册给的地址，复制、
  *   压缩交给 ViewModel）。
+ * @param modelSwitcher 发送按钮左边放的东西，一般是 [ModelSwitcher]。参数是这块玻璃自己那层，
+ *   里面的玻璃按钮该折射它，和"+"、发送一样。做成一个槽，输入栏就不用知道模型配置长什么样。
  */
 @Composable
 fun ChatInputBar(
@@ -100,6 +103,7 @@ fun ChatInputBar(
     onSend: (text: String, images: List<Uri>) -> Unit,
     onOpenImage: (Uri) -> Unit,
     modifier: Modifier = Modifier,
+    modelSwitcher: @Composable (buttonBackdrop: Backdrop) -> Unit = {},
 ) {
     // 输入内容留在这一层而不是 ViewModel：它是纯粹的界面中间态，
     // 没发出去之前不属于业务数据。抬到 ViewModel 只会让每次按键都触发一轮状态更新。
@@ -192,6 +196,8 @@ fun ChatInputBar(
                     size = ActionButtonSize,
                 )
                 Spacer(modifier = Modifier.weight(1f))
+                modelSwitcher(surfaceBackdrop)
+                Spacer(modifier = Modifier.width(ModelSwitcherGap))
                 GlassIconButton(
                     icon = KittenIcons.ArrowUpward,
                     contentDescription = "发送",
@@ -312,6 +318,12 @@ private val InputBarRadius = 26.dp
 
 /** "+"和发送这两个圆有多大，和顶栏按钮一样。 */
 private val ActionButtonSize = 40.dp
+
+/**
+ * 切换模型的按钮和发送之间额外留的空。发送的触摸区每边比圆多出 (48 - 40) / 2 = 4dp，再加这 4dp，
+ * 看起来隔着 8dp，不会贴在一起。
+ */
+private val ModelSwitcherGap = 4.dp
 
 /** 附件区缩略图的大小和圆角。圆角和卡片里的小控件同一档。 */
 private val ThumbnailSize = 72.dp

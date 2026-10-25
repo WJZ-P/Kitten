@@ -1,5 +1,6 @@
 package me.wjz.kitten.llm
 
+import java.net.URI
 import java.util.UUID
 
 /**
@@ -30,9 +31,9 @@ data class LlmConfig(
 
 /**
  * 一家配置好的模型服务。可以配好几家，随时切换用哪一家（见 [LlmConfigStore]）；设置页上一家
- * 一张卡片。
+ * 一张卡片，对话页输入栏的模型菜单里一组。
  *
- * 不单独存名字：从预设建的显示预设名，自定义的显示地址里的主机名，见设置页。
+ * 不单独存名字：从预设建的显示预设名，自定义的显示地址里的主机名，见 [displayName]。
  *
  * @param id 内部标识，增删改按它找。
  * @param models 这家可选的模型，从服务商的 /models 接口拉下来的（见 [LlmProvider.listModels]）。
@@ -52,6 +53,23 @@ data class LlmProfile(
     /** 下拉条里的选项：拉到的列表，加上当前选中、但不在列表里的那个（手填的）。 */
     val modelChoices: List<String>
         get() = if (model.isNotBlank() && model !in models) listOf(model) + models else models
+
+    /**
+     * 对得上的预设。预设没有单独存，按"地址 + 协议都对得上"反推；对不上就是用户自己填的。
+     *
+     * 协议只分 OpenAI 和 Anthropic 两种：OPENAI 和 OPENAI_COMPATIBLE 是同一种协议，地址填的是
+     * OpenAI 官方、格式存的是 OPENAI_COMPATIBLE 时，也该认成 OpenAI 预设。
+     */
+    val matchingPreset: LlmPreset?
+        get() = LlmPreset.ALL.firstOrNull {
+            it.baseUrl == baseUrl && (it.format == LlmFormat.ANTHROPIC) == (format == LlmFormat.ANTHROPIC)
+        }
+
+    /** 显示用的名字（设置页的卡片、输入栏的模型菜单）：对得上预设就用预设名，否则用地址里的主机名。 */
+    val displayName: String
+        get() = matchingPreset?.label
+            ?: runCatching { URI(baseUrl.trim()).host }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: "自定义服务"
 
     fun toConfig(maxTokens: Int, temperature: Double): LlmConfig =
         LlmConfig(format, baseUrl, apiKey, model, maxTokens, temperature)

@@ -59,8 +59,8 @@ import java.io.File
  * 用户的话和模型的回复都是带小尾巴的半透明气泡（[ChatBubble]，背后只模糊、不做液态玻璃），
  * 尾巴指向说话的那一边：
  * - 用户消息靠右，染成浅天依蓝，是"我说的话"；
- * - 模型回复靠左，薄薄一层底色，和背景融为一体；
- * - 工具调用/结果是**过程信息**，不是对话，所以压扁成一行小字。
+ * - 模型回复靠左，薄薄一层底色，和背景融为一体。气泡里只有它说的话：调了哪些工具是**过程**，
+ *   不是对话，排在气泡外面的清单里（[ToolCallList]）。
  *
  * 气泡里的内容一段一段往下排：用户消息里有图片的话，图片在上、字在下，见 [ChatBubble]。
  *
@@ -82,9 +82,7 @@ fun MessageBubble(
     when (message) {
         is ChatMessage.User -> UserBubble(message, backdrop, lifted, onLongPress, onOpenImage, modifier)
         is ChatMessage.Assistant -> AssistantBubble(message, backdrop, lifted, onLongPress, streaming, modifier)
-        // 工具结果本身不展示——它是给模型看的原始数据（整屏节点树能有几千字符），
-        // 塞进对话里只会淹没真正的内容。用户需要知道的是"调用了什么工具"，
-        // 那个信息在 Assistant 消息的 toolCalls 里已经显示了。
+        // 工具结果不做成气泡：调了什么、结果如何，在工具清单里（见 ChatScreen 的 buildChatItems）。
         is ChatMessage.ToolResult -> Unit
     }
 }
@@ -269,6 +267,8 @@ private fun AssistantBubble(
             onLongPress = onLongPress,
             modifier = Modifier.widthIn(max = 300.dp),
         ) {
+            // 只画说的话。thinking 块（ChatMessage.Assistant.reasoning）不在界面上出现，调的工具在
+            // 气泡外面的清单里。
             Column(modifier = Modifier.padding(BubbleTextPadding)) {
                 message.text?.takeIf { it.isNotBlank() }?.let {
                     // 历史消息也走它，只是直接整段显示：生成完的回复换成正式消息时还是同一个
@@ -278,15 +278,6 @@ private fun AssistantBubble(
                         streaming = streaming,
                         style = MaterialTheme.typography.bodyMedium,
                         color = KittenTheme.colors.textPrimary,
-                    )
-                }
-                // 让用户看见 Agent 在做什么，而不是对着"正在思考"干等。
-                message.toolCalls.forEach { call ->
-                    Text(
-                        text = "⚙ ${call.name}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = KittenTheme.colors.accentStrong,
-                        modifier = Modifier.padding(top = 4.dp),
                     )
                 }
             }

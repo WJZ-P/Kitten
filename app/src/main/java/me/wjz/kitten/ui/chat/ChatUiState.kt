@@ -1,5 +1,6 @@
 package me.wjz.kitten.ui.chat
 
+import me.wjz.kitten.agent.AgentQuestion
 import me.wjz.kitten.data.session.SessionSummary
 import me.wjz.kitten.llm.ChatMessage
 
@@ -33,11 +34,38 @@ data class ChatUiState(
     val streamingReply: String? = null,
 
     /**
+     * Agent 正在做的那一步，一句人话（"打开 com.taobao.taobao""读取屏幕内容"）。不在执行
+     * 工具时为 null。
+     *
+     * 界面上那一步显示在工具清单里（那一行的圆点在闪），这里只用来判断要不要显示"正在思考"：
+     * 正在执行工具时不显示。模型看不到它。
+     */
+    val agentProgress: String? = null,
+
+    /**
+     * Agent 正在等用户回答的问题。对话底部会出现一张选项卡片；用户不在 Kitten 界面里时，
+     * 常驻通知上也会显示同一个问题（见 [me.wjz.kitten.agent.AgentTaskHandle]）。
+     */
+    val pendingQuestion: AgentQuestion? = null,
+
+    /**
      * 模型是否已配置。
      *
      * 没配就别让用户对着输入框打半天字再被告知发不出去——直接在界面上提示去设置页。
      */
     val isModelConfigured: Boolean = false,
+
+    /**
+     * 输入栏上能切换的模型，按服务商分组（见 [ModelSwitcher]）。只列填好了 Key、有可选模型的
+     * 服务商：没填 Key 的那几家切过去也发不出去。
+     */
+    val modelGroups: List<ModelGroup> = emptyList(),
+
+    /** 正在用的那一家（[ModelGroup.profileId]）。当前那一家还没配好（没 Key 或没选模型）时为 null。 */
+    val activeProfileId: String? = null,
+
+    /** 正在用的模型，同上，没配好时为 null。 */
+    val activeModel: String? = null,
 
     /** 一次性的错误提示，展示过就该被 [ChatViewModel.consumeError] 清掉。 */
     val error: String? = null,
@@ -47,6 +75,23 @@ data class ChatUiState(
 ) {
     val isEmpty: Boolean get() = messages.isEmpty()
 
-    /** 能不能发送：模型配好了、不在生成中。 */
-    val canSend: Boolean get() = isModelConfigured && !isResponding
+    /**
+     * 能不能发送：模型配好了，而且不在生成中。
+     *
+     * 例外是 Agent 正等着回答的时候——这时输入框要能用，用户打的字就是答案
+     * （见 [ChatViewModel.send]），尤其是问题没给选项、只能自己打字的场合。
+     */
+    val canSend: Boolean get() = isModelConfigured && (!isResponding || pendingQuestion != null)
 }
+
+/**
+ * 输入栏模型菜单里的一组：一家服务商和它可选的模型。
+ *
+ * @param profileId 对应的 [me.wjz.kitten.llm.LlmProfile.id]，切换时按它找回是哪一家。
+ * @param name 组名，和设置页卡片上的名字一样。
+ */
+data class ModelGroup(
+    val profileId: String,
+    val name: String,
+    val models: List<String>,
+)
