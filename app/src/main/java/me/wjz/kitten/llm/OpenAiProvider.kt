@@ -213,13 +213,42 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
                     )
 
                     // 工具结果在这个协议里是独立的一条消息，靠 tool_call_id 和调用配对。
-                    is ChatMessage.ToolResult -> put(
-                        JSONObject()
-                            .put("role", "tool")
-                            .put("tool_call_id", message.callId)
-                            .put("name", message.name)
-                            .put("content", message.content),
-                    )
+                    is ChatMessage.ToolResult -> {
+                        put(
+                            JSONObject()
+                                .put("role", "tool")
+                                .put("tool_call_id", message.callId)
+                                .put("name", message.name)
+                                .put("content", message.content),
+                        )
+                        // tool 消息的 content 只能是字符串，图片塞不进去（Anthropic 那边可以）。
+                        // 截图只好另发一条 user 消息补上，并说清楚它是哪一步的产物，不然模型
+                        // 会以为是用户突然发了张图。
+                        val images = message.images.mapNotNull { image ->
+                            image.readBase64()?.let { "data:${image.mediaType};base64,$it" }
+                        }
+                        if (images.isNotEmpty()) {
+                            put(
+                                JSONObject().put("role", "user").put(
+                                    "content",
+                                    JSONArray().apply {
+                                        put(
+                                            JSONObject()
+                                                .put("type", "text")
+                                                .put("text", "（上一步 ${message.name} 拿到的画面）"),
+                                        )
+                                        images.forEach { url ->
+                                            put(
+                                                JSONObject()
+                                                    .put("type", "image_url")
+                                                    .put("image_url", JSONObject().put("url", url)),
+                                            )
+                                        }
+                                    },
+                                ),
+                            )
+                        }
+                    }
                 }
             }
         }

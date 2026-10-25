@@ -27,10 +27,14 @@ sealed interface ChatMessage {
      *
      * [text] 和 [toolCalls] 可以同时存在——模型经常先说一句"我来看看屏幕上有什么"，
      * 再发起工具调用。两者都为空是异常响应。
+     *
+     * @param reasoning 模型这一轮的内部推理块（Anthropic 的 thinking），见 [ReasoningBlock]。
+     *   **只在一轮 Agent 任务的内存里传递，不落库**，原因见那边。
      */
     data class Assistant(
         val text: String? = null,
         val toolCalls: List<ToolCall> = emptyList(),
+        val reasoning: List<ReasoningBlock> = emptyList(),
     ) : ChatMessage
 
     /**
@@ -43,8 +47,33 @@ sealed interface ChatMessage {
         val callId: String,
         val name: String,
         val content: String,
+        /**
+         * 工具顺带产出的图片，比如截图。和 [Assistant.reasoning] 一样**只活在一轮任务的内存
+         * 里**：截图存在缓存目录，任务结束就删，历史里只留文字。
+         */
+        val images: List<ImageAttachment> = emptyList(),
     ) : ChatMessage
 }
+
+/**
+ * 模型一轮里的内部推理块，原样存着、原样送回去。
+ *
+ * ## 为什么要存，又为什么不落库
+ *
+ * Anthropic 的 thinking 块要在工具循环里原样带回去，模型才接得上自己上一步的思路；不带的话
+ * 不报错，只是每一步都重新想一遍，多步任务上差别很明显。
+ *
+ * 但它是**和产生它的那段历史绑定的**：只要之前的消息、系统提示词或工具列表动过一个字，签名
+ * 就失效，再带上它就是 400。而 Kitten 的界面允许用户删单条消息——历史一旦可改，持久化的
+ * thinking 块就成了定时炸弹。
+ *
+ * 所以折中：只在一轮任务的内存里传递（那一轮里历史只追加，签名一定有效），不写进数据库。
+ * 下次打开会话时历史里没有任何 thinking 块，也就没有能失效的东西。
+ *
+ * [raw] 是整块的原始 JSON 文本。不拆成字段是故意的：里面的 signature 必须一个字节都不差，
+ * 拆开再拼回去等于给自己留出错的机会。
+ */
+data class ReasoningBlock(val raw: String)
 
 /**
  * 消息里的一张图片。
@@ -105,6 +134,8 @@ data class ChatResponse(
     /** 原样保留厂商给的停止原因，便于排查"为什么没继续"。 */
     val stopReason: String?,
     val usage: TokenUsage?,
+    /** 这一轮的内部推理块，见 [ReasoningBlock]。只有 Anthropic 格式会有。 */
+    val reasoning: List<ReasoningBlock> = emptyList(),
 ) {
     /** 模型要求执行工具——Agent 循环要继续转。 */
     val needsToolExecution: Boolean

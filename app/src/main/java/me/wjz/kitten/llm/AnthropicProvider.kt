@@ -63,9 +63,9 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
      * 流式。回来的是一串带名字的事件，按 data 里的 type 分流：
      *
      * - `message_start`：里面有输入 token 数；
-     * - `content_block_start`：开一个新块，text 或 tool_use（还可能是 thinking，用不上，跳过）；
+     * - `content_block_start`：开一个新块，text、tool_use 或 thinking；
      * - `content_block_delta`：往那个块里接东西，text_delta 是字，input_json_delta 是工具参数的
-     *   一截 JSON；
+     *   一截 JSON，thinking_delta / signature_delta 是推理块的正文和签名（见 [PartialThinking]）；
      * - `message_delta`：stop_reason 和输出 token 数；`message_stop`：收尾；
      * - `error`：服务端在流里报错（比如过载）；`ping`：心跳，不用管。
      *
@@ -81,6 +81,8 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
         val text = StringBuilder()
         // 按块的 index 记工具调用，参数一截截接上。
         val calls = sortedMapOf<Int, PartialToolCall>()
+        // 同理记 thinking 块。按 index 排序，送回去时要保持原来的先后。
+        val thinking = sortedMapOf<Int, PartialThinking>()
         var stopReason: String? = null
         var inputTokens = 0
         var outputTokens = 0
@@ -114,6 +116,10 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
 
                                     "tool_use" -> calls[json.optInt("index")] =
                                         PartialToolCall(id = block.optString("id"), name = block.optString("name"))
+
+                                    // thinking 块的壳先收着，内容和签名跟在后面的 delta 里。
+                                    "thinking", "redacted_thinking" ->
+                                        thinking[json.optInt("index")] = PartialThinking(block)
                                 }
                             }
 
@@ -127,6 +133,13 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
 
                                     "input_json_delta" ->
                                         calls[json.optInt("index")]?.arguments?.append(delta.optString("partial_json"))
+
+                                    // 推理的正文和签名分两种 delta 来，都往同一个块上攒。
+                                    "thinking_delta" ->
+                                        thinking[json.optInt("index")]?.thinking?.append(delta.optString("thinking"))
+
+                                    "signature_delta" ->
+                                        thinking[json.optInt("index")]?.signature?.append(delta.optString("signature"))
                                 }
                             }
 
@@ -163,6 +176,7 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                 toolCalls = toolCalls,
                 stopReason = stopReason,
                 usage = TokenUsage(inputTokens = inputTokens, outputTokens = outputTokens),
+                reasoning = thinking.values.map { it.build() },
             ),
         )
     }
@@ -180,6 +194,26 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
     /** 流式时一次工具调用的半成品：id、名字在块开头就给了，参数一截截地接。 */
     private class PartialToolCall(val id: String, val name: String) {
         val arguments = StringBuilder()
+    }
+
+    /**
+     * 流式时一个 thinking 块的半成品。
+     *
+     * [shell] 是 content_block_start 给的那个壳（带 type，redacted 的还带 data），正文和签名
+     * 跟在后面的 delta 里，攒齐了再填回壳里。签名必须和服务端算的一模一样，所以只做拼接，
+     * 不做任何加工。
+     */
+    private class PartialThinking(private val shell: JSONObject) {
+        val thinking = StringBuilder()
+        val signature = StringBuilder()
+
+        fun build(): ReasoningBlock {
+            // 拷一份再改，别动原来那个壳。
+            val block = JSONObject(shell.toString())
+            if (thinking.isNotEmpty()) block.put("thinking", thinking.toString())
+            if (signature.isNotEmpty()) block.put("signature", signature.toString())
+            return ReasoningBlock(block.toString())
+        }
     }
 
     override suspend fun listModels(): ModelListResult {
@@ -226,20 +260,40 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
 
         messages.dropWhile { it !is ChatMessage.User }.forEach { message ->
             when (message) {
-                is ChatMessage.ToolResult -> append(
-                    "user",
-                    JSONArray().put(
-                        JSONObject()
-                            .put("type", "tool_result")
-                            .put("tool_use_id", message.callId)
-                            .put("content", message.content),
-                    ),
-                )
+                is ChatMessage.ToolResult -> {
+                    // 带图时 content 要写成块数组（图在前、说明在后）；纯文字时还是写字符串，
+                    // 各家兼容端点对字符串形式的接受度更高，没必要为了统一而都换成数组。
+                    val images = message.images.mapNotNull { image ->
+                        image.readBase64()?.let { image to it }
+                    }
+                    val content: Any = if (images.isEmpty()) {
+                        message.content
+                    } else {
+                        JSONArray().apply {
+                            images.forEach { (image, data) -> put(imageBlock(image, data)) }
+                            put(JSONObject().put("type", "text").put("text", message.content))
+                        }
+                    }
+                    append(
+                        "user",
+                        JSONArray().put(
+                            JSONObject()
+                                .put("type", "tool_result")
+                                .put("tool_use_id", message.callId)
+                                .put("content", content),
+                        ),
+                    )
+                }
 
                 is ChatMessage.User -> append("user", userBlocks(message))
 
                 is ChatMessage.Assistant -> {
                     val content = JSONArray()
+                    // thinking 块要排在最前面、而且一个字节都不能改（签名是按原文算的）。
+                    // 带回去模型才接得上上一步的思路，见 ReasoningBlock。
+                    message.reasoning.forEach { block ->
+                        runCatching { JSONObject(block.raw) }.getOrNull()?.let(content::put)
+                    }
                     message.text?.takeIf { it.isNotBlank() }?.let {
                         content.put(JSONObject().put("type", "text").put("text", it))
                     }
@@ -267,20 +321,22 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
     private fun userBlocks(message: ChatMessage.User): JSONArray = JSONArray().apply {
         message.images.forEach { image ->
             val data = image.readBase64() ?: return@forEach
-            put(
-                JSONObject()
-                    .put("type", "image")
-                    .put(
-                        "source",
-                        JSONObject()
-                            .put("type", "base64")
-                            .put("media_type", image.mediaType)
-                            .put("data", data),
-                    ),
-            )
+            put(imageBlock(image, data))
         }
         if (message.text.isNotBlank()) put(JSONObject().put("type", "text").put("text", message.text))
     }
+
+    /** 一张内嵌 base64 的图片块。用户消息和工具结果都用它。 */
+    private fun imageBlock(image: ImageAttachment, base64: String): JSONObject =
+        JSONObject()
+            .put("type", "image")
+            .put(
+                "source",
+                JSONObject()
+                    .put("type", "base64")
+                    .put("media_type", image.mediaType)
+                    .put("data", base64),
+            )
 
     private fun buildTools(tools: List<ToolSpec>): JSONArray = JSONArray().apply {
         tools.forEach { tool ->
@@ -307,10 +363,13 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
 
         val texts = mutableListOf<String>()
         val toolCalls = mutableListOf<ToolCall>()
+        val reasoning = mutableListOf<ReasoningBlock>()
         for (i in 0 until content.length()) {
             val block = content.optJSONObject(i) ?: continue
             when (block.optString("type")) {
                 "text" -> block.optString("text").takeIf { it.isNotBlank() }?.let(texts::add)
+                // 原样收着，下一轮原样送回去。
+                "thinking", "redacted_thinking" -> reasoning += ReasoningBlock(block.toString())
                 "tool_use" -> toolCalls += ToolCall(
                     id = block.optString("id"),
                     name = block.optString("name"),
@@ -335,6 +394,7 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                         outputTokens = it.optInt("output_tokens"),
                     )
                 },
+                reasoning = reasoning,
             ),
         )
     }
