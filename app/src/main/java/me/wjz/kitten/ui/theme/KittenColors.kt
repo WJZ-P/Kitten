@@ -82,11 +82,19 @@ data class KittenColors(
      */
     val viewerScrim: Color,
     /**
-     * Toast 的底色和字色。深底白字：Toast 不读背后，压在什么上面都要读得清，浅色界面上用
-     * 深色也最醒目。
+     * Toast 的底色和字色：浅天依蓝底、深海蓝字，和整个 App 是一个色系。底色比页面背景深一档，
+     * 再加上阴影，压在页面上分得出来；深色的字在浅底上读得清。
+     *
+     * 试过深底白字：醒目是醒目，但在一片天依蓝里像一块黑补丁，和界面不搭。
      */
     val toast: Color,
     val onToast: Color,
+    /**
+     * 压在照片上的小控件（附件缩略图右上角的"×"）的底色和图标色。深底白字：照片什么颜色都有，
+     * 深色的小圆压在哪张照片上都看得清。原来借的是 Toast 那一对，Toast 换成浅色后单独拿出来。
+     */
+    val photoBadge: Color,
+    val onPhotoBadge: Color,
     /**
      * 模态窗窗体的底色，[glassTint] 和窗里的光雾叠在它上面。
      *
@@ -152,8 +160,10 @@ val LightKittenColors = KittenColors(
     // 浅色主题压得很轻：界面本来就糊开了，再压重就成了一块脏灰。
     scrim = Ink.copy(alpha = 0.10f),
     viewerScrim = Ink.copy(alpha = 0.6f),
-    toast = Ink.copy(alpha = 0.88f),
-    onToast = Color.White,
+    toast = Tianyi150,
+    onToast = Tianyi900,
+    photoBadge = Ink.copy(alpha = 0.88f),
+    onPhotoBadge = Color.White,
     // 和背景顶部同色：再叠上 glassTint，窗体和页面上的卡片颜色接近。
     modalSurface = Tianyi50.copy(alpha = 0.92f),
     cardMistHaze = Tianyi450,

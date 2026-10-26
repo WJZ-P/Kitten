@@ -229,7 +229,9 @@ fun ChatInputBar(
                     onClick = if (showStop) onStop else ::submit,
                     backdrop = surfaceBackdrop,
                     size = ActionButtonSize,
-                    style = GlassButtonStyle.Primary,
+                    // 和左边的"+"同一款透明玻璃。试过染色的主款式：图标是最深一档的天依蓝，压在浅蓝
+                    // 的染色上看着发黑，和"+"摆在一排也不像一套。
+                    style = GlassButtonStyle.Secondary,
                     enabled = showStop || canSend,
                     iconTransition = { sendStopTransition() },
                 )
@@ -261,7 +263,7 @@ private fun AttachmentStrip(
  * 一张已选图片的缩略图，右上角一个"×"。点缩略图看大图：按下就微微缩一下，松手才打开。
  *
  * "×"是一个深色小圆、不做玻璃（同下拉菜单里的"×"）：它压在照片上，照片什么颜色都有，深底
- * 白字压在什么上面都看得清。颜色借的是 Toast 那一对，同样是"压在什么上面都要看得清"。
+ * 白字压在什么上面都看得清（photoBadge 那一对颜色）。
  */
 @Composable
 private fun AttachmentThumbnail(uri: Uri, onOpen: () -> Unit, onRemove: () -> Unit) {
@@ -318,13 +320,13 @@ private fun AttachmentThumbnail(uri: Uri, onOpen: () -> Unit, onRemove: () -> Un
                 modifier = Modifier
                     .size(RemoveBadgeSize)
                     .clip(CircleShape)
-                    .background(colors.toast),
+                    .background(colors.photoBadge),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
                     imageVector = Icons.Filled.Close,
                     contentDescription = "移除这张图片",
-                    tint = colors.onToast,
+                    tint = colors.onPhotoBadge,
                     modifier = Modifier.size(RemoveIconSize),
                 )
             }

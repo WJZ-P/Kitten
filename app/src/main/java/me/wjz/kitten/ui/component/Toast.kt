@@ -98,12 +98,13 @@ val LocalToast = staticCompositionLocalOf<ToastState> {
 }
 
 /**
- * 把 [state] 里的 Toast 画出来：一块深色的圆角条，白字，底部或者正中间弹出。
+ * 把 [state] 里的 Toast 画出来：一块浅天依蓝的圆角条，深海蓝的字，带阴影，底部或者正中间弹出。
+ * 颜色见 KittenColors 的 toast / onToast。
  *
  * ## 为什么不做成玻璃、也不用系统的 Toast
  *
  * - 不做玻璃：玻璃得读背后的 backdrop，Toast 就得挂进浮层体系里、跟着各层的录制走。它只是
- *   一句提示，深色底白字在任何背景上都读得清，用不着那一套。
+ *   一句提示，一块实色的底配上阴影就读得清，用不着那一套。
  * - 不用系统的：系统 Toast 另开窗口，Android 11 起文字 Toast 由系统自己画，样式改不了，
  *   位置也只能在底部，做不出居中那种。
  *
@@ -162,7 +163,7 @@ fun ToastHost(
                 .pointerInput(toast) { detectTapGestures { state.dismiss(toast) } }
                 // 读屏自动念出来：子节点的文字合并进来，整块作为一个播报区域。
                 .semantics(mergeDescendants = true) { liveRegion = LiveRegionMode.Polite }
-                .shadow(elevation = 8.dp, shape = ToastShape, clip = false)
+                .shadow(elevation = 2.dp, shape = ToastShape, clip = false)
                 .background(colors.toast, ToastShape)
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -192,7 +193,7 @@ fun ToastHost(
 }
 
 /** 短提示停多久（毫秒）。 */
-const val ToastShortMillis = 2000L
+const val ToastShortMillis = 1500L
 
 /** 长提示停多久（毫秒）：出错原因这类要读一会儿的。 */
 const val ToastLongMillis = 3500L
