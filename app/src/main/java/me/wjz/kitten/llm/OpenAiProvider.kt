@@ -51,11 +51,43 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
             .add("Content-Type", "application/json")
             .build()
 
-        if (onTextDelta != null) return chatStreaming(body, headers, onTextDelta)
+        if (onTextDelta != null) {
+            // 流式时默认不给用量，要显式要一下，不然看不到缓存命中了多少（见 usageOf）。
+            body.put("stream_options", JSONObject().put("include_usage", true))
+            val result = chatStreaming(body, headers, onTextDelta)
+            // 个别兼容服务不认这个字段、直接 400：去掉它再试一次。宁可看不到用量，也别让对话发不出去。
+            // 400 也可能是别的原因，那样会白多发一次，再失败就照常报错。
+            val code = ((result as? LlmResult.Failed)?.error as? LlmError.ServerError)?.code
+            if (code == 400 || code == 422) {
+                Log.w(TAG, "流式请求被拒（$code），去掉 stream_options 再试一次")
+                body.remove("stream_options")
+                return chatStreaming(body, headers, onTextDelta)
+            }
+            return result
+        }
 
         val result = HttpTransport.postJson(endpoint(), headers, body)
         val json = result.getOrElse { return result.toLlmFailure() }
         return parse(json)
+    }
+
+    /**
+     * 把 usage 换成统一的 [TokenUsage]。
+     *
+     * 这个协议的缓存是服务端自动做的（OpenAI 官方、不少国产兼容服务都是），不用打标记，只要请求
+     * 开头稳定就能命中（见 AnthropicProvider 类注释里说的那几条前提）。`prompt_tokens` 是全部输入，
+     * 命中的部分各家放的地方不一样：OpenAI 在 `prompt_tokens_details.cached_tokens`，DeepSeek 用自己的
+     * `prompt_cache_hit_tokens`。都没有就当没命中。
+     */
+    private fun usageOf(json: JSONObject): TokenUsage {
+        val prompt = json.optInt("prompt_tokens")
+        val cached = json.optJSONObject("prompt_tokens_details")?.optInt("cached_tokens")?.takeIf { it > 0 }
+            ?: json.optInt("prompt_cache_hit_tokens")
+        return TokenUsage(
+            inputTokens = (prompt - cached).coerceAtLeast(0),
+            outputTokens = json.optInt("completion_tokens"),
+            cacheReadTokens = cached,
+        )
     }
 
     /**
@@ -98,12 +130,8 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
                         json.optJSONObject("error")?.let { error ->
                             throw LlmException(LlmError.Interrupted(error.optStringOrNull("message")))
                         }
-                        json.optJSONObject("usage")?.let {
-                            usage = TokenUsage(
-                                inputTokens = it.optInt("prompt_tokens"),
-                                outputTokens = it.optInt("completion_tokens"),
-                            )
-                        }
+                        // 要了 include_usage 之后，用量在 [DONE] 前面单独一块里，那一块的 choices 是空的。
+                        json.optJSONObject("usage")?.let { usage = usageOf(it) }
                         val choice = json.optJSONArray("choices")?.optJSONObject(0) ?: return@collect
                         choice.optStringOrNull("finish_reason")?.takeIf { it.isNotBlank() }?.let { finishReason = it }
                         val delta = choice.optJSONObject("delta") ?: return@collect
@@ -318,12 +346,7 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
                 text = text,
                 toolCalls = toolCalls,
                 stopReason = choice.optString("finish_reason").takeIf { it.isNotBlank() },
-                usage = json.optJSONObject("usage")?.let {
-                    TokenUsage(
-                        inputTokens = it.optInt("prompt_tokens"),
-                        outputTokens = it.optInt("completion_tokens"),
-                    )
-                },
+                usage = json.optJSONObject("usage")?.let(::usageOf),
             ),
         )
     }

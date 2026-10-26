@@ -20,6 +20,27 @@ import org.json.JSONObject
  *   没有 `role=tool` 这种角色。连续几个工具结果**必须合并进同一条 user 消息**，
  *   拆成多条会被拒；
  * - 认证头是 `x-api-key`，而且必须带 `anthropic-version`。
+ *
+ * ## Prompt caching
+ *
+ * Agent 一轮要发十几次请求，每次都把系统提示词、工具清单、前面所有步骤重发一遍。服务端能把
+ * "开头一模一样的那一段"算过的结果存起来，下次直接复用，命中的部分按原价的零头计费。这家
+ * 要求**显式打标记**（`cache_control`），不打就一点缓存都没有。打两个（[CacheMarkers]）：
+ *
+ * - **系统提示词那一块**：工具清单排在它前面，一起缓存。这一段整轮不变，每一步都命中。
+ * - **最后一条消息的最后一块**：每次请求往后挪一格。前面每一步留下的标记位置照样能读，所以每一步
+ *   都复用之前全部的内容，只为新追加的那一截付原价。
+ *
+ * 缓存是按前缀逐字节匹配的，任何一处变了，从那里往后都不命中。能命中的前提我们本来就满足：
+ * 一轮里系统提示词和工具清单不变、历史只往后加、JSON 字段顺序固定（这几条本来是 thinking 块
+ * 要求的，见 [ReasoningBlock]）。改组请求的代码时要守住它们。
+ *
+ * 没用顶层的自动缓存字段（`cache_control` 放在请求最外层）：那是后加的，中转站不一定认，认不出
+ * 来就是 400；显式标记是老字段，转发一般原样带过去。缓存时长用默认的 5 分钟：一轮里每步隔几秒，
+ * 每次读取还会刷新计时，一直是热的。
+ *
+ * 命中了多少看 usage 里的 `cache_read_input_tokens` / `cache_creation_input_tokens`（见 [usageOf]），
+ * 每步打在日志里。前缀太短（不同模型几百到几千 token 不等）时打了标记也不缓存，不报错。
  */
 class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
 
@@ -41,8 +62,9 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                 put("max_tokens", config.maxTokens)
                 // 不传 temperature（top_p、top_k 同理）：API 版本 2026-10-21 起，Messages 请求带这三个
                 // 参数在所有模型上都是 400，哪怕传的是默认值。Claude 4.7 及以后的模型本来也只认默认值。
-                if (system.isNotBlank()) put("system", system)
-                put("messages", buildMessages(messages))
+                // 写成块数组而不是字符串：缓存标记只能打在块上。
+                if (system.isNotBlank()) put("system", CacheMarkers.system(system))
+                put("messages", buildMessages(messages).also(CacheMarkers::markTail))
                 if (tools.isNotEmpty()) put("tools", buildTools(tools))
             }
         }
@@ -84,8 +106,8 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
         // 同理记 thinking 块。按 index 排序，送回去时要保持原来的先后。
         val thinking = sortedMapOf<Int, PartialThinking>()
         var stopReason: String? = null
-        var inputTokens = 0
-        var outputTokens = 0
+        // 输入那几个数在 message_start 里，输出在 message_delta 里。
+        var usage = TokenUsage(inputTokens = 0, outputTokens = 0)
         var stopped = false
         var whole: LlmResult? = null
 
@@ -103,7 +125,7 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                         val json = runCatching { JSONObject(chunk.data) }.getOrNull() ?: return@collect
                         when (json.optString("type")) {
                             "message_start" -> json.optJSONObject("message")?.optJSONObject("usage")?.let {
-                                inputTokens = it.optInt("input_tokens")
+                                usage = usageOf(it)
                             }
 
                             "content_block_start" -> {
@@ -145,7 +167,10 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
 
                             "message_delta" -> {
                                 json.optJSONObject("delta")?.optStringOrNull("stop_reason")?.let { stopReason = it }
-                                json.optJSONObject("usage")?.let { outputTokens = it.optInt("output_tokens") }
+                                json.optJSONObject("usage")?.let { latest ->
+                                    // 这里的数是累计值：一定有输出数，输入那几个有的话也以这里为准。
+                                    usage = usageOf(latest, fallback = usage)
+                                }
                             }
 
                             "message_stop" -> stopped = true
@@ -175,7 +200,7 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                 text = finalText,
                 toolCalls = toolCalls,
                 stopReason = stopReason,
-                usage = TokenUsage(inputTokens = inputTokens, outputTokens = outputTokens),
+                usage = usage,
                 reasoning = thinking.values.map { it.build() },
             ),
         )
@@ -388,15 +413,61 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                 text = text,
                 toolCalls = toolCalls,
                 stopReason = json.optString("stop_reason").takeIf { it.isNotBlank() },
-                usage = json.optJSONObject("usage")?.let {
-                    TokenUsage(
-                        inputTokens = it.optInt("input_tokens"),
-                        outputTokens = it.optInt("output_tokens"),
-                    )
-                },
+                usage = json.optJSONObject("usage")?.let(::usageOf),
                 reasoning = reasoning,
             ),
         )
+    }
+
+    /**
+     * 把 usage 换成统一的 [TokenUsage]。这家的 `input_tokens` 本来就只算没命中缓存的部分，
+     * 命中和新写入的另有两个字段，三个加起来才是整个输入。
+     *
+     * [fallback]：流式时 message_delta 里的 usage 不一定带输入那几个数，没带的沿用 message_start
+     * 时拿到的。
+     */
+    private fun usageOf(json: JSONObject, fallback: TokenUsage? = null): TokenUsage {
+        fun count(key: String, old: Int?): Int =
+            if (json.has(key)) json.optInt(key) else old ?: 0
+        return TokenUsage(
+            inputTokens = count("input_tokens", fallback?.inputTokens),
+            outputTokens = count("output_tokens", fallback?.outputTokens),
+            cacheReadTokens = count("cache_read_input_tokens", fallback?.cacheReadTokens),
+            cacheWriteTokens = count("cache_creation_input_tokens", fallback?.cacheWriteTokens),
+        )
+    }
+
+    /** 缓存标记打在哪，原因见类注释的 Prompt caching 一节。 */
+    private object CacheMarkers {
+
+        /** 系统提示词写成一个文本块，块上打标记：它和排在前面的工具清单一起缓存。 */
+        fun system(text: String): JSONArray = JSONArray().put(
+            JSONObject()
+                .put("type", "text")
+                .put("text", text)
+                .put("cache_control", ephemeral()), //  目前缓存策略都是五分钟过期。
+        )
+
+        /**
+         * 在最后一条消息的最后一块上打标记。
+         *
+         * 从后往前跳过 thinking 块：这家不让在它们上面打标记。最后一条正常是用户的话或者工具结果，
+         * 实际碰不到，防一手。
+         */
+        fun markTail(messages: JSONArray) {
+            val content = messages.optJSONObject(messages.length() - 1)?.optJSONArray("content") ?: return
+            for (i in content.length() - 1 downTo 0) {
+                val block = content.optJSONObject(i) ?: continue
+                if (block.optString("type") in UnmarkableTypes) continue
+                block.put("cache_control", ephemeral())
+                return
+            }
+        }
+
+        /** 默认的 5 分钟缓存。每次新建：同一个对象挂在两处，改一处另一处跟着变。 */
+        private fun ephemeral() = JSONObject().put("type", "ephemeral")
+
+        private val UnmarkableTypes = setOf("thinking", "redacted_thinking")
     }
 
     private companion object {

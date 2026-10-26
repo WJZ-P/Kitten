@@ -97,6 +97,9 @@ class AgentRunner(private val registry: ToolRegistry) {
                 is LlmResult.Failed -> return AgentResult.Failed(result.error)
                 is LlmResult.Ok -> result.response
             }
+            // 每步的用量打一行。缓存失效不会报错，只会让账单悄悄变贵：正常的样子是"缓存读"一步比
+            // 一步大、"原价"一直很小；哪天"原价"突然和总输入差不多大，就是有东西把请求开头改了。
+            response.usage?.let { Log.i(TAG, "第 ${step + 1} 步用量：${it.describe()}") }
 
             val reply = ChatMessage.Assistant(
                 text = response.text,

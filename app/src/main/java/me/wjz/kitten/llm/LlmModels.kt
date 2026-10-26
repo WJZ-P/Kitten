@@ -143,13 +143,39 @@ data class ChatResponse(
 }
 
 /**
- * token 用量。
+ * token 用量，两家的口径统一成同样的四个数。
  *
  * Agent 每步都要把整屏节点树喂进去，上下文涨得很快，这个数字值得一直盯着——
  * 它直接决定了压缩策略要不要再激进些。
+ *
+ * ## 为什么要拆出缓存
+ *
+ * Agent 一轮任务要发十几次请求，每次都把前面的全部重发一遍，重复的部分靠 prompt caching
+ * 省钱（见 AnthropicProvider 的缓存标记）。缓存失效时不会报错，只是账单悄悄变贵——这几个数
+ * 是唯一能确认它在工作的地方，每步都打进日志（见 AgentRunner）。
+ *
+ * 两家口径不同，这里统一：Anthropic 的 `input_tokens` 本来就只算没命中缓存的部分；OpenAI 的
+ * `prompt_tokens` 是全部，要减掉命中的那些才对得上 [inputTokens]。
+ *
+ * @param inputTokens 按原价计费的输入：没命中缓存的那部分。
+ * @param cacheReadTokens 命中缓存的输入，按原价的零头计费（各家倍率不同，Anthropic 大约一成）。
+ * @param cacheWriteTokens 这次新写进缓存的输入。只有 Anthropic 单独计（比原价贵一点）；OpenAI
+ *   格式的服务写缓存不另收费，也不报这个数，恒为 0。
  */
-data class TokenUsage(val inputTokens: Int, val outputTokens: Int) {
-    val total: Int get() = inputTokens + outputTokens
+data class TokenUsage(
+    val inputTokens: Int,
+    val outputTokens: Int,
+    val cacheReadTokens: Int = 0,
+    val cacheWriteTokens: Int = 0,
+) {
+    /** 这次发出去的输入一共多长：三部分加起来。判断上下文快不快撑爆看它，不看 [inputTokens]。 */
+    val promptTokens: Int get() = inputTokens + cacheReadTokens + cacheWriteTokens
+
+    val total: Int get() = promptTokens + outputTokens
+
+    /** 打日志用的一行。 */
+    fun describe(): String =
+        "输入 $promptTokens（原价 $inputTokens、缓存读 $cacheReadTokens、缓存写 $cacheWriteTokens），输出 $outputTokens"
 }
 
 /**
