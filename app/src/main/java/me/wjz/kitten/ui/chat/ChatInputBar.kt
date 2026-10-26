@@ -149,9 +149,17 @@ fun ChatInputBar(
         attachments.addAll(merged.take(MaxAttachments))
     }
 
+    // submit 里只读 State，不能读 canSend、enabled、onSend 这种组合时就定下来的值。
+    // 发送按钮拿到的是 ::submit。本地函数的引用比 equals 时只看函数名和签名，不看它捕获的值，
+    // 所以每次组合出来的 ::submit 都算"相等"。GlassIconButton 里的 rememberUpdatedState 碰到
+    // 相等的新值不会换，手里一直是旧的那份：比如一轮回复结束时框是空的，那份的 canSend 就是 false，
+    // 之后打了字怎么点都会被拦下。读 State 的话，不管拿到哪一份，读到的都是现在的值。
+    val currentEnabled by rememberUpdatedState(enabled)
+    val currentOnSend by rememberUpdatedState(onSend)
+
     fun submit() {
-        if (!canSend) return
-        onSend(text.trim(), attachments.toList())
+        if (!currentEnabled || (text.isBlank() && attachments.isEmpty())) return
+        currentOnSend(text.trim(), attachments.toList())
         text = ""
         attachments.clear()
     }

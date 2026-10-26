@@ -225,13 +225,28 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun send(text: String, images: List<Uri> = emptyList()) {
         val content = text.trim()
-        if ((content.isEmpty() && images.isEmpty()) || !_uiState.value.canSend) return
+        val state = _uiState.value
+        // 被拦下时都打一行，说清楚是哪一关、当时的状态：发不出去的时候，光看界面分不出原因。
+        // 只记状态，不记用户打的内容。
+        if (content.isEmpty() && images.isEmpty()) {
+            Log.d(TAG, "send 被拦下：内容是空的")
+            return
+        }
+        if (!state.canSend) {
+            Log.w(
+                TAG,
+                "send 被拦下：isModelConfigured=${state.isModelConfigured} isResponding=${state.isResponding} " +
+                    "pendingQuestion=${state.pendingQuestion != null}",
+            )
+            return
+        }
 
         // Agent 正等着用户回答时，输入框里打的就是答案，不是一条新消息。
-        if (_uiState.value.pendingQuestion != null) {
+        if (state.pendingQuestion != null) {
             if (content.isNotEmpty()) answerQuestion(content)
             return
         }
+        Log.i(TAG, "开始一轮：历史 ${state.messages.size} 条，带 ${images.size} 张图")
 
         // 常驻通知和"停止"按钮要在任务真正开始之前就备好——用户可能第一秒就想喊停。
         // 停止回调里要用的 Job 这会儿还没有，先留个可变引用，launch 之后再填上。
@@ -440,7 +455,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 用户回答了 Agent 的提问：对话里点了选项、通知上点了按钮、或者直接在输入框里打字。 */
     fun answerQuestion(answer: String) {
-        val continuation = pendingAnswer ?: return
+        val continuation = pendingAnswer ?: run {
+            // 界面上以为在等回答、这里却没有在等的：两边对不上了，打出来方便查。
+            Log.w(TAG, "answerQuestion 被丢掉：没有正在等的问题（pendingQuestion=${_uiState.value.pendingQuestion != null}）")
+            return
+        }
         pendingAnswer = null
         _uiState.update { it.copy(pendingQuestion = null) }
         AgentTaskHandle.clearQuestion()
