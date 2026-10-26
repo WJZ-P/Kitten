@@ -15,9 +15,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import me.wjz.kitten.AppVisibility
 import me.wjz.kitten.MainActivity
 import me.wjz.kitten.R
+import me.wjz.kitten.agent.AgentQuestion
 import me.wjz.kitten.agent.AgentTask
 import me.wjz.kitten.agent.AgentTaskHandle
 
@@ -30,8 +33,14 @@ import me.wjz.kitten.agent.AgentTaskHandle
  * 话，系统随时可能因为内存紧张把整个进程收走，任务就断在半路。前台服务把进程顶到前台优先级，
  * 顺带有了一条常驻通知，正好用来显示"正在做什么"和一个"停止"。
  *
- * Agent 要问用户问题、而用户又不在 Kitten 界面里时，问题也显示在这条通知上，选项做成按钮，
- * 在通知上直接点就能回答，不用先切回来。
+ * ## 提问单独一条
+ *
+ * 常驻通知的渠道是低优先级的（每一步都在更新它，高优先级会弹来弹去），所以 Agent 要问用户问题时
+ * 它不会主动提醒——用户在别的应用里根本不知道 Kitten 在等他。提问因此另发一条高优先级的通知
+ * （[updateQuestionAlert]）：弹出横幅，选项做成按钮，在通知上直接点就能回答，不用先切回来。
+ *
+ * 用户正看着 Kitten 时不弹：对话里已经有提问卡片了，再弹一条横幅是重复。切到别的应用了才弹，
+ * 回到 Kitten 就收掉（看 [AppVisibility]）。
  *
  * ## 任务本身不在这里跑
  *
@@ -59,30 +68,65 @@ class AgentForegroundService : Service() {
     private val notifications by lazy { getSystemService(NotificationManager::class.java) }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    /** 提问那条通知现在挂着的是哪个问题，没挂着是 null。见 [updateQuestionAlert]。 */
+    private var alertedQuestion: AgentQuestion? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
-        notifications.createNotificationChannel(
-            NotificationChannel(
-                CHANNEL_ID,
-                getString(R.string.agent_channel_name),
-                // 不用 HIGH：任务跑着的时候每一步都在更新这条通知，弹来弹去很吵。
-                // 要用户回答时再单独提醒（见 notify）。
-                NotificationManager.IMPORTANCE_LOW,
-            ).apply { description = getString(R.string.agent_channel_description) },
+        notifications.createNotificationChannels(
+            listOf(
+                NotificationChannel(
+                    CHANNEL_ID,
+                    getString(R.string.agent_channel_name),
+                    // 不用 HIGH：任务跑着的时候每一步都在更新这条通知，弹来弹去很吵。
+                    // 要用户回答时另发一条高优先级的（见 updateQuestionAlert）。
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply { description = getString(R.string.agent_channel_description) },
+                NotificationChannel(
+                    QUESTION_CHANNEL_ID,
+                    getString(R.string.agent_question_channel_name),
+                    // HIGH 才会弹横幅：用户多半在别的应用里，不弹出来就不知道 Kitten 在等他。
+                    NotificationManager.IMPORTANCE_HIGH,
+                ).apply { description = getString(R.string.agent_question_channel_description) },
+            ),
         )
         scope.launch {
-            AgentTaskHandle.task.collectLatest { task ->
-                if (task == null) {
-                    // 任务结束了，通知跟着收掉。
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                } else {
-                    notifications.notify(NOTIFICATION_ID, build(task))
+            // 任务和"用户看不看得见 Kitten"一起盯：任何一边变了，都要重新决定提问那条弹不弹。
+            combine(AgentTaskHandle.task, AppVisibility.inForeground) { task, visible -> task to visible }
+                .collectLatest { (task, visible) ->
+                    if (task == null) {
+                        // 任务结束了，通知跟着收掉。
+                        updateQuestionAlert(question = null, appVisible = visible)
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        stopSelf()
+                    } else {
+                        notifications.notify(NOTIFICATION_ID, build(task))
+                        updateQuestionAlert(task.question, visible)
+                    }
                 }
-            }
         }
+    }
+
+    /**
+     * 提问那条单独的高优先级通知：要问用户问题、用户又看不见 Kitten 时弹出来；答完了、任务结束了、
+     * 或者用户回到了 Kitten（对话里有提问卡片）就收掉。
+     *
+     * 同一个问题只弹一次：任务每走一步常驻通知都会更新，这里跟着重发的话会一遍遍地提醒。用户回到
+     * Kitten 看了一眼没答又走了，会再弹一次——那时候确实该再叫一下。
+     */
+    private fun updateQuestionAlert(question: AgentQuestion?, appVisible: Boolean) {
+        if (question == null || appVisible) {
+            if (alertedQuestion != null) {
+                notifications.cancel(QUESTION_NOTIFICATION_ID)
+                alertedQuestion = null
+            }
+            return
+        }
+        if (question == alertedQuestion) return
+        notifications.notify(QUESTION_NOTIFICATION_ID, buildQuestion(question))
+        alertedQuestion = question
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -110,6 +154,8 @@ class AgentForegroundService : Service() {
 
     override fun onDestroy() {
         scope.cancel()
+        // 服务没了提问也没人接了，别留一条点了没反应的通知。
+        notifications.cancel(QUESTION_NOTIFICATION_ID)
         super.onDestroy()
     }
 
@@ -121,27 +167,50 @@ class AgentForegroundService : Service() {
             // 点通知本体回到 Kitten。
             .setContentIntent(openAppIntent())
 
-        if (question == null) {
-            // 标题是正在干什么（"正在读取屏幕内容""正在思考…"），正文是模型最近说的那段话：
-            // 一眼看得到进度，下拉展开还能看到它在想什么。还没开口时正文退回一句泛泛的说明。
-            val said = task?.lastSaid
-            builder
-                .setContentTitle(
-                    task?.detail?.let { getString(R.string.agent_running_step, it) }
-                        ?: getString(R.string.agent_running_thinking),
-                )
-                .setContentText(said ?: getString(R.string.agent_running_title))
-            // 一段话常常不止一行，展开能看全。
-            if (said != null) builder.setStyle(Notification.BigTextStyle().bigText(said))
-            return builder.addAction(stopAction()).build()
-        }
-
-        // 要用户回答：标题换成问题本身，选项做成按钮，在通知上直接点就能答。
+        // 标题是正在干什么（"正在读取屏幕内容""正在思考…"），正文是模型最近说的那段话：一眼看得到
+        // 进度，下拉展开还能看到它在想什么。还没开口时正文退回一句泛泛的说明。
+        //
+        // 在等用户回答时标题换成"正在等你回答…"，但不在这里写问题本身：问题在单独那条提问通知上
+        // （buildQuestion），这里再写一遍，通知栏里就是两条一模一样的。那条被划掉了也不要紧，点
+        // 这条回到 Kitten 里，对话里有提问卡片。
+        val said = task?.lastSaid
         builder
-            .setContentTitle(getString(R.string.agent_question_title))
+            .setContentTitle(
+                when {
+                    question != null -> getString(R.string.agent_waiting_answer)
+                    task?.detail != null -> getString(R.string.agent_running_step, task.detail)
+                    else -> getString(R.string.agent_running_thinking)
+                },
+            )
+            .setContentText(said ?: getString(R.string.agent_running_title))
+        // 一段话常常不止一行，展开能看全。
+        if (said != null) builder.setStyle(Notification.BigTextStyle().bigText(said))
+        return builder.addAction(stopAction()).build()
+    }
+
+    /**
+     * 提问那条通知：高优先级，弹横幅。选项做成按钮，点了直接作答；选项太多或者要自己打字时，
+     * 给一个"回 Kitten 里回答"。
+     */
+    private fun buildQuestion(question: AgentQuestion): Notification {
+        val title = getString(R.string.agent_question_title)
+        val builder = Notification.Builder(this, QUESTION_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_agent_notification)
+            .setContentTitle(title)
             .setContentText(question.question)
-            // 问题可能比一行长，展开能看全。
             .setStyle(Notification.BigTextStyle().bigText(question.question))
+            .setCategory(Notification.CATEGORY_REMINDER)
+            .setContentIntent(openAppIntent())
+            // 点通知本体回到 Kitten 时顺手收掉；点选项答完由 updateQuestionAlert 收。
+            .setAutoCancel(true)
+            // 锁屏上只说"Kitten 想问一下"，不露问题本身：问题里常带着查到的订单、聊天内容。
+            // 用户在系统里设了锁屏显示全部内容的话，系统照样显示完整的那份。
+            .setPublicVersion(
+                Notification.Builder(this, QUESTION_CHANNEL_ID)
+                    .setSmallIcon(R.drawable.ic_agent_notification)
+                    .setContentTitle(title)
+                    .build(),
+            )
         question.options.take(MAX_OPTION_ACTIONS).forEachIndexed { index, option ->
             builder.addAction(answerAction(index, option))
         }
@@ -202,6 +271,10 @@ class AgentForegroundService : Service() {
         private const val TAG = "KittenAgent"
         private const val CHANNEL_ID = "agent_task"
         private const val NOTIFICATION_ID = 2001
+
+        /** 提问那条单独的通知：自己一个高优先级的渠道，自己一个 id，和常驻那条互不影响。 */
+        private const val QUESTION_CHANNEL_ID = "agent_question"
+        private const val QUESTION_NOTIFICATION_ID = 2002
 
         private const val ACTION_STOP = "me.wjz.kitten.agent.action.STOP"
         private const val ACTION_ANSWER = "me.wjz.kitten.agent.action.ANSWER"

@@ -52,6 +52,18 @@ class MainActivity : ComponentActivity(), SetupActions {
         }
     }
 
+    // 用户看不看得见 Kitten 的界面，见 AppVisibility。用 onStart / onStop 而不是 onResume / onPause：
+    // 下拉通知栏会让 Activity 失去焦点、走 onPause，但界面其实还在眼前。
+    override fun onStart() {
+        super.onStart()
+        AppVisibility.update(visible = true)
+    }
+
+    override fun onStop() {
+        AppVisibility.update(visible = false)
+        super.onStop()
+    }
+
     override fun openAccessibilitySettings() {
         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }

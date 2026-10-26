@@ -37,6 +37,9 @@
     <string name="agent_running_thinking">Thinking…</string>
     <string name="agent_running_step">%1$s…</string>
     <string name="agent_question_title">Kitten has a question</string>
+    <string name="agent_waiting_answer">Waiting for your answer…</string>
+    <string name="agent_question_channel_name">Questions from Kitten</string>
+    <string name="agent_question_channel_description">Pops up when Kitten needs your answer while working</string>
     <string name="agent_action_stop">Stop</string>
     <string name="agent_answer_in_app">Answer in Kitten</string>
 </resources>

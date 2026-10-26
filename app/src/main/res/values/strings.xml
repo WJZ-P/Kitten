@@ -38,6 +38,9 @@
     <string name="agent_running_thinking">正在思考…</string>
     <string name="agent_running_step">正在%1$s</string>
     <string name="agent_question_title">Kitten 想问一下</string>
+    <string name="agent_waiting_answer">正在等你回答…</string>
+    <string name="agent_question_channel_name">需要你回答</string>
+    <string name="agent_question_channel_description">Kitten 干活时有事要问你，会弹出来提醒</string>
     <string name="agent_action_stop">停止</string>
     <string name="agent_answer_in_app">回 Kitten 里回答</string>
 
