@@ -60,7 +60,7 @@ import kotlin.math.roundToInt
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
- * 设置页：模型配置 + 系统提示词 + 权限管理。
+ * 设置页：模型配置 + token 用量 + 系统提示词 + 权限管理。
  *
  * 原先这些内容独占一个启动页（SetupScreen），现在收进 tab。权限引导本来就是
  * 一次性的事，配好之后不该还占着首屏——首屏该是对话。
@@ -147,6 +147,8 @@ fun SettingsScreen(
             },
         )
 
+        TokenUsageSection(backdrop = backdrop)
+
         SystemPromptSection(
             backdrop = backdrop,
             customPrompt = customPrompt,
@@ -182,6 +184,9 @@ fun SettingsScreen(
 
         // 临时：验证副屏可用性，验完连同 DebugCard.kt 一起删。
         DebugCard()
+
+        // 临时：调 Toast 的样子，调完连同 ToastDebugSection.kt 一起删。
+        ToastDebugSection(backdrop = backdrop)
     }
 
     // 模态窗画在浮层上，放在哪里都一样，不占页面的位置。

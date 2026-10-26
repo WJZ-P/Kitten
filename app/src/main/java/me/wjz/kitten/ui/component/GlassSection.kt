@@ -38,6 +38,8 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 条目之间的分隔线由调用方放 [GlassDivider]：有的分组里是一排列表项，有的是一段说明
  * 加一个按钮，自动插分隔线反而会插错地方。
  *
+ * @param headerTrailing 表头最右边放的东西，比如一个总数。按文字排，右边和正文对齐；它和标题
+ *   在同一行，没有 [title] 时不显示。
  * @param interactive 按下卡片本身时有没有按压反馈（放大、折射变强、变深、光雾变浓），见
  *   [GlassSurface]。只是反馈，不触发动作；按在卡片里的控件上时卡片不会跟着动。
  * @param mist 卡片里铺不铺一层流动的光雾，见 [GlassMist]。
@@ -49,6 +51,7 @@ fun GlassSection(
     title: String? = null,
     icon: ImageVector? = null,
     footer: String? = null,
+    headerTrailing: (@Composable () -> Unit)? = null,
     interactive: Boolean = true,
     mist: Boolean = true,
     content: @Composable ColumnScope.() -> Unit,
@@ -64,7 +67,9 @@ fun GlassSection(
                 .fillMaxWidth()
                 .padding(vertical = 6.dp),
         ) {
-            if (title != null) GlassHeader(title = title, icon = icon)
+            if (title != null) {
+                GlassHeader(title = title, icon = icon, trailing = headerTrailing, trailingIsButton = false)
+            }
             content()
             if (footer != null) {
                 Text(
@@ -84,22 +89,26 @@ fun GlassSection(
 }
 
 /**
- * 玻璃容器的表头：图标 + 加粗标题，可选的尾部控件（比如模态窗的关闭按钮）。
+ * 玻璃容器的表头：图标 + 加粗标题，可选的尾部（比如模态窗的关闭按钮、分组卡片右边的一个数字）。
  *
  * 分组卡片和模态窗共用这一个，两种容器的标题才是同一个样子。
+ *
+ * @param trailingIsButton 尾部是不是玻璃按钮。是的话右边留白收窄，见下面的注释；放文字时按正文的
+ *   留白排，右边和正文对齐。
  */
 @Composable
 internal fun GlassHeader(
     title: String,
     icon: ImageVector?,
     trailing: (@Composable () -> Unit)? = null,
+    trailingIsButton: Boolean = trailing != null,
 ) {
     val colors = KittenTheme.colors
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(
-                if (trailing == null) {
+                if (!trailingIsButton) {
                     Modifier.padding(start = GlassContentPadding, end = GlassContentPadding, top = 10.dp, bottom = 4.dp)
                 } else {
                     // 尾部控件（GlassIconButton）是 48dp 的触摸区里放一个 36dp 的玻璃圆，右边留白

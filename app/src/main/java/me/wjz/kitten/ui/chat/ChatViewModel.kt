@@ -43,6 +43,7 @@ import me.wjz.kitten.agent.withInterruptedResults
 import me.wjz.kitten.data.attachment.AttachmentStore
 import me.wjz.kitten.data.session.SessionRepository
 import me.wjz.kitten.data.session.sqlite.SqliteSessionRepository
+import me.wjz.kitten.data.stats.TokenStatsStore
 import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.llm.EndpointRepair
 import me.wjz.kitten.llm.LlmConfigStore
@@ -302,6 +303,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 firstCall = false
+                // 记进每天的用量账（设置页的看板）。服务没报用量的就记不上。
+                (result as? LlmResult.Ok)?.response?.usage?.let { TokenStatsStore.record(getApplication(), it) }
                 result
             }
 
