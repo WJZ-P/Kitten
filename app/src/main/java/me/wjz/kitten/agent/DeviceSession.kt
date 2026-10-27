@@ -32,7 +32,8 @@ import java.util.UUID
  *
  * 一轮任务结束就 [release]：自己建的副屏要收掉，不然会一直挂在系统里。收的时候副屏上的应用
  * 跟着关掉，不会被系统挪到主屏、盖在用户眼前（见特权侧 VirtualDisplayHost 的
- * FLAG_DESTROY_CONTENT_ON_REMOVAL）。
+ * FLAG_DESTROY_CONTENT_ON_REMOVAL）；最近任务里也不会多出一个黑屏的它（见特权侧
+ * DisplayTaskCleaner）。
  */
 class DeviceSession(private val context: Context) {
 

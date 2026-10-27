@@ -31,6 +31,7 @@ interface IPrivilegeService {
     int createVirtualDisplay(int width, int height, int densityDpi);
 
     // 释放指定副屏。displayId 不是我们创建的则忽略。
+    // 屏上的 task 一起移除，最近任务列表里也不留记录（见 DisplayTaskCleaner）。
     void releaseVirtualDisplay(int displayId);
 
     // 释放全部副屏。

@@ -44,6 +44,7 @@ class PrivilegeService : IPrivilegeService.Stub() {
         // AIDL 的 String 在跨进程时可能为 null，这里挡一道。
         if (packageName.isNullOrEmpty()) return false
         return AppLauncher.launchOnDisplay(packageName, displayId, forceNewInstance)
+            .also { launched -> if (launched) VirtualDisplayHost.onAppLaunched(displayId) }
     }
 
     override fun injectTap(displayId: Int, x: Int, y: Int): Boolean =

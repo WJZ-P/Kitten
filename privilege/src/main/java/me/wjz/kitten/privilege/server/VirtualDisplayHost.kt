@@ -71,7 +71,9 @@ internal object VirtualDisplayHost {
      * 副屏是 Agent 自己的工作台，收工时台面上的东西一起收掉，不该甩到用户面前。
      *
      * 代价：用户原本在主屏开着的那个应用，被 Agent 拉到副屏用过之后也会一起关掉（单实例的应用，
-     * 拉起时系统会把已有的 task 挪过去）。应用进程不会被杀，下次打开从它的首页开始。
+     * 拉起时系统会把已有的 task 挪过去），下次打开从它的首页开始。收屏前还会先把屏上的 task
+     * 移掉（见 [DisplayTaskCleaner]），效果和用户在最近任务里划掉一样：应用在别处没有界面、
+     * 也没有前台服务的话，进程会被系统一起收掉。
      *
      * 也是 `@hide`，只能写字面量。AOSP 里创建副屏时没有为它查权限，只是把它记进显示设备的标志位。
      */
@@ -226,6 +228,8 @@ internal object VirtualDisplayHost {
             Log.w(TAG, "displayId=$displayId 不是 Kitten 创建的，截不了图")
             return null
         }
+        // 顺手记一笔屏上的 task：应用自己开出来的 task 也能被记到，收屏时一起清。
+        DisplayTaskCleaner.remember(displayId)
         return runCatching {
             // acquireLatestImage 会丢掉积压的旧帧只留最新一张，正是我们要的。
             // 返回 null 说明这块屏还没渲染过任何东西。
@@ -290,16 +294,30 @@ internal object VirtualDisplayHost {
         }
     }
 
-    /** 释放指定副屏；不是我们创建的就忽略。 */
+    /**
+     * 释放指定副屏；不是我们创建的就忽略。
+     *
+     * 先把屏上的 task 移掉再收屏：只靠 FLAG_DESTROY_CONTENT_ON_REMOVAL 的话，Activity 是关了，
+     * 最近任务里却会留下一条黑屏的记录，见 [DisplayTaskCleaner]。
+     */
     fun release(displayId: Int) {
         val holder = holders.remove(displayId)
         if (holder == null) {
             Log.w(TAG, "displayId=$displayId 不是 Kitten 创建的，忽略")
             return
         }
+        DisplayTaskCleaner.removeTasksOn(displayId)
         runCatching { holder.display.release() }.onFailure { Log.w(TAG, "释放副屏失败", it) }
         runCatching { holder.reader.close() }.onFailure { Log.w(TAG, "关闭 ImageReader 失败", it) }
         Log.i(TAG, "副屏已释放：displayId=$displayId")
+    }
+
+    /**
+     * 在副屏上拉起应用之后调：记下屏上现在有哪些 task，收屏时一起清，见 [DisplayTaskCleaner]。
+     * 不是 Kitten 建的屏不记。
+     */
+    fun onAppLaunched(displayId: Int) {
+        if (holders.containsKey(displayId)) DisplayTaskCleaner.remember(displayId)
     }
 
     /** 释放全部副屏。特权进程退出前调用，免得留下孤儿屏幕。 */
