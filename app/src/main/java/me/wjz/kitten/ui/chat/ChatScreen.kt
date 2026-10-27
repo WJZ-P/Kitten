@@ -8,18 +8,28 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,10 +43,16 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -44,8 +60,12 @@ import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.shadow.Shadow
 import kotlinx.coroutines.launch
 import me.wjz.kitten.agent.AgentQuestion
+import me.wjz.kitten.agent.tools.AskUserTool
 import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.ui.component.GlassButton
 import me.wjz.kitten.ui.component.GlassButtonStyle
@@ -53,9 +73,11 @@ import me.wjz.kitten.ui.component.GlassContextMenu
 import me.wjz.kitten.ui.component.GlassIconButton
 import me.wjz.kitten.ui.component.GlassMenuItem
 import me.wjz.kitten.ui.component.GlassRadius
+import me.wjz.kitten.ui.component.GlassRim
 import me.wjz.kitten.ui.component.GlassSurface
 import me.wjz.kitten.ui.component.ImageViewer
 import me.wjz.kitten.ui.component.rememberGlassContextMenuState
+import me.wjz.kitten.ui.icon.ContactSupport
 import me.wjz.kitten.ui.icon.ContentCopy
 import me.wjz.kitten.ui.icon.Delete
 import me.wjz.kitten.ui.icon.KeyboardArrowDown
@@ -320,6 +342,11 @@ private fun MessageList(
             // 倒着排，所以第 0 项是最后一项。
             when (val item = shown[shown.lastIndex - reversedIndex]) {
                 is ChatItem.Tools -> ToolCallList(calls = item.calls)
+                is ChatItem.Answered -> AnsweredQuestionCard(
+                    question = item.question,
+                    answer = item.answer,
+                    backdrop = backdrop,
+                )
                 is ChatItem.Bubble -> {
                     // index 是它在 messages 里的真实位置，长按删除要用。
                     val index = item.index
@@ -374,7 +401,7 @@ private class MenuTarget(val index: Int, val message: ChatMessage)
 /** 上一次组合时列表有几项、几条消息，用来看这一次是不是多出了一项、是不是刚发了一条。 */
 private class SeenCounts(var items: Int, var messages: Int)
 
-/** 列表里的一项：一个气泡，或者连在一起的一串工具调用。 */
+/** 列表里的一项：一个气泡、连在一起的一串工具调用，或者一张问过的问答卡片。 */
 private sealed interface ChatItem {
     /** LazyColumn 的 key，见 MessageList 的类注释。 */
     val key: Any
@@ -385,11 +412,21 @@ private sealed interface ChatItem {
     }
 
     /**
-     * 连在一起的一串工具调用（[ToolCallList]）。key 跟着这一串里第一条消息走：后面的步骤接上来，
-     * 清单变长，还是同一项。字符串的 key，不会和气泡的序号撞上。
+     * 连在一起的一串工具调用（[ToolCallList]）。key 跟着这一串里第一个调用走（第几条消息里的第几个）：
+     * 后面的步骤接上来，清单变长，还是同一项。字符串的 key，不会和气泡的序号撞上。
+     *
+     * 要带上"第几个"：问答卡片会把同一条消息里的调用切成前后两串，只用消息序号的话两串撞 key。
      */
-    class Tools(firstIndex: Int, val calls: List<ToolCallItem>) : ChatItem {
-        override val key: Any = "tools-$firstIndex"
+    class Tools(firstIndex: Int, firstCall: Int, val calls: List<ToolCallItem>) : ChatItem {
+        override val key: Any = "tools-$firstIndex-$firstCall"
+    }
+
+    /**
+     * 问过的一个问题（[AnsweredQuestionCard]）。[answer] 是 null 表示没等到回答任务就停了。
+     * key 是第几条消息里的第几个调用，和工具清单一个规矩、前缀不同。
+     */
+    class Answered(index: Int, call: Int, val question: String, val answer: String?) : ChatItem {
+        override val key: Any = "ask-$index-$call"
     }
 }
 
@@ -401,6 +438,8 @@ private sealed interface ChatItem {
  *   个只写着工具名的气泡。中间一说话、或者用户插了一句，清单就断开，后面的另起一张。
  * - 工具结果不画：它是给模型看的原始数据（一棵界面树动辄几千字符），塞进对话里只会把真正的内容
  *   淹掉。但清单里每一行的状态要看它：有没有结果、是不是报错了，点开那一行看的也是它。
+ * - 问用户的问题（ask_user）不进清单，单独一张问答卡片：问了什么、用户答了什么，不用点开清单
+ *   去翻。还在等回答的不画，底下压着的提问卡片就是它；参数坏了、报了错的照常是清单里的一行。
  * - 既没说话也没调工具的空壳不画——异常响应会产生这种。
  * - 正在生成的那条排在最后，序号是 messages.size：生成完的正式消息也落在这个序号上，对列表来说
  *   是同一项，交接时不闪。
@@ -416,11 +455,12 @@ private fun buildChatItems(
     val items = mutableListOf<ChatItem>()
     var group: MutableList<ToolCallItem>? = null
     var groupStart = 0
+    var groupFirstCall = 0
     // 这一轮里第一个还没结果的调用正在执行；同一步里排在它后面的还没轮到。
     var runningFound = false
 
     fun closeGroup() {
-        group?.let { items += ChatItem.Tools(groupStart, it) }
+        group?.let { items += ChatItem.Tools(groupStart, groupFirstCall, it) }
         group = null
     }
 
@@ -435,21 +475,38 @@ private fun buildChatItems(
                     closeGroup()
                     items += ChatItem.Bubble(index, message)
                 }
-                if (message.toolCalls.isNotEmpty()) {
-                    val current = group ?: mutableListOf<ToolCallItem>().also {
-                        group = it
-                        groupStart = index
+                message.toolCalls.forEachIndexed { position, call ->
+                    val result = results[call.id]?.content
+                    val status = when {
+                        result != null ->
+                            if (result.startsWith("ERROR")) ToolCallStatus.Failed else ToolCallStatus.Done
+                        !isResponding || index < runStart -> ToolCallStatus.Stopped
+                        !runningFound -> ToolCallStatus.Running.also { runningFound = true }
+                        else -> ToolCallStatus.Pending
                     }
-                    message.toolCalls.forEach { call ->
-                        val result = results[call.id]?.content
-                        val status = when {
-                            result != null ->
-                                if (result.startsWith("ERROR")) ToolCallStatus.Failed else ToolCallStatus.Done
-                            !isResponding || index < runStart -> ToolCallStatus.Stopped
-                            !runningFound -> ToolCallStatus.Running.also { runningFound = true }
-                            else -> ToolCallStatus.Pending
+                    val question = if (call.name == AskUserTool.NAME) AskUserTool.questionOf(call) else null
+                    when {
+                        // 正常的工具调用，和问坏了（没给问题、报了错）的提问，都是清单里的一行。
+                        question == null || status == ToolCallStatus.Failed -> {
+                            val current = group ?: mutableListOf<ToolCallItem>().also {
+                                group = it
+                                groupStart = index
+                                groupFirstCall = position
+                            }
+                            current += ToolCallItem(call, status, result)
                         }
-                        current += ToolCallItem(call, status, result)
+                        // 还在等回答：底下压着的提问卡片就是它，这里不再画一遍。
+                        status == ToolCallStatus.Running || status == ToolCallStatus.Pending -> Unit
+                        else -> {
+                            closeGroup()
+                            items += ChatItem.Answered(
+                                index = index,
+                                call = position,
+                                question = question,
+                                // 拆不出来（格式对不上）就照原样显示，总比说"没回答"强。
+                                answer = result?.let { AskUserTool.answerOf(it) ?: it.trim() },
+                            )
+                        }
                     }
                 }
             }
@@ -564,6 +621,123 @@ private fun QuestionCard(
     }
 }
 
+/**
+ * 已经问过的问题，答完以后留在对话里它原来的位置上，回头翻记录看得到当时选了什么。
+ *
+ * 要和模型的回复气泡一眼分开，所以从三处做出"卡片"的样子：
+ *
+ * - 底色深一档（questionCardTint），上半截一道渐隐的亮光，再垫一层软阴影，浮在页面上，像一张
+ *   实在的卡片；气泡是薄薄一层、贴着页面的。不带尾巴：它不是谁说的一句话。
+ * - 问题字大一号，前面一个带问号的对话框图标，一看就是"这是个问题"，不用再加标题。问和答中间
+ *   一道两头尖的分界线隔开。
+ * - 回答做成一个白色的小块、前面打个勾，长得和提问卡片里的选项按钮一样：就是当时点的那个
+ *   选项，定在了这里。
+ *
+ * 玻璃只模糊、不折射，和气泡一样（见 [ChatBubble]）：它在消息列表里跟着滚，折射每一帧都要重算。
+ *
+ * @param answer 用户的回答；null 表示没等到回答任务就停了，这时不画勾和白块，只写一句淡淡的说明。
+ */
+@Composable
+private fun AnsweredQuestionCard(
+    question: String,
+    answer: String?,
+    backdrop: Backdrop,
+) {
+    val colors = KittenTheme.colors
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            // 读屏一口气读完"问题，回答"，不用一行行摸。
+            .semantics(mergeDescendants = true) {}
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { AnsweredCardShape },
+                effects = { blur(BubbleBlur.toPx()) },
+                highlight = { GlassRim },
+                shadow = { AnsweredCardShadow },
+                onDrawSurface = {
+                    drawRect(colors.questionCardTint)
+                    // 上半截一道渐隐的亮光：没有它，深一档的底色看起来只是一块色块。
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                colors.controlTint.copy(alpha = colors.controlTint.alpha * AnsweredCardSheenAlpha),
+                                Color.Transparent,
+                            ),
+                            endY = size.height * 0.5f,
+                        ),
+                    )
+                },
+            )
+            .padding(AnsweredCardPadding),
+        verticalArrangement = Arrangement.spacedBy(AnsweredCardGap),
+    ) {
+        Row(verticalAlignment = Alignment.Top) {
+            // 图标和问题第一行的字居中对齐：问题折成几行时，图标还是对着第一行，不往中间跑。
+            Icon(
+                imageVector = KittenIcons.ContactSupport,
+                contentDescription = null,
+                // 和发送按钮里的图标同一种浅灰。
+                tint = colors.textSecondary,
+                modifier = Modifier
+                    .padding(top = QuestionIconTopInset)
+                    .size(QuestionIconSize),
+            )
+            Spacer(modifier = Modifier.width(QuestionIconGap))
+            Text(
+                text = question,
+                style = MaterialTheme.typography.bodyLarge,
+                color = colors.textPrimary,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        // 问和答中间的分界线：中间最粗，往两头一点点收成一个尖，像一道细细的梭子。
+        Spacer(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(DividerThickness)
+                .drawWithCache {
+                    val path = Path().apply {
+                        moveTo(0f, size.height / 2f)
+                        lineTo(size.width / 2f, 0f)
+                        lineTo(size.width, size.height / 2f)
+                        lineTo(size.width / 2f, size.height)
+                        close()
+                    }
+                    onDrawBehind { drawPath(path, colors.accentStrong) }
+                },
+        )
+        if (answer != null) {
+            Row(
+                modifier = Modifier
+                    .clip(AnsweredChoiceShape)
+                    .background(colors.controlTint)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = "你的回答",
+                    tint = colors.accentStrong,
+                    modifier = Modifier.size(AnsweredCheckSize),
+                )
+                Text(
+                    text = answer,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.textPrimary,
+                )
+            }
+        } else {
+            Text(
+                text = "没来得及回答",
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.textTertiary,
+            )
+        }
+    }
+}
+
 /** 等模型想的时候。正在执行哪一步不在这里说，在工具清单那一行上（见 [ToolCallList]）。 */
 @Composable
 private fun TypingIndicator() {
@@ -580,6 +754,42 @@ private fun TypingIndicator() {
 /** "正在思考…"和提问卡片那两项的 key。气泡的 key 是序号（Int），清单的是 "tools-" 开头，都撞不上。 */
 private const val TypingKey = "typing"
 private const val QuestionKey = "question"
+
+/** 问答卡片的圆角，和气泡、提问卡片同一档。 */
+private val AnsweredCardShape = RoundedCornerShape(GlassRadius.Large)
+
+/** 问答卡片的内边距，和提问卡片一样，两张卡片看起来是一套。 */
+private val AnsweredCardPadding = 14.dp
+
+/** 问题、分界线、回答三段之间空多少。 */
+private val AnsweredCardGap = 6.dp
+
+/**
+ * 问题前面那个图标多大、和问题隔多远。图标比字（16sp）略大一点，看得清里面的问号。
+ *
+ * [QuestionIconTopInset]：问题的一行高 24sp，图标 20dp，往下挪 2dp 正好和第一行字居中。
+ */
+private val QuestionIconSize = 28.dp
+private val QuestionIconGap = 10.dp
+private val QuestionIconTopInset = 0.dp
+
+/** 问和答中间那道分界线最粗处（正中间）多粗，往两头收到 0。 */
+private val DividerThickness = 2.dp
+
+/**
+ * 问答卡片底下的软阴影，让它浮起来一点、和贴着页面的气泡分开。比按钮的阴影（8dp、0.12）
+ * 散得开、淡一点：卡片面积大，阴影浓了像一块脏印子。
+ */
+private val AnsweredCardShadow = Shadow(radius = 12.dp, color = Color.Black.copy(alpha = 0.08f))
+
+/** 卡片上半截那道亮光最亮处有多亮（乘在 controlTint 那层白上）。 */
+private const val AnsweredCardSheenAlpha = 0.6f
+
+/** 回答那个白块的圆角，和提问卡片里的选项按钮同一档。 */
+private val AnsweredChoiceShape = RoundedCornerShape(GlassRadius.Small)
+
+/** 回答前面那个勾多大。 */
+private val AnsweredCheckSize = 16.dp
 
 /** 离最底下多远才算"翻上去了"、浮出回到最新的按钮：差一点点就冒出来会一闪一闪的。 */
 private val AwayFromLatestThreshold = 48.dp

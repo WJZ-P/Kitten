@@ -288,9 +288,9 @@ private val BubbleRadius = GlassRadius.Large
 
 /**
  * 气泡背后的模糊。和输入栏一样：背景里那层点阵是锐利的，糊开一点，压在上面的字才不花。
- * 给大了背景就只剩一片颜色，看不出是透的。
+ * 给大了背景就只剩一片颜色，看不出是透的。对话里的问答卡片也用这一档模糊（底色不同，见 ChatScreen 的 AnsweredQuestionCard）。
  */
-private val BubbleBlur = 4.dp
+internal val BubbleBlur = 4.dp
 
 /** 尾巴往外伸多宽。 */
 private val TailWidth = 6.dp

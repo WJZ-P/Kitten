@@ -4,6 +4,7 @@ import me.wjz.kitten.agent.AgentTool
 import me.wjz.kitten.agent.objectSchema
 import me.wjz.kitten.agent.stringArrayParam
 import me.wjz.kitten.agent.stringParam
+import me.wjz.kitten.llm.ToolCall
 import org.json.JSONObject
 
 /**
@@ -30,7 +31,7 @@ fun interface UserAsker {
  */
 class AskUserTool(private val asker: UserAsker) : AgentTool {
 
-    override val name = "ask_user"
+    override val name = NAME
 
     override val description =
         "问用户一个问题并等他回答。不确定该选哪个、信息不够没法往下做的时候用它，" +
@@ -56,6 +57,24 @@ class AskUserTool(private val asker: UserAsker) : AgentTool {
             .orEmpty()
             .distinct()
         val answer = asker.ask(question, options)
-        return "用户的回答：$answer"
+        return "$ANSWER_PREFIX$answer"
+    }
+
+    /**
+     * 对话里把问过的问题画成问答卡片（问题 + 用户的回答），要从历史里把这两样拆回来。
+     * 结果的格式在 [execute] 里定，拆也放在这里，两头不会对不上。
+     */
+    companion object {
+        const val NAME = "ask_user"
+
+        private const val ANSWER_PREFIX = "用户的回答："
+
+        /** 这次调用问的是什么。模型没给 question（参数坏了）时是 null。 */
+        fun questionOf(call: ToolCall): String? =
+            call.argumentsJson().optString("question").trim().takeIf { it.isNotEmpty() }
+
+        /** 用户答了什么。[result] 不是 [execute] 正常返回的那种（比如报错了）时是 null。 */
+        fun answerOf(result: String): String? =
+            result.takeIf { it.startsWith(ANSWER_PREFIX) }?.removePrefix(ANSWER_PREFIX)?.trim()
     }
 }
