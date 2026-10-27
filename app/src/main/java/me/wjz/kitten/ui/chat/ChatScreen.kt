@@ -673,7 +673,8 @@ private fun AnsweredQuestionCard(
         verticalArrangement = Arrangement.spacedBy(AnsweredCardGap),
     ) {
         Row(verticalAlignment = Alignment.Top) {
-            // 图标和问题第一行的字居中对齐：问题折成几行时，图标还是对着第一行，不往中间跑。
+            // 图标顶着问题第一行放：问题折成几行时，图标还是挨着第一行，不往中间跑。对齐的细节见
+            // QuestionIconTopInset。
             Icon(
                 imageVector = KittenIcons.ContactSupport,
                 contentDescription = null,
@@ -765,9 +766,11 @@ private val AnsweredCardPadding = 14.dp
 private val AnsweredCardGap = 6.dp
 
 /**
- * 问题前面那个图标多大、和问题隔多远。图标比字（16sp）略大一点，看得清里面的问号。
+ * 问题前面那个图标多大、和问题隔多远。图标比字（16sp）大一圈，是这张卡片一眼认得出的记号。
  *
- * [QuestionIconTopInset]：问题的一行高 24sp，图标 20dp，往下挪 2dp 正好和第一行字居中。
+ * [QuestionIconTopInset]：图标顶上往下挪多少。图标 28dp 比问题的一行（24sp）还高，顶着放（0）时
+ * 第一行字只比图标正中偏上 2dp，看着就是居中的。换成比一行矮的图标时要往下挪，挪
+ * （行高 − 图标）/ 2 正好和第一行字居中。
  */
 private val QuestionIconSize = 28.dp
 private val QuestionIconGap = 10.dp
