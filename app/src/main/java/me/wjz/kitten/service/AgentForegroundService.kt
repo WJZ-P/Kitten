@@ -257,12 +257,12 @@ class AgentForegroundService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
+    // 回到对话页、而且不能把开着的 Kitten 重建掉（会把正在跑的任务一起清掉），见 chatIntent。
     private fun openAppIntent(): PendingIntent =
         PendingIntent.getActivity(
             this,
             REQUEST_OPEN,
-            Intent(this, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            MainActivity.chatIntent(this),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 

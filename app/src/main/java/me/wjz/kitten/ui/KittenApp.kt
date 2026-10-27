@@ -41,6 +41,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import me.wjz.kitten.ui.chat.ChatScreen
 import me.wjz.kitten.ui.chat.ChatViewModel
@@ -84,11 +85,15 @@ import kotlin.math.abs
  * 都折射同一块背景，所以这里是唯一合适的位置。
  */
 @Composable
-fun KittenApp(actions: SetupActions) {
+fun KittenApp(actions: SetupActions, openChatRequests: Flow<Unit>) {
     val chatViewModel: ChatViewModel = viewModel()
     val chatState by chatViewModel.uiState.collectAsStateWithLifecycle()
 
     var currentTab by rememberSaveable { mutableStateOf(KittenTab.Chat) }
+    // 从通知点进来：Agent 的进度和提问卡片都在对话里，停在设置页的话用户还得自己找。
+    LaunchedEffect(openChatRequests) {
+        openChatRequests.collect { currentTab = KittenTab.Chat }
+    }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val toast = remember { ToastState() }
