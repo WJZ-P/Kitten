@@ -74,6 +74,18 @@ object PrivilegeManager {
             val expectedVersion = PrivilegeContract.PROTOCOL_VERSION
             if (version != expectedVersion) {
                 Log.w(TAG, "特权进程版本不符：它是 $version，App 要的是 $expectedVersion，拒绝这个 binder")
+                // 刚拉起的特权进程还是旧版本，说明磁盘上的 base.apk 本身就是旧的（特权进程按 base.apk
+                // 启动，见 Starter）。开发时多半是 Android Studio 的增量部署：它只把改动的 dex 推进
+                // App 自己的 code_cache/.overlay，App 进程读得到，特权进程读不到，重拉多少次都是旧的。
+                // 正式安装包不会这样。
+                if (version < expectedVersion) {
+                    Log.w(
+                        TAG,
+                        "base.apk 里的特权侧代码比 App 旧：如果是 Android Studio 部署的，大概是增量部署" +
+                            "（overlay）只更新了 App 进程的代码。完整重装一次（卸载重装，或在运行配置里勾选" +
+                            " Always install with package manager）即可",
+                    )
+                }
                 _state.value = PrivilegeState.Error("特权进程版本不符（$version ≠ $expectedVersion）")
                 return false
             }
