@@ -1,8 +1,13 @@
 package me.wjz.kitten.ui.chat
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
@@ -13,6 +18,9 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,8 +38,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +63,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import me.wjz.kitten.agent.describe
 import me.wjz.kitten.llm.ToolCall
@@ -105,11 +118,115 @@ internal class ToolCallItem(
  * - 没轮到的、被中断的：字再淡一档，被中断的后面跟个"已中断"。
  *
  * 执行完的点一下展开，看这一步返回了什么——模型点错了、读漏了，翻这里最快找到原因。
+ *
+ * ## 默认只露最新的一行
+ *
+ * 一个任务十几步，全摊开的话一屏都是清单，真正说的话被挤到看不见。所以一串调用默认只显示
+ * 最新的那一行：新的一步进来，旧的那行往上滑走、淡出，新的从下面升上来，看得出"又往前走了
+ * 一步"。
+ *
+ * 一串不止一步时，最新那一行的右边有个箭头和步数（[GroupToggle]），点了展开整串，箭头向右
+ * 转成向下；再点收回去。只有这一个图标：每一行自己的结果照样能点开看，只是不再画尖角，免得
+ * 一行里两个图标分不清哪个管什么。
+ *
+ * 展开时新的一步直接接在下面，不做滑动：整串都摊着，旧的那行本来就该留在原地。
  */
 @Composable
 internal fun ToolCallList(calls: List<ToolCallItem>, modifier: Modifier = Modifier) {
+    if (calls.isEmpty()) return
+    // 列表项滚出屏幕再滚回来也记得展没展开（LazyColumn 会按 key 帮每一项存着）。
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val latest = calls.last()
+    val earlier = calls.dropLast(1)
+    val toggle: (@Composable () -> Unit)? = if (earlier.isNotEmpty()) {
+        { GroupToggle(count = calls.size, expanded = expanded, onToggle = { expanded = !expanded }) }
+    } else {
+        null
+    }
+
     Column(modifier = modifier.fillMaxWidth()) {
-        calls.forEach { ToolCallRow(it) }
+        // 展开时，之前的那些从最新那一行的上面长出来；收起时往下缩回去。
+        AnimatedVisibility(
+            visible = expanded && earlier.isNotEmpty(),
+            enter = expandVertically(GroupSpec, expandFrom = Alignment.Bottom) + fadeIn(GroupFadeSpec),
+            exit = shrinkVertically(GroupSpec, shrinkTowards = Alignment.Bottom) + fadeOut(GroupFadeSpec),
+        ) {
+            Column {
+                earlier.forEach { item -> key(item.call.id) { ToolCallRow(item) } }
+            }
+        }
+        // 按调用 id 区分：同一步的状态变了（执行中 → 完成）只是原地更新，换了新的一步才滑。
+        AnimatedContent(
+            targetState = latest,
+            contentKey = { it.call.id },
+            transitionSpec = {
+                if (expanded) {
+                    EnterTransition.None togetherWith ExitTransition.None
+                } else {
+                    (slideInVertically(RowSlideSpec) { it } + fadeIn(RowFadeSpec)) togetherWith
+                        (slideOutVertically(RowSlideSpec) { -it } + fadeOut(RowFadeSpec)) using
+                        // 裁在这一行的高度里：滑走的旧行不该盖到上面的气泡上。
+                        SizeTransform(clip = true)
+                }
+            },
+            label = "latestToolCall",
+        ) { item ->
+            ToolCallRow(item, trailing = toggle)
+        }
+    }
+}
+
+/**
+ * 展开 / 收起整串的开关：步数加一个箭头，收着时向右，展开时转 90° 向下。
+ *
+ * 按下垫一层淡天依蓝，松手才切换。和行本身的点击区域是并排的两块，不嵌套，点哪个就是哪个。
+ */
+@Composable
+private fun GroupToggle(count: Int, expanded: Boolean, onToggle: () -> Unit) {
+    val colors = KittenTheme.colors
+    val press = rememberGlassPressState()
+    val currentOnToggle by rememberUpdatedState(onToggle)
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        animationSpec = ArrowSpec,
+        label = "toolGroupArrow",
+    )
+    Row(
+        modifier = Modifier
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                stateDescription = if (expanded) "已展开" else "已收起"
+                onClick(label = if (expanded) "收起" else "展开全部 $count 步") {
+                    currentOnToggle()
+                    true
+                }
+            }
+            .pointerInput(press) { detectGlassPress(press) { currentOnToggle() } }
+            .drawBehind {
+                val pressed = press.pressProgress.coerceIn(0f, 1f)
+                if (pressed > 0f) {
+                    drawRoundRect(colors.sliderIdle, cornerRadius = CornerRadius(RowRadius.toPx()), alpha = pressed)
+                }
+            }
+            .heightIn(min = RowMinHeight)
+            .padding(horizontal = TogglePaddingHorizontal),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            text = "$count 步",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.textTertiary,
+            maxLines = 1,
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = colors.textTertiary,
+            modifier = Modifier
+                .size(ArrowSize)
+                .graphicsLayer { rotationZ = rotation },
+        )
     }
 }
 
@@ -117,21 +234,19 @@ internal fun ToolCallList(calls: List<ToolCallItem>, modifier: Modifier = Modifi
  * 清单里的一行：一句人话（[describe]），字的颜色和流光表示状态（见 [ToolCallList]），被中断的
  * 后面再跟一个小标签。
  *
- * 有结果的行能点：按下垫一层淡天依蓝，松手才展开 / 收起（和下拉菜单的选项一样），右边的尖角
- * 跟着转过来。还没结果的行没什么可看的，不响应。
+ * 有结果的行能点：按下垫一层淡天依蓝，松手才展开 / 收起这一步的结果（和下拉菜单的选项一样）。
+ * 还没结果的行没什么可看的，不响应。
+ *
+ * @param trailing 行尾额外放的东西（整串的开关，见 [GroupToggle]）。放在能点的那块外面、和它并排，
+ *   点它不会顺带展开这一行的结果。
  */
 @Composable
-private fun ToolCallRow(item: ToolCallItem) {
+private fun ToolCallRow(item: ToolCallItem, trailing: (@Composable () -> Unit)? = null) {
     val colors = KittenTheme.colors
     val result = item.result
     val failed = item.status == ToolCallStatus.Failed
     var expanded by remember { mutableStateOf(false) }
     val press = rememberGlassPressState()
-    val arrowRotation by animateFloatAsState(
-        targetValue = if (expanded) 90f else 0f,
-        animationSpec = ArrowSpec,
-        label = "toolCallArrow",
-    )
     // 只有正在执行的那一行起动画（同一时刻最多一行），别的行不占时钟。
     val shimmerProgress = if (item.status == ToolCallStatus.Running) {
         rememberInfiniteTransition(label = "toolCallShimmer").animateFloat(
@@ -154,64 +269,59 @@ private fun ToolCallRow(item: ToolCallItem) {
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .then(
-                    if (result != null) {
-                        Modifier
-                            .semantics(mergeDescendants = true) {
-                                role = Role.Button
-                                // 失败只靠红色表示，读屏的用户看不见颜色，这里用话说出来。
-                                stateDescription = (if (failed) "失败，" else "") +
-                                    (if (expanded) "已展开" else "已收起")
-                                onClick(label = if (expanded) "收起结果" else "查看结果") {
-                                    expanded = !expanded
-                                    true
-                                }
-                            }
-                            .pointerInput(press) { detectGlassPress(press) { expanded = !expanded } }
-                    } else {
-                        Modifier
-                    },
-                )
-                .drawBehind {
-                    val pressed = press.pressProgress.coerceIn(0f, 1f)
-                    if (pressed > 0f) {
-                        drawRoundRect(colors.sliderIdle, cornerRadius = CornerRadius(RowRadius.toPx()), alpha = pressed)
-                    }
-                }
-                .heightIn(min = RowMinHeight)
-                .padding(horizontal = RowPaddingHorizontal),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(RowGap),
-        ) {
-            Text(
-                text = item.call.describe(),
-                style = MaterialTheme.typography.bodySmall,
-                color = textColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // 能点的这一块占满除开关以外的整行，按下的底色也只垫在这一块上。
+            Row(
                 modifier = Modifier
-                    .weight(1f, fill = false)
+                    .weight(1f)
                     .then(
-                        if (shimmerProgress != null) {
-                            Modifier.shimmer(progress = { shimmerProgress.value }, color = colors.accent)
+                        if (result != null) {
+                            Modifier
+                                .semantics(mergeDescendants = true) {
+                                    role = Role.Button
+                                    // 失败只靠红色表示，读屏的用户看不见颜色，这里用话说出来。
+                                    stateDescription = (if (failed) "失败，" else "") +
+                                        (if (expanded) "已展开" else "已收起")
+                                    onClick(label = if (expanded) "收起结果" else "查看结果") {
+                                        expanded = !expanded
+                                        true
+                                    }
+                                }
+                                .pointerInput(press) { detectGlassPress(press) { expanded = !expanded } }
                         } else {
                             Modifier
                         },
-                    ),
-            )
-            if (item.status == ToolCallStatus.Stopped) StatusTag("已中断", colors.textTertiary)
-            if (result != null) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = colors.textTertiary,
+                    )
+                    .drawBehind {
+                        val pressed = press.pressProgress.coerceIn(0f, 1f)
+                        if (pressed > 0f) {
+                            drawRoundRect(colors.sliderIdle, cornerRadius = CornerRadius(RowRadius.toPx()), alpha = pressed)
+                        }
+                    }
+                    .heightIn(min = RowMinHeight)
+                    .padding(horizontal = RowPaddingHorizontal),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(RowGap),
+            ) {
+                Text(
+                    text = item.call.describe(),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = textColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     modifier = Modifier
-                        .size(ArrowSize)
-                        .graphicsLayer { rotationZ = arrowRotation },
+                        .weight(1f, fill = false)
+                        .then(
+                            if (shimmerProgress != null) {
+                                Modifier.shimmer(progress = { shimmerProgress.value }, color = colors.accent)
+                            } else {
+                                Modifier
+                            },
+                        ),
                 )
+                if (item.status == ToolCallStatus.Stopped) StatusTag("已中断", colors.textTertiary)
             }
+            trailing?.invoke()
         }
         AnimatedVisibility(
             visible = expanded && result != null,
@@ -295,9 +405,33 @@ private val ShimmerBandWidth = 56.dp
 private const val ShimmerSweepMillis = 1100
 private const val ShimmerPauseMillis = 400
 
-/** 展开 / 收起的尖角多大，转过去的弹簧。 */
+/** 整串开关上的箭头多大，转过去的弹簧。 */
 private val ArrowSize = 16.dp
 private val ArrowSpec = spring<Float>(dampingRatio = 0.8f, stiffness = 600f)
+
+/** 整串开关左右的留白：按下时那层底色比"N 步 ›"宽一圈，也好按。 */
+private val TogglePaddingHorizontal = 6.dp
+
+/**
+ * 收着时换一步的动画：旧的往上滑走、新的从下面升上来，滑的距离是一整行。
+ *
+ * 弹簧给得偏硬、几乎不回弹：一步接一步可能很快，软了会叠成一团。淡入淡出比位移快一点，旧的那
+ * 行还没滑完就差不多看不见了，不会和新的那行挤在一起。
+ */
+private val RowSlideSpec = spring(
+    dampingRatio = 0.9f,
+    stiffness = 500f,
+    visibilityThreshold = IntOffset.VisibilityThreshold,
+)
+private val RowFadeSpec = spring<Float>(stiffness = 900f)
+
+/** 展开 / 收起整串时之前那些行长出来、缩回去的弹簧。 */
+private val GroupSpec = spring(
+    dampingRatio = 0.9f,
+    stiffness = 500f,
+    visibilityThreshold = IntSize.VisibilityThreshold,
+)
+private val GroupFadeSpec = spring<Float>(stiffness = 700f)
 
 /** 展开的结果往里缩多少，和这一行的字左边对齐。 */
 private val ResultIndent = RowPaddingHorizontal
