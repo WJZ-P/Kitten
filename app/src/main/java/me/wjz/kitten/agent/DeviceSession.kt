@@ -28,6 +28,11 @@ import java.util.UUID
  * 没有特权进程时退回主屏：用普通 Intent 拉起应用，照样能读能点，只是会打扰到用户。这条
  * 退路是必要的——不是每个用户都会去配 ADB。
  *
+ * ## 并发
+ *
+ * 每一轮任务各有一个 DeviceSession、各建自己的副屏，特权侧按 displayId 分开管，几轮可以同时跑。
+ * 限制在应用上：同一个应用同一时间只给一轮用，见 [AppLeases]。
+ *
  * ## 生命周期
  *
  * 一轮任务结束就 [release]：自己建的副屏要收掉，不然会一直挂在系统里。收的时候副屏上的应用
@@ -63,9 +68,29 @@ class DeviceSession(private val context: Context) {
     /**
      * 把应用拉起来，之后的操作都对着它。
      *
+     * 拉之前先占住这个应用（[AppLeases]）：别的任务正在用它的话不拉，告诉模型先做别的。拉起来了
+     * 就换成占着它、放掉之前那个；没拉起来，刚占的放掉。
+     *
      * @return 给模型看的一句话：拉到哪块屏上了，或者为什么没拉起来。
      */
     fun launchApp(packageName: String): String {
+        val previous = currentPackage
+        if (!AppLeases.tryAcquire(packageName, this)) {
+            Log.i(TAG, "$packageName 正被另一个任务占着，这一轮先不拉")
+            return "ERROR app_busy: $packageName 正在被另一个任务操作，同一个应用不能两个任务同时用。" +
+                "先去做用不到它的部分，过一会儿再来拉它。"
+        }
+        val result = launchOnSomeDisplay(packageName)
+        if (currentPackage == packageName) {
+            if (previous != null && previous != packageName) AppLeases.release(previous, this)
+        } else if (packageName != previous) {
+            AppLeases.release(packageName, this)
+        }
+        return result
+    }
+
+    /** 真正去拉：副屏优先，不行退回主屏。拉起来了会把 [currentPackage] 换成它。 */
+    private fun launchOnSomeDisplay(packageName: String): String {
         // 副屏是首选：不打扰用户。拿不到特权进程就退回主屏。
         if (VirtualDisplayManager.isAvailable) {
             val metrics = context.resources.displayMetrics
@@ -138,7 +163,7 @@ class DeviceSession(private val context: Context) {
         ImageAttachment(path = file.absolutePath, width = bounds.outWidth, height = bounds.outHeight)
     }.onFailure { Log.w(TAG, "截图存不下", it) }.getOrNull()
 
-    /** 一轮任务结束，收掉自己建的副屏和这一轮的截图。 */
+    /** 一轮任务结束，收掉自己建的副屏和这一轮的截图，放掉占着的应用。 */
     fun release() {
         // 截图只在这一轮里有用，历史里不留（见 ChatViewModel 的 forHistory）。
         screenshotDir?.let { dir -> runCatching { dir.deleteRecursively() } }
@@ -151,6 +176,7 @@ class DeviceSession(private val context: Context) {
         displayId = Display.DEFAULT_DISPLAY
         lastSnapshot = null
         currentPackage = null
+        AppLeases.releaseAll(this)
     }
 
     private companion object {
