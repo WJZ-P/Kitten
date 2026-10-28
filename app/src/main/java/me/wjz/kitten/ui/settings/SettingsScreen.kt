@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -35,7 +36,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.R
+import kotlinx.coroutines.launch
 import me.wjz.kitten.agent.SystemPrompt
+import me.wjz.kitten.data.memory.MemoryStore
 import me.wjz.kitten.llm.LlmConfigStore
 import me.wjz.kitten.llm.LlmProfile
 import me.wjz.kitten.llm.LlmProfiles
@@ -52,6 +55,8 @@ import me.wjz.kitten.ui.component.GlassListItem
 import me.wjz.kitten.ui.component.GlassSection
 import me.wjz.kitten.ui.component.GlassSlider
 import me.wjz.kitten.ui.component.GlassSwitch
+import me.wjz.kitten.ui.component.LocalToast
+import me.wjz.kitten.ui.component.ToastTone
 import me.wjz.kitten.ui.setup.DebugCard
 import me.wjz.kitten.ui.setup.PermissionItem
 import me.wjz.kitten.ui.setup.PrivilegeSection
@@ -60,7 +65,7 @@ import kotlin.math.roundToInt
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
- * 设置页：模型配置 + token 用量 + 系统提示词 + 权限管理。
+ * 设置页：模型配置 + token 用量 + 记忆 + 系统提示词 + 权限管理。
  *
  * 原先这些内容独占一个启动页（SetupScreen），现在收进 tab。权限引导本来就是
  * 一次性的事，配好之后不该还占着首屏——首屏该是对话。
@@ -96,6 +101,12 @@ fun SettingsScreen(
     var customPrompt by remember { mutableStateOf(SystemPrompt.loadCustomPersona(context)) }
     var promptDraft by remember { mutableStateOf("") }
     var editingPrompt by remember { mutableStateOf(false) }
+    // 记忆：和对话页共用一个 MemoryStore，模型刚记下一条这里就多一行。
+    val memoryStore = remember(context) { MemoryStore.get(context) }
+    val memories by remember(memoryStore) { memoryStore.observe() }.collectAsState(initial = emptyList())
+    var managingMemory by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val toast = LocalToast.current
 
     // 存下来，并通知对话页：它的"模型是否已配置"是启动时读的，要主动让它重读。
     fun commit(next: LlmProfiles) {
@@ -148,6 +159,8 @@ fun SettingsScreen(
         )
 
         TokenUsageSection(backdrop = backdrop)
+
+        MemorySection(backdrop = backdrop, memories = memories, onOpen = { managingMemory = true })
 
         SystemPromptSection(
             backdrop = backdrop,
@@ -227,6 +240,25 @@ fun SettingsScreen(
             editingPrompt = false
         },
         onDismiss = { editingPrompt = false },
+        backdrop = backdrop,
+    )
+
+    MemoryDialog(
+        visible = managingMemory,
+        memories = memories,
+        onAdd = { content ->
+            scope.launch {
+                if (memoryStore.add(content) == null) {
+                    toast.show("记满 ${MemoryStore.MAX_ENTRIES} 条啦，先删掉几条旧的吧～", tone = ToastTone.Error)
+                }
+            }
+        },
+        onUpdate = { id, content -> scope.launch { memoryStore.update(id, content) } },
+        onDelete = { id ->
+            scope.launch { memoryStore.delete(id) }
+            toast.show("忘掉啦～")
+        },
+        onDismiss = { managingMemory = false },
         backdrop = backdrop,
     )
 }
