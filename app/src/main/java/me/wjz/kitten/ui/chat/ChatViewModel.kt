@@ -26,6 +26,7 @@ import me.wjz.kitten.agent.DeviceSession
 import me.wjz.kitten.agent.SystemPrompt
 import me.wjz.kitten.agent.ToolRegistry
 import me.wjz.kitten.agent.tools.AskUserTool
+import me.wjz.kitten.agent.tools.ForgetMemoryTool
 import me.wjz.kitten.agent.tools.InputTextTool
 import me.wjz.kitten.agent.tools.LaunchAppTool
 import me.wjz.kitten.agent.tools.ListAppsTool
@@ -33,6 +34,8 @@ import me.wjz.kitten.agent.tools.LongPressTool
 import me.wjz.kitten.agent.tools.MainScreenshotTool
 import me.wjz.kitten.agent.tools.PressKeyTool
 import me.wjz.kitten.agent.tools.ReadScreenTool
+import me.wjz.kitten.agent.tools.RecallMemoryTool
+import me.wjz.kitten.agent.tools.SaveMemoryTool
 import me.wjz.kitten.agent.tools.ScreenshotTool
 import me.wjz.kitten.agent.tools.ScrollTool
 import me.wjz.kitten.agent.tools.SwipeTool
@@ -41,6 +44,7 @@ import me.wjz.kitten.agent.tools.UserAsker
 import me.wjz.kitten.agent.tools.WaitTool
 import me.wjz.kitten.agent.withInterruptedResults
 import me.wjz.kitten.data.attachment.AttachmentStore
+import me.wjz.kitten.data.memory.MemoryStore
 import me.wjz.kitten.data.session.SessionRepository
 import me.wjz.kitten.data.session.sqlite.SqliteSessionRepository
 import me.wjz.kitten.data.stats.TokenStatsStore
@@ -73,6 +77,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository: SessionRepository = SqliteSessionRepository(application)
     private val attachmentStore = AttachmentStore(application)
+
+    /** 关于用户的记忆。和设置页共用一个实例，模型刚记下的那边马上看得到，见 [MemoryStore]。 */
+    private val memoryStore = MemoryStore.get(application)
 
     /** 正在等的那个回答。Agent 调 ask_user 时挂上，用户答了或者任务被取消时清掉。 */
     private var pendingAnswer: CancellableContinuation<String>? = null
@@ -292,7 +299,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val history = _uiState.value.messages.withInterruptedResults()
             // 这一轮的工具和现场。用完要 release，副屏得收掉。
             val device = DeviceSession(getApplication())
-            val registry = ToolRegistry(deviceTools(device))
+            val registry = ToolRegistry(deviceTools(device) + memoryTools())
 
             var config = LlmConfigStore.load(getApplication())
             // 这一轮开始时读一次，整轮用同一份：中途变了会让 thinking 块失效，见 SystemPrompt。
@@ -499,6 +506,13 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         MainScreenshotTool(device),
         WaitTool(),
         AskUserTool(asker),
+    )
+
+    /** 记忆的三个工具。不依赖这一轮的屏幕，和操作手机的那些分开放。 */
+    private fun memoryTools(): List<AgentTool> = listOf(
+        RecallMemoryTool(memoryStore),
+        SaveMemoryTool(memoryStore),
+        ForgetMemoryTool(memoryStore),
     )
 
     /**

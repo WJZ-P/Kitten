@@ -91,6 +91,13 @@ fun ToolCall.describe(): String {
         "screenshot_main_screen" -> "看一眼你的屏幕"
         "wait" -> "等待 ${args.optInt("seconds", 1)} 秒"
         "ask_user" -> "向你提问"
+        // 记了什么、改成了什么不写出来：这句话也是常驻通知的标题，记的可能是密码、卡号，
+        // 锁屏上一亮就露了。要看具体内容，点开清单里那一行看工具结果。
+        "recall_memory" -> args.optString("query").trim().takeIf { it.isNotEmpty() }
+            ?.let { "翻记忆「${it.take(MaxQuotedChars)}${if (it.length > MaxQuotedChars) "…" else ""}」" }
+            ?: "翻记忆"
+        "save_memory" -> if (args.has("replace_id") && !args.isNull("replace_id")) "修改一条记忆" else "记下一件事"
+        "forget_memory" -> "忘掉一件事"
         else -> name
     }
 }
