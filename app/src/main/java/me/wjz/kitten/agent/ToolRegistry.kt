@@ -91,6 +91,7 @@ fun ToolCall.describe(): String {
         "screenshot_main_screen" -> "看一眼你的屏幕"
         "wait" -> "等待 ${args.optInt("seconds", 1)} 秒"
         "ask_user" -> "向你提问"
+        "start_task" -> "开始任务「${args.optString("title").trim().take(MaxQuotedChars)}」"
         // 记了什么、改成了什么不写出来：这句话也是常驻通知的标题，记的可能是密码、卡号，
         // 锁屏上一亮就露了。要看具体内容，点开清单里那一行看工具结果。
         "recall_memory" -> args.optString("query").trim().takeIf { it.isNotEmpty() }

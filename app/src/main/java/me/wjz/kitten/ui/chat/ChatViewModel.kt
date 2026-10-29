@@ -38,6 +38,7 @@ import me.wjz.kitten.agent.tools.RecallMemoryTool
 import me.wjz.kitten.agent.tools.SaveMemoryTool
 import me.wjz.kitten.agent.tools.ScreenshotTool
 import me.wjz.kitten.agent.tools.ScrollTool
+import me.wjz.kitten.agent.tools.StartTaskTool
 import me.wjz.kitten.agent.tools.SwipeTool
 import me.wjz.kitten.agent.tools.TapTool
 import me.wjz.kitten.agent.tools.UserAsker
@@ -299,7 +300,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val history = _uiState.value.messages.withInterruptedResults()
             // 这一轮的工具和现场。用完要 release，副屏得收掉。
             val device = DeviceSession(getApplication())
-            val registry = ToolRegistry(deviceTools(device) + memoryTools())
+            val registry = ToolRegistry(deviceTools(device) + memoryTools() + StartTaskTool())
 
             var config = LlmConfigStore.load(getApplication())
             // 这一轮开始时读一次，整轮用同一份：中途变了会让 thinking 块失效，见 SystemPrompt。
