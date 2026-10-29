@@ -23,6 +23,11 @@ import org.json.JSONObject
  * 所以每次记忆读写都会出现在对话的工具清单里，设置页也能随时看、随时删，兜个底。
  */
 
+/** 三个工具的名字。界面要认出"这是记忆操作、不算操作手机"（见 ChatScreen 的自动任务），所以单独拿出来。 */
+const val RECALL_MEMORY = "recall_memory"
+const val SAVE_MEMORY = "save_memory"
+const val FORGET_MEMORY = "forget_memory"
+
 /** recall_memory 一次最多返回几条。全列出来（最多 200 条）会把上下文撑得很大，多了让模型用关键词缩小范围。 */
 private const val MAX_RECALLED = 50
 
@@ -37,7 +42,7 @@ private const val MAX_RECALLED = 50
  */
 class RecallMemoryTool(private val store: MemoryStore) : AgentTool {
 
-    override val name = "recall_memory"
+    override val name = RECALL_MEMORY
 
     override val description =
         "翻一翻你记下的、关于用户的事：偏好、忌口、称呼、常用地址、账号信息之类，换了对话也还在。" +
@@ -80,7 +85,7 @@ class RecallMemoryTool(private val store: MemoryStore) : AgentTool {
  */
 class SaveMemoryTool(private val store: MemoryStore) : AgentTool {
 
-    override val name = "save_memory"
+    override val name = SAVE_MEMORY
 
     override val description =
         "记下一件关于用户的事，以后换了对话也记得。什么时候记：" +
@@ -126,7 +131,7 @@ class SaveMemoryTool(private val store: MemoryStore) : AgentTool {
 /** 忘掉一条。 */
 class ForgetMemoryTool(private val store: MemoryStore) : AgentTool {
 
-    override val name = "forget_memory"
+    override val name = FORGET_MEMORY
 
     override val description =
         "删掉一条记忆。用户让你忘掉某件事，或者某条记忆已经不对、又没有新的来替换时用。" +

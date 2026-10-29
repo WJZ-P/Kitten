@@ -103,10 +103,10 @@ data class KittenColors(
      */
     val modalSurface: Color,
     /**
-     * 对话里问答卡片（Agent 问过的问题 + 用户的回答）的底色。比 [glassTint] 深一档：卡片和模型的
-     * 回复气泡挨在一起，同一种底色的话两者分不开。也不能像用户气泡那样整块染蓝，那会被看成用户说的话。
+     * 对话里卡片（问答卡片、任务卡片）的底色。比 [glassTint] 深一档：卡片和模型的回复气泡挨在
+     * 一起，同一种底色的话两者分不开。也不能像用户气泡那样整块染蓝，那会被看成用户说的话。
      */
-    val questionCardTint: Color,
+    val chatCardTint: Color,
 
     /** 卡片里流动的光雾：一层深一点的天依蓝薄雾，上面浮着白色的亮雾。透明度由着色器按浓淡算。 */
     val cardMistHaze: Color,
@@ -172,7 +172,7 @@ val LightKittenColors = KittenColors(
     // 和背景顶部同色：再叠上 glassTint，窗体和页面上的卡片颜色接近。
     modalSurface = Tianyi50.copy(alpha = 0.92f),
     // 气泡是 0.18，用户气泡是 0.55 左右的实蓝；卡在中间，一眼看得出是另一种东西。
-    questionCardTint = Tianyi500.copy(alpha = 0.32f),
+    chatCardTint = Tianyi500.copy(alpha = 0.32f),
     cardMistHaze = Tianyi450,
     cardMistLight = Color.White,
 

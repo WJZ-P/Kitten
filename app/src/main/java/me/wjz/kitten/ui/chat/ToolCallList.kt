@@ -37,6 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
@@ -132,8 +133,19 @@ internal class ToolCallItem(
  * 展开时新的一步直接接在下面，不做滑动：整串都摊着，旧的那行本来就该留在原地。
  */
 @Composable
-internal fun ToolCallList(calls: List<ToolCallItem>, modifier: Modifier = Modifier) {
+internal fun ToolCallList(
+    calls: List<ToolCallItem>,
+    modifier: Modifier = Modifier,
+    collapsible: Boolean = true,
+) {
     if (calls.isEmpty()) return
+    // 任务详情的模态窗里本来就是来看完整过程的，一行行全摊开，不折叠。
+    if (!collapsible) {
+        Column(modifier = modifier.fillMaxWidth()) {
+            calls.forEach { item -> key(item.call.id) { ToolCallRow(item) } }
+        }
+        return
+    }
     // 列表项滚出屏幕再滚回来也记得展没展开（LazyColumn 会按 key 帮每一项存着）。
     var expanded by rememberSaveable { mutableStateOf(false) }
     val latest = calls.last()
@@ -247,26 +259,8 @@ private fun ToolCallRow(item: ToolCallItem, trailing: (@Composable () -> Unit)? 
     val failed = item.status == ToolCallStatus.Failed
     var expanded by remember { mutableStateOf(false) }
     val press = rememberGlassPressState()
-    // 只有正在执行的那一行起动画（同一时刻最多一行），别的行不占时钟。
-    val shimmerProgress = if (item.status == ToolCallStatus.Running) {
-        rememberInfiniteTransition(label = "toolCallShimmer").animateFloat(
-            initialValue = 0f,
-            targetValue = 1f,
-            // 每扫完一遍歇一下再扫：一刻不停地扫，看着像在催。歇着的时候光带停在左边外面，看不见。
-            animationSpec = infiniteRepeatable(
-                tween(ShimmerSweepMillis, delayMillis = ShimmerPauseMillis, easing = LinearEasing),
-                RepeatMode.Restart,
-            ),
-            label = "toolCallShimmerProgress",
-        )
-    } else {
-        null
-    }
-    val textColor = when (item.status) {
-        ToolCallStatus.Failed -> colors.danger
-        ToolCallStatus.Pending, ToolCallStatus.Stopped -> colors.textTertiary
-        ToolCallStatus.Running, ToolCallStatus.Done -> colors.textSecondary
-    }
+    val shimmerProgress = rememberShimmerProgress(active = item.status == ToolCallStatus.Running)
+    val textColor = item.status.textColor()
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -355,7 +349,7 @@ private fun ToolCallRow(item: ToolCallItem, trailing: (@Composable () -> Unit)? 
  * [progress] 0..1：光带的中心从左边外面半个带宽走到右边外面半个带宽，进场出场都是完整的。只在
  * 绘制阶段读，扫的时候不重组。
  */
-private fun Modifier.shimmer(progress: () -> Float, color: Color): Modifier =
+internal fun Modifier.shimmer(progress: () -> Float, color: Color): Modifier =
     graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
         .drawWithContent {
             drawContent()
@@ -370,6 +364,38 @@ private fun Modifier.shimmer(progress: () -> Float, color: Color): Modifier =
                 blendMode = BlendMode.SrcAtop,
             )
         }
+
+/**
+ * 流光的进度（0..1，见 [shimmer]）。[active] 为 false 时返回 null、不起动画：同一时刻最多一行
+ * 在执行，别的行不占时钟。清单的行和任务卡片上那一行共用。
+ */
+@Composable
+internal fun rememberShimmerProgress(active: Boolean): State<Float>? =
+    if (active) {
+        rememberInfiniteTransition(label = "toolCallShimmer").animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            // 每扫完一遍歇一下再扫：一刻不停地扫，看着像在催。歇着的时候光带停在左边外面，看不见。
+            animationSpec = infiniteRepeatable(
+                tween(ShimmerSweepMillis, delayMillis = ShimmerPauseMillis, easing = LinearEasing),
+                RepeatMode.Restart,
+            ),
+            label = "toolCallShimmerProgress",
+        )
+    } else {
+        null
+    }
+
+/** 一行工具调用的字是什么颜色，见 [ToolCallList] 的类注释。清单的行和任务卡片上那一行共用。 */
+@Composable
+internal fun ToolCallStatus.textColor(): Color {
+    val colors = KittenTheme.colors
+    return when (this) {
+        ToolCallStatus.Failed -> colors.danger
+        ToolCallStatus.Pending, ToolCallStatus.Stopped -> colors.textTertiary
+        ToolCallStatus.Running, ToolCallStatus.Done -> colors.textSecondary
+    }
+}
 
 /** 行尾的小标签（"已中断"）。 */
 @Composable
@@ -417,13 +443,15 @@ private val TogglePaddingHorizontal = 6.dp
  *
  * 弹簧给得偏硬、几乎不回弹：一步接一步可能很快，软了会叠成一团。淡入淡出比位移快一点，旧的那
  * 行还没滑完就差不多看不见了，不会和新的那行挤在一起。
+ *
+ * 任务卡片上最下面那一行（见 [TaskCard]）也用这一套，两处换一步的动法一样。
  */
-private val RowSlideSpec = spring(
+internal val RowSlideSpec = spring(
     dampingRatio = 0.9f,
     stiffness = 500f,
     visibilityThreshold = IntOffset.VisibilityThreshold,
 )
-private val RowFadeSpec = spring<Float>(stiffness = 900f)
+internal val RowFadeSpec = spring<Float>(stiffness = 900f)
 
 /** 展开 / 收起整串时之前那些行长出来、缩回去的弹簧。 */
 private val GroupSpec = spring(

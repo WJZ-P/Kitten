@@ -45,8 +45,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.ClipEntry
@@ -60,12 +58,13 @@ import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.shadow.Shadow
 import kotlinx.coroutines.launch
 import me.wjz.kitten.agent.AgentQuestion
 import me.wjz.kitten.agent.tools.AskUserTool
+import me.wjz.kitten.agent.tools.FORGET_MEMORY
+import me.wjz.kitten.agent.tools.RECALL_MEMORY
+import me.wjz.kitten.agent.tools.SAVE_MEMORY
+import me.wjz.kitten.agent.tools.StartTaskTool
 import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.ui.component.GlassButton
 import me.wjz.kitten.ui.component.GlassButtonStyle
@@ -73,7 +72,6 @@ import me.wjz.kitten.ui.component.GlassContextMenu
 import me.wjz.kitten.ui.component.GlassIconButton
 import me.wjz.kitten.ui.component.GlassMenuItem
 import me.wjz.kitten.ui.component.GlassRadius
-import me.wjz.kitten.ui.component.GlassRim
 import me.wjz.kitten.ui.component.GlassSurface
 import me.wjz.kitten.ui.component.ImageViewer
 import me.wjz.kitten.ui.component.rememberGlassContextMenuState
@@ -304,9 +302,18 @@ private fun MessageList(
     val shown = remember(messages, streamingReply, isResponding) {
         buildChatItems(messages, streamingReply, isResponding)
     }
+    // 正在看哪个任务的完整过程（任务卡片的 key），没在看是 null。见 TaskDetailDialog。
+    var openTaskKey by remember { mutableStateOf<Any?>(null) }
+    val openTask = openTaskKey?.let { key -> shown.firstOrNull { it.key == key } as? ChatItem.Task }
+    // 窗收起的动画还在放时，里面的内容不能一下子没了：记着最后看的那一份。
+    var lastOpenedTask by remember { mutableStateOf<TaskInfo?>(null) }
+    SideEffect { if (openTask != null) lastOpenedTask = openTask.task }
+    // 任务卡片正在办：卡片上已经写着"进行中"和"正在思考…"了，外面不再多一行。
+    val taskRunning = (shown.lastOrNull() as? ChatItem.Task)?.task?.status == TaskStatus.Running
     // 等用户回答时不显示"正在思考"：它没在想，就是在等，卡片本身已经说清楚了。正在执行工具时
     // 也不显示：清单里那一行的圆点正闪着，已经说了在干什么。
-    val showTyping = isResponding && streamingReply == null && pendingQuestion == null && agentProgress == null
+    val showTyping = isResponding && streamingReply == null && pendingQuestion == null && agentProgress == null &&
+        !taskRunning
     // 括号不能省：Kotlin 里 `a + if (x) 1 else 0 + if (y) 1 else 0` 会把后半截算进 else 分支。
     val itemCount = shown.size + (if (showTyping) 1 else 0) + (if (pendingQuestion != null) 1 else 0)
 
@@ -342,6 +349,12 @@ private fun MessageList(
             // 倒着排，所以第 0 项是最后一项。
             when (val item = shown[shown.lastIndex - reversedIndex]) {
                 is ChatItem.Tools -> ToolCallList(calls = item.calls)
+                is ChatItem.Task -> TaskCard(
+                    task = item.task,
+                    waitingForAnswer = pendingQuestion != null,
+                    backdrop = backdrop,
+                    onOpen = { openTaskKey = item.key },
+                )
                 is ChatItem.Answered -> AnsweredQuestionCard(
                     question = item.question,
                     answer = item.answer,
@@ -393,6 +406,15 @@ private fun MessageList(
         },
         backdrop = backdrop,
     )
+
+    // 任务还在办时，窗里跟着往下长：给的是这一次整理出来的那一份，不是点开时的快照。
+    TaskDetailDialog(
+        visible = openTask != null,
+        task = openTask?.task ?: lastOpenedTask,
+        waitingForAnswer = pendingQuestion != null,
+        onDismiss = { openTaskKey = null },
+        backdrop = backdrop,
+    )
 }
 
 /** 长按菜单对着的那一条：它在对话里的序号，和长按那一刻的消息本身。 */
@@ -401,7 +423,7 @@ private class MenuTarget(val index: Int, val message: ChatMessage)
 /** 上一次组合时列表有几项、几条消息，用来看这一次是不是多出了一项、是不是刚发了一条。 */
 private class SeenCounts(var items: Int, var messages: Int)
 
-/** 列表里的一项：一个气泡、连在一起的一串工具调用，或者一张问过的问答卡片。 */
+/** 列表里的一项：一个气泡、连在一起的一串工具调用、一张问过的问答卡片，或者一张任务卡片。 */
 private sealed interface ChatItem {
     /** LazyColumn 的 key，见 MessageList 的类注释。 */
     val key: Any
@@ -428,6 +450,46 @@ private sealed interface ChatItem {
     class Answered(index: Int, call: Int, val question: String, val answer: String?) : ChatItem {
         override val key: Any = "ask-$index-$call"
     }
+
+    /**
+     * 一张任务卡片（[TaskCard]）。key 是开任务的那次 start_task 在第几条消息里的第几个调用：任务
+     * 往前走、卡片内容在变，还是同一项。
+     */
+    class Task(index: Int, call: Int, val task: TaskInfo) : ChatItem {
+        override val key: Any = "task-$index-$call"
+    }
+}
+
+/**
+ * 整理消息时正在收进卡片的那个任务，见 [buildChatItems]。
+ *
+ * @param index 开任务的那次调用在第几条消息里，[call] 是那条消息里的第几个调用，一起组成卡片的 key。
+ * @param auto 是界面自动开的（模型没调 start_task），标题是用户那句话的开头。之后模型补调了
+ *   start_task 的话，直接换成它起的标题，不另开一张。
+ */
+private class TaskBuilder(val index: Int, val call: Int, var title: String, var auto: Boolean) {
+    private val events = mutableListOf<TaskEvent>()
+
+    fun said(text: String) {
+        events += TaskEvent.Said(text)
+    }
+
+    fun asked(question: String, answer: String?) {
+        events += TaskEvent.Asked(question, answer)
+    }
+
+    /** 接在最后那串工具后面；最后一件事不是工具（说了话、问了问题），另起一串。 */
+    fun tool(item: ToolCallItem) {
+        val last = events.lastOrNull()
+        if (last is TaskEvent.Tools) {
+            events[events.lastIndex] = TaskEvent.Tools(last.calls + item)
+        } else {
+            events += TaskEvent.Tools(listOf(item))
+        }
+    }
+
+    fun build(status: TaskStatus, streamingText: String?): ChatItem.Task =
+        ChatItem.Task(index, call, TaskInfo(title, events.toList(), status, streamingText))
 }
 
 /**
@@ -443,6 +505,29 @@ private sealed interface ChatItem {
  * - 既没说话也没调工具的空壳不画——异常响应会产生这种。
  * - 正在生成的那条排在最后，序号是 messages.size：生成完的正式消息也落在这个序号上，对列表来说
  *   是同一项，交接时不闪。
+ *
+ * ## 任务卡片
+ *
+ * 模型调了 start_task，从这一下开始到这一轮结束，说的话、调的工具、问过的问题都收进一张任务卡片
+ * （[TaskBuilder]），不再一条条摊在对话里：
+ *
+ * - 开任务那条消息里 start_task 之前说的话（"好的，我来找找～"）还是气泡，在卡片上面。
+ * - 一轮里最后那段不带工具调用的话是讲结果的：任务到这里办完，这段话放在卡片外面当气泡——用户
+ *   多半只看它。
+ * - 一轮里又调了一次 start_task：前一个任务算办完，另开一张。
+ * - 一轮没说完就断了（用户喊停、模型调用失败），任务算中断；用户发了下一句，同样收尾。
+ * - 正在冒的字先算在卡片里：还不知道它是边做边说还是讲结果的那段。说完要是不带工具调用，下一次
+ *   整理时它就出现在卡片外面。
+ * - 还在等回答的提问照旧不画，提问卡片压在对话最下面；答过的问题收进卡片。
+ *
+ * ## 模型没开任务时，界面自己开
+ *
+ * 实测模型经常不调 start_task（提示词里写了也一样，尤其是历史里一直没调过的老会话，它会照着
+ * 以前的样子来）。所以兜一层：一轮里操作手机满 [AutoTaskMinSteps] 步（查记忆、提问不算），就从
+ * 第一步操作手机的地方开始自动收进卡片，标题用用户那句话的开头。模型后来补调了 start_task，
+ * 换成它起的标题，不另开一张。
+ *
+ * 一轮里操作手机不到这么多步（看一眼屏幕、查个记忆），一切照旧：气泡加折叠的工具清单。
  */
 private fun buildChatItems(
     messages: List<ChatMessage>,
@@ -452,30 +537,57 @@ private fun buildChatItems(
     val results = messages.filterIsInstance<ChatMessage.ToolResult>().associateBy { it.callId }
     // 这一轮从用户最后一句话开始。之前几轮里没等到结果的调用是那时候被停掉的，不是现在还在跑。
     val runStart = messages.indexOfLast { it is ChatMessage.User }
+    // 哪几轮要自动开任务：用户那句话的序号。
+    val autoTaskRuns = runsNeedingAutoTask(messages)
     val items = mutableListOf<ChatItem>()
     var group: MutableList<ToolCallItem>? = null
     var groupStart = 0
     var groupFirstCall = 0
     // 这一轮里第一个还没结果的调用正在执行；同一步里排在它后面的还没轮到。
     var runningFound = false
+    // 正在收进卡片的任务，没开任务时是 null。
+    var task: TaskBuilder? = null
+    // 当前这一轮是从哪句用户的话开始的，和它自动开任务时用的标题。
+    var currentRun = -1
+    var currentRunTitle = DefaultAutoTaskTitle
 
     fun closeGroup() {
         group?.let { items += ChatItem.Tools(groupStart, groupFirstCall, it) }
         group = null
     }
 
+    fun closeTask(status: TaskStatus) {
+        task?.let { items += it.build(status, streamingText = null) }
+        task = null
+    }
+
     messages.forEachIndexed { index, message ->
         when (message) {
             is ChatMessage.User -> {
                 closeGroup()
+                // 上一轮的任务没等到讲结果的那段就到了下一句：那一轮是被打断的。
+                closeTask(TaskStatus.Stopped)
                 items += ChatItem.Bubble(index, message)
+                currentRun = index
+                currentRunTitle = autoTaskTitle(message.text)
             }
             is ChatMessage.Assistant -> {
-                if (!message.text.isNullOrBlank()) {
-                    closeGroup()
-                    items += ChatItem.Bubble(index, message)
+                val openTask = task
+                if (openTask != null && message.toolCalls.isEmpty()) {
+                    // 任务里不带工具调用的话：这一轮的最后一段，讲结果的。任务办完，这段放在卡片外面。
+                    closeTask(TaskStatus.Done)
+                    if (!message.text.isNullOrBlank()) items += ChatItem.Bubble(index, message)
+                    return@forEachIndexed
                 }
-                message.toolCalls.forEachIndexed { position, call ->
+                message.text?.takeIf { it.isNotBlank() }?.let { text ->
+                    if (openTask != null) {
+                        openTask.said(text)
+                    } else {
+                        closeGroup()
+                        items += ChatItem.Bubble(index, message)
+                    }
+                }
+                message.toolCalls.forEachIndexed calls@{ position, call ->
                     val result = results[call.id]?.content
                     val status = when {
                         result != null ->
@@ -484,7 +596,37 @@ private fun buildChatItems(
                         !runningFound -> ToolCallStatus.Running.also { runningFound = true }
                         else -> ToolCallStatus.Pending
                     }
+                    if (call.name == StartTaskTool.NAME) {
+                        val current = task
+                        if (current != null && current.auto) {
+                            // 界面已经替它开了：换成模型起的标题，不另开一张。
+                            current.title = StartTaskTool.titleOf(call)
+                            current.auto = false
+                            return@calls
+                        }
+                        closeGroup()
+                        // 一轮里又开了一个：前一个算办完。
+                        closeTask(TaskStatus.Done)
+                        task = TaskBuilder(index, position, StartTaskTool.titleOf(call), auto = false)
+                        return@calls
+                    }
+                    if (task == null && currentRun in autoTaskRuns && call.name !in NotPhoneOperations) {
+                        // 模型没开任务，但这一轮操作手机的步数够多：从这一步起自动收进卡片。
+                        closeGroup()
+                        task = TaskBuilder(index, position, currentRunTitle, auto = true)
+                    }
                     val question = if (call.name == AskUserTool.NAME) AskUserTool.questionOf(call) else null
+                    val inTask = task
+                    if (inTask != null) {
+                        when {
+                            question == null || status == ToolCallStatus.Failed ->
+                                inTask.tool(ToolCallItem(call, status, result))
+                            // 还在等回答：提问卡片压在对话最下面，卡片里先不记。
+                            status == ToolCallStatus.Running || status == ToolCallStatus.Pending -> Unit
+                            else -> inTask.asked(question, result?.let { AskUserTool.answerOf(it) ?: it.trim() })
+                        }
+                        return@calls
+                    }
                     when {
                         // 正常的工具调用，和问坏了（没给问题、报了错）的提问，都是清单里的一行。
                         question == null || status == ToolCallStatus.Failed -> {
@@ -514,8 +656,61 @@ private fun buildChatItems(
         }
     }
     closeGroup()
-    if (streamingReply != null) items += ChatItem.Bubble(messages.size, ChatMessage.Assistant(text = streamingReply))
+    val openTask = task
+    if (openTask != null) {
+        // 走到头还没收尾：这一轮正在跑就是进行中，正在冒的字算在卡片里；不在跑就是没办完断了。
+        val running = isResponding && openTask.index >= runStart
+        items += openTask.build(
+            status = if (running) TaskStatus.Running else TaskStatus.Stopped,
+            streamingText = if (running) streamingReply else null,
+        )
+    } else if (streamingReply != null) {
+        items += ChatItem.Bubble(messages.size, ChatMessage.Assistant(text = streamingReply))
+    }
     return items
+}
+
+/** 不算"操作手机"的工具：查记忆、提问、开任务。自动开任务时数步数不数它们。 */
+private val NotPhoneOperations = setOf(
+    StartTaskTool.NAME,
+    AskUserTool.NAME,
+    RECALL_MEMORY,
+    SAVE_MEMORY,
+    FORGET_MEMORY,
+)
+
+/**
+ * 哪几轮要自动开任务：一轮从用户的一句话开始到下一句为止，模型没调 start_task、而操作手机的调用
+ * 满了 [AutoTaskMinSteps] 次。返回那句用户的话在 messages 里的序号。
+ *
+ * 模型自己开了任务的那一轮不用自动开，但也不碍事：任务已经开着，自动开的条件（还没有任务）不成立。
+ */
+private fun runsNeedingAutoTask(messages: List<ChatMessage>): Set<Int> {
+    val runs = mutableSetOf<Int>()
+    var run = -1
+    var steps = 0
+    messages.forEachIndexed { index, message ->
+        when (message) {
+            is ChatMessage.User -> {
+                run = index
+                steps = 0
+            }
+            is ChatMessage.Assistant -> {
+                steps += message.toolCalls.count { it.name !in NotPhoneOperations }
+                if (run >= 0 && steps >= AutoTaskMinSteps) runs += run
+            }
+            is ChatMessage.ToolResult -> Unit
+        }
+    }
+    return runs
+}
+
+/** 自动开的任务用什么标题：用户那句话的第一行，太长截断。只发了图片的退回一句泛泛的。 */
+private fun autoTaskTitle(userText: String): String {
+    val firstLine = userText.trim().lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    if (firstLine.isEmpty()) return DefaultAutoTaskTitle
+    val max = StartTaskTool.MAX_TITLE_LENGTH
+    return if (firstLine.length > max) firstLine.take(max) + "…" else firstLine
 }
 
 /** 能复制的文字：用户说的话、模型回复里的文字。只发了图片、只调了工具的那条没得复制。 */
@@ -626,14 +821,11 @@ private fun QuestionCard(
  *
  * 要和模型的回复气泡一眼分开，所以从三处做出"卡片"的样子：
  *
- * - 底色深一档（questionCardTint），上半截一道渐隐的亮光，再垫一层软阴影，浮在页面上，像一张
- *   实在的卡片；气泡是薄薄一层、贴着页面的。不带尾巴：它不是谁说的一句话。
+ * - 卡片那层玻璃（[chatCardGlass]，和任务卡片共用）：底色深一档、带软阴影，浮在页面上。
  * - 问题字大一号，前面一个带问号的对话框图标，一看就是"这是个问题"，不用再加标题。问和答中间
  *   一道两头尖的分界线隔开。
  * - 回答做成一个白色的小块、前面打个勾，长得和提问卡片里的选项按钮一样：就是当时点的那个
  *   选项，定在了这里。
- *
- * 玻璃只模糊、不折射，和气泡一样（见 [ChatBubble]）：它在消息列表里跟着滚，折射每一帧都要重算。
  *
  * @param answer 用户的回答；null 表示没等到回答任务就停了，这时不画勾和白块，只写一句淡淡的说明。
  */
@@ -649,27 +841,8 @@ private fun AnsweredQuestionCard(
             .fillMaxWidth()
             // 读屏一口气读完"问题，回答"，不用一行行摸。
             .semantics(mergeDescendants = true) {}
-            .drawBackdrop(
-                backdrop = backdrop,
-                shape = { AnsweredCardShape },
-                effects = { blur(BubbleBlur.toPx()) },
-                highlight = { GlassRim },
-                shadow = { AnsweredCardShadow },
-                onDrawSurface = {
-                    drawRect(colors.questionCardTint)
-                    // 上半截一道渐隐的亮光：没有它，深一档的底色看起来只是一块色块。
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                colors.controlTint.copy(alpha = colors.controlTint.alpha * AnsweredCardSheenAlpha),
-                                Color.Transparent,
-                            ),
-                            endY = size.height * 0.5f,
-                        ),
-                    )
-                },
-            )
-            .padding(AnsweredCardPadding),
+            .chatCardGlass(backdrop, colors)
+            .padding(ChatCardPadding),
         verticalArrangement = Arrangement.spacedBy(AnsweredCardGap),
     ) {
         Row(verticalAlignment = Alignment.Top) {
@@ -752,15 +925,21 @@ private fun TypingIndicator() {
     }
 }
 
+/**
+ * 模型没开任务时，一轮里操作手机满几步就自动收进任务卡片（见 [buildChatItems]）。
+ *
+ * 3 步：看一眼屏幕、开个应用再看一眼这种一两步就完的，摊在对话里也不吵；真在办事的一轮，第三步
+ * 往往就到了。给小了，随手问一句都变成卡片；给大了，前面那几步会先摊开、到了门槛才突然收成卡片，
+ * 跳一下更明显。
+ */
+private const val AutoTaskMinSteps = 3
+
+/** 自动开的任务、用户那句话又是空的（只发了图片）时用的标题。 */
+private const val DefaultAutoTaskTitle = "办你交代的事"
+
 /** "正在思考…"和提问卡片那两项的 key。气泡的 key 是序号（Int），清单的是 "tools-" 开头，都撞不上。 */
 private const val TypingKey = "typing"
 private const val QuestionKey = "question"
-
-/** 问答卡片的圆角，和气泡、提问卡片同一档。 */
-private val AnsweredCardShape = RoundedCornerShape(GlassRadius.Large)
-
-/** 问答卡片的内边距，和提问卡片一样，两张卡片看起来是一套。 */
-private val AnsweredCardPadding = 14.dp
 
 /** 问题、分界线、回答三段之间空多少。 */
 private val AnsweredCardGap = 6.dp
@@ -778,15 +957,6 @@ private val QuestionIconTopInset = 0.dp
 
 /** 问和答中间那道分界线最粗处（正中间）多粗，往两头收到 0。 */
 private val DividerThickness = 2.dp
-
-/**
- * 问答卡片底下的软阴影，让它浮起来一点、和贴着页面的气泡分开。比按钮的阴影（8dp、0.12）
- * 散得开、淡一点：卡片面积大，阴影浓了像一块脏印子。
- */
-private val AnsweredCardShadow = Shadow(radius = 12.dp, color = Color.Black.copy(alpha = 0.08f))
-
-/** 卡片上半截那道亮光最亮处有多亮（乘在 controlTint 那层白上）。 */
-private const val AnsweredCardSheenAlpha = 0.6f
 
 /** 回答那个白块的圆角，和提问卡片里的选项按钮同一档。 */
 private val AnsweredChoiceShape = RoundedCornerShape(GlassRadius.Small)
