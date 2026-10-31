@@ -115,7 +115,14 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 isModelConfigured = usable != null,
                 modelGroups = profiles.profiles
                     .filter { it.apiKey.isNotBlank() && it.modelChoices.isNotEmpty() }
-                    .map { ModelGroup(profileId = it.id, name = it.displayName, models = it.modelChoices) },
+                    .map {
+                        ModelGroup(
+                            profileId = it.id,
+                            name = it.displayName,
+                            models = it.modelChoices,
+                            preset = it.matchingPreset,
+                        )
+                    },
                 activeProfileId = usable?.id,
                 activeModel = usable?.model,
             )
@@ -327,7 +334,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 firstCall = false
                 // 记进每天的用量账（设置页的看板）。服务没报用量的就记不上。
-                (result as? LlmResult.Ok)?.response?.usage?.let { TokenStatsStore.record(getApplication(), it) }
+                (result as? LlmResult.Ok)?.response?.usage?.let {
+                    TokenStatsStore.record(getApplication(), it, model = config.model)
+                }
                 result
             }
 

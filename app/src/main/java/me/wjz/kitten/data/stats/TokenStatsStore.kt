@@ -13,7 +13,7 @@ import java.time.LocalDate
 import java.time.format.DateTimeParseException
 
 /**
- * 某一天用掉的 token，[TokenStatsStore] 按天累加。
+ * 一笔用掉的 token：[TokenStatsStore] 按天累加一份，按模型也累加一份（不分天，见 [TokenStatsStore.loadModels]）。
  *
  * 四个数的口径同 [TokenUsage]：[inputTokens] 是按原价算的那部分输入，命中和写入缓存的另算。
  */
@@ -22,7 +22,7 @@ data class DailyTokens(
     val outputTokens: Long = 0,
     val cacheReadTokens: Long = 0,
     val cacheWriteTokens: Long = 0,
-    /** 这一天发了几次请求。Agent 一轮任务要发十几次，所以它比"对话次数"大得多。 */
+    /** 发了几次请求。Agent 一轮任务要发十几次，所以它比"对话次数"大得多。 */
     val requests: Int = 0,
 ) {
     /** 这一天一共用了多少：输入（原价 + 缓存读写）加输出。看板上的格子按它上色。 */
@@ -45,10 +45,13 @@ data class DailyTokens(
 }
 
 /**
- * 每天用了多少 token，给设置页的用量看板用（见 TokenUsageSection）。
+ * 每天用了多少 token、每个模型用了多少，给设置页的用量看板用（见 TokenUsageSection）。
  *
  * 存在 SharedPreferences 里，一天一条，键是 `2026-10-26` 这样的日期。一年也就几百条，整份读出来
  * 足够快，不值得为它建一张表。按本地时区分天：用户心里的"今天"就是手机上的日期。
+ *
+ * 按模型的账另存一份，一个模型一条，键是模型名，不分天。它是后来才加的：更早的用量只在每天的账上，
+ * 分不出是哪个模型，看板上算成"更早的"一行。
  *
  * 只是给用户看个大概，不是账单：各家报用量的口径不一（见 [TokenUsage]），有的兼容服务干脆不报，
  * 那几次请求就记不上。
@@ -57,6 +60,7 @@ object TokenStatsStore {
 
     private const val TAG = "KittenStats"
     private const val PREFS = "kitten_token_stats"
+    private const val MODEL_PREFS = "kitten_token_stats_models"
 
     private val _revision = MutableStateFlow(0)
 
@@ -64,16 +68,22 @@ object TokenStatsStore {
     val revision: StateFlow<Int> = _revision.asStateFlow()
 
     /**
-     * 把一次请求的用量加到 [date] 那天的账上。
+     * 把一次请求的用量加到 [date] 那天的账上；给了 [model]（这次请求用的模型名）的话，也加到那个模型的账上。
      *
      * 加锁：读出来、加上、写回去是三步，两次请求的回调挤在一起时不能互相覆盖。
      */
-    fun record(context: Context, usage: TokenUsage, date: LocalDate = LocalDate.now()) {
+    fun record(context: Context, usage: TokenUsage, model: String? = null, date: LocalDate = LocalDate.now()) {
         val key = date.toString()
+        val modelKey = model?.trim()?.takeIf { it.isNotEmpty() }
         synchronized(this) {
             val prefs = prefs(context)
             val today = prefs.getString(key, null)?.let(::decode) ?: DailyTokens()
             prefs.edit { putString(key, encode(today + usage)) }
+            if (modelKey != null) {
+                val models = modelPrefs(context)
+                val sofar = models.getString(modelKey, null)?.let(::decode) ?: DailyTokens()
+                models.edit { putString(modelKey, encode(sofar + usage)) }
+            }
         }
         _revision.update { it + 1 }
     }
@@ -91,7 +101,19 @@ object TokenStatsStore {
             date to day
         }.toMap()
 
+    /**
+     * 每个模型一共用了多少（不分天），键是模型名。只有开始按模型记账以后的用量，见类注释。
+     * 解析不了的那一条直接跳过。
+     */
+    fun loadModels(context: Context): Map<String, DailyTokens> =
+        modelPrefs(context).all.mapNotNull { (key, value) ->
+            val tally = (value as? String)?.let(::decode) ?: return@mapNotNull null
+            key to tally
+        }.toMap()
+
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+    private fun modelPrefs(context: Context) = context.getSharedPreferences(MODEL_PREFS, Context.MODE_PRIVATE)
 
     /** 字段名缩短：一天一条、存一年，没必要每条都带完整的英文名。 */
     private fun encode(day: DailyTokens): String = JSONObject()
