@@ -25,6 +25,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -174,7 +175,8 @@ internal fun TaskCard(
         }
         task.latestLine?.let { line ->
             Text(
-                text = line,
+                // 卡片上只放得下两行纯文字：Markdown 的符号去掉，不然满眼 ** 和 #。点开看是排好版的。
+                text = remember(line) { line.markdownPreview() },
                 style = MaterialTheme.typography.bodyMedium,
                 color = colors.textPrimary,
                 maxLines = LatestLineMaxLines,
@@ -276,7 +278,6 @@ internal fun TaskDetailDialog(
     onDismiss: () -> Unit,
     backdrop: Backdrop,
 ) {
-    val colors = KittenTheme.colors
     GlassModal(
         visible = visible,
         onDismissRequest = onDismiss,
@@ -301,10 +302,9 @@ internal fun TaskDetailDialog(
                 task.events.forEachIndexed { index, event ->
                     key(index) {
                         when (event) {
-                            is TaskEvent.Said -> Text(
+                            is TaskEvent.Said -> ChatMarkdown(
                                 text = event.text,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = colors.textPrimary,
+                                streaming = false,
                                 modifier = Modifier.padding(horizontal = DetailTextInset),
                             )
                             is TaskEvent.Tools -> ToolCallList(calls = event.calls, collapsible = false)
@@ -313,10 +313,10 @@ internal fun TaskDetailDialog(
                     }
                 }
                 task.streamingText?.takeIf { it.isNotBlank() }?.let {
-                    Text(
+                    // 窗里不做逐字冒出来：每收到一段就整段重排一遍，窗开着的时候才有人看。
+                    ChatMarkdown(
                         text = it,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.textPrimary,
+                        streaming = false,
                         modifier = Modifier.padding(horizontal = DetailTextInset),
                     )
                 }
