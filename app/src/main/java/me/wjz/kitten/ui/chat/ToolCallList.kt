@@ -127,8 +127,8 @@ internal class ToolCallItem(
  * 一步"。
  *
  * 一串不止一步时，最新那一行的右边有个箭头和步数（[GroupToggle]），点了展开整串，箭头向右
- * 转成向下；再点收回去。只有这一个图标：每一行自己的结果照样能点开看，只是不再画尖角，免得
- * 一行里两个图标分不清哪个管什么。
+ * 转成向下；再点收回去。这一行就只放这一个图标（它自己的结果照样能点开看），免得一行里两个
+ * 图标分不清哪个管什么；别的有结果的行字后面跟一个小尖角，告诉用户点得开。
  *
  * 展开时新的一步直接接在下面，不做滑动：整串都摊着，旧的那行本来就该留在原地。
  */
@@ -246,19 +246,29 @@ private fun GroupToggle(count: Int, expanded: Boolean, onToggle: () -> Unit) {
  * 清单里的一行：一句人话（[describe]），字的颜色和流光表示状态（见 [ToolCallList]），被中断的
  * 后面再跟一个小标签。
  *
- * 有结果的行能点：按下垫一层淡天依蓝，松手才展开 / 收起这一步的结果（和下拉菜单的选项一样）。
- * 还没结果的行没什么可看的，不响应。
+ * 有结果的行能点：按下垫一层淡天依蓝，松手才展开 / 收起这一步的结果（和下拉菜单的选项一样），
+ * 字后面的小尖角跟着从向右转成向下。还没结果的行没什么可看的，不响应、也不画尖角。
  *
  * @param trailing 行尾额外放的东西（整串的开关，见 [GroupToggle]）。放在能点的那块外面、和它并排，
  *   点它不会顺带展开这一行的结果。
+ * @param showArrow 画不画那个小尖角。默认带着整串开关的那一行不画，一行只留一个图标。
  */
 @Composable
-private fun ToolCallRow(item: ToolCallItem, trailing: (@Composable () -> Unit)? = null) {
+private fun ToolCallRow(
+    item: ToolCallItem,
+    trailing: (@Composable () -> Unit)? = null,
+    showArrow: Boolean = trailing == null,
+) {
     val colors = KittenTheme.colors
     val result = item.result
     val failed = item.status == ToolCallStatus.Failed
     var expanded by remember { mutableStateOf(false) }
     val press = rememberGlassPressState()
+    val arrowRotation by animateFloatAsState(
+        targetValue = if (expanded) 90f else 0f,
+        animationSpec = ArrowSpec,
+        label = "toolCallArrow",
+    )
     val shimmerProgress = rememberShimmerProgress(active = item.status == ToolCallStatus.Running)
     val textColor = item.status.textColor()
 
@@ -314,6 +324,16 @@ private fun ToolCallRow(item: ToolCallItem, trailing: (@Composable () -> Unit)? 
                         ),
                 )
                 if (item.status == ToolCallStatus.Stopped) StatusTag("已中断", colors.textTertiary)
+                if (result != null && showArrow) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = colors.textTertiary,
+                        modifier = Modifier
+                            .size(ArrowSize)
+                            .graphicsLayer { rotationZ = arrowRotation },
+                    )
+                }
             }
             trailing?.invoke()
         }
@@ -431,7 +451,7 @@ private val ShimmerBandWidth = 56.dp
 private const val ShimmerSweepMillis = 1100
 private const val ShimmerPauseMillis = 400
 
-/** 整串开关上的箭头多大，转过去的弹簧。 */
+/** 箭头（整串开关上的、每行字后面的小尖角）多大，转过去的弹簧。两处同一个样子。 */
 private val ArrowSize = 16.dp
 private val ArrowSpec = spring<Float>(dampingRatio = 0.8f, stiffness = 600f)
 
