@@ -283,7 +283,11 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         // 常驻通知和"停止"按钮要在任务真正开始之前就备好——用户可能第一秒就想喊停。
         // 停止回调里要用的 Job 这会儿还没有，先留个可变引用，launch 之后再填上。
         var running: Job? = null
-        AgentTaskHandle.begin(onStop = { running?.cancel() }, onAnswer = ::answerQuestion)
+        AgentTaskHandle.begin(
+            title = StartTaskTool.autoTitle(content),
+            onStop = { running?.cancel() },
+            onAnswer = ::answerQuestion,
+        )
         AgentForegroundService.start(getApplication())
 
         val job = viewModelScope.launch {
@@ -297,6 +301,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val userMessage = ChatMessage.User(content, attachments)
             // 先落库再请求：请求可能失败或超时，但用户说过的话不该因此丢掉。
             val sessionId = ensureSession(content.ifEmpty { IMAGE_ONLY_TITLE })
+            AgentTaskHandle.attachSession(sessionId)
             repository.appendMessage(sessionId, userMessage)
             // 这一轮的消息（存进历史的那一份），办完交给复盘，见 SkillReflector。单独记一份，不读界面
             // 状态：用户可能已经切到别的会话去了。
@@ -373,6 +378,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         // 模型说完一段话，常驻通知的正文换成它，用户不在 Kitten 里也看得到。
                         (message as? ChatMessage.Assistant)?.text?.trim()?.takeIf { it.isNotEmpty() }
                             ?.let(AgentTaskHandle::say)
+                        // 任务页上那张卡片的标题和步数。
+                        (message as? ChatMessage.Assistant)?.let { AgentTaskHandle.called(it.toolCalls) }
                         // 存进历史的是"瘦身版"：thinking 块不落库、超长的工具结果截短，
                         // 见 forHistory。正在跑的这一轮用的是 AgentRunner 自己那份全量的。
                         val stored = message.forHistory()

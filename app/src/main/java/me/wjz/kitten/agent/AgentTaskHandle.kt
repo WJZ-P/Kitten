@@ -4,6 +4,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import me.wjz.kitten.agent.tools.StartTaskTool
+import me.wjz.kitten.llm.ToolCall
 
 /** Agent 要用户回答的一个问题。[options] 为空时表示要用户自己打字回答。 */
 data class AgentQuestion(
@@ -11,8 +13,22 @@ data class AgentQuestion(
     val options: List<String> = emptyList(),
 )
 
-/** 正在跑的那一轮任务，给常驻通知看。 */
+/** 正在跑的那一轮任务，给常驻通知和任务页看。 */
 data class AgentTask(
+    /**
+     * 这件事叫什么：模型开任务时起的标题（start_task），没开就是用户那句话的开头。和对话里那张
+     * 任务卡片的标题一样。任务页上显示。
+     */
+    val title: String = "",
+    /**
+     * 是不是真在办事：模型开了任务、或者动手操作了手机。只是聊天、查个记忆的那一轮不算，任务页上
+     * 不把它当成"正在进行的任务"。
+     */
+    val started: Boolean = false,
+    /** 开始办事以后走了几步（每次工具调用算一步，开任务那一下不算）。任务页上显示。 */
+    val steps: Int = 0,
+    /** 在哪个会话里办的。任务页上点了那张卡片，回到这个会话。还没建好会话时是 null。 */
+    val sessionId: String? = null,
     /** 当前这一步在干什么，一句人话（见 [describe]）。刚开始、正在等模型时是 null。通知的标题。 */
     val detail: String? = null,
     /**
@@ -49,13 +65,41 @@ object AgentTaskHandle {
     /**
      * 一轮任务开始。
      *
+     * @param title 先用用户那句话的开头，模型开了任务再换成它起的，见 [called]。
      * @param onStop 用户点了通知上的"停止"。
      * @param onAnswer 用户在通知上选了某个选项。
      */
-    fun begin(onStop: () -> Unit, onAnswer: (String) -> Unit) {
+    fun begin(title: String, onStop: () -> Unit, onAnswer: (String) -> Unit) {
         this.onStop = onStop
         this.onAnswer = onAnswer
-        _task.value = AgentTask()
+        _task.value = AgentTask(title = title)
+    }
+
+    /** 这一轮的会话建好了（第一句话发出去时才建）。 */
+    fun attachSession(sessionId: String) {
+        _task.update { it?.copy(sessionId = sessionId) }
+    }
+
+    /**
+     * 模型这一步要调这些工具：数步数、开任务时换标题。开了任务、或者第一次动手操作手机，就算开始办事；
+     * 之后每次调用算一步。
+     *
+     * 和对话里任务卡片的数法差一点：模型没开任务时，卡片要操作满 3 步才自动收起来（见 ChatScreen 的
+     * buildChatItems），任务页第一步就算——卡片是为了不吵，任务页是为了看得到它在动手。
+     */
+    fun called(calls: List<ToolCall>) {
+        _task.update { task ->
+            task ?: return@update null
+            calls.fold(task) { current, call ->
+                when {
+                    call.name == StartTaskTool.NAME ->
+                        current.copy(title = StartTaskTool.titleOf(call), started = true)
+                    current.started -> current.copy(steps = current.steps + 1)
+                    call.isPhoneOperation() -> current.copy(started = true, steps = 1)
+                    else -> current
+                }
+            }
+        }
     }
 
     /** 换了一步。[detail] 见 [AgentTask.detail]。 */

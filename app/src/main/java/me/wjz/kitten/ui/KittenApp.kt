@@ -4,7 +4,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.add
@@ -236,9 +235,18 @@ fun KittenApp(actions: SetupActions, openChatRequests: Flow<Unit>) {
                                         bottomInsets = aboveBarOrIme,
                                     )
 
-                                    // 内容居中在栏上面那块可见区域里。
+                                    // 和设置页一样滚到栏后面，只在内容末尾留出栏的高度。点了正在办的那件事回到
+                                    // 对话：它在别的会话里办的（用户中途切走了）就先打开那个会话。
                                     KittenTab.Task -> TaskScreen(
-                                        modifier = Modifier.padding(bottom = bottomBarHeight),
+                                        backdrop = backdrop,
+                                        onOpenTask = { sessionId ->
+                                            if (sessionId != null && sessionId != chatState.sessionId) {
+                                                chatViewModel.openSession(sessionId)
+                                            }
+                                            currentTab = KittenTab.Chat
+                                        },
+                                        contentPadding = PaddingValues(bottom = bottomBarHeight),
+                                        isCurrentTab = currentTab == KittenTab.Task,
                                     )
 
                                     // 设置页滚到栏后面：视口铺到底，只在内容末尾留出栏的高度，
