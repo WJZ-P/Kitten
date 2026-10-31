@@ -351,7 +351,7 @@ private fun SettingsRoot(
                 subtitleColor = if (modelNeedsAttention) colors.warning else colors.textSecondary,
                 onClick = { onOpen(SettingsPage.Models) },
             )
-            GlassDivider()
+            SettingsDivider()
             SettingsRow(
                 icon = Icons.Filled.DateRange,
                 iconTint = colors.iconGreen,
@@ -372,7 +372,7 @@ private fun SettingsRoot(
                 subtitle = if (customPrompt != null) "已自定义" else "默认的 Kitten",
                 onClick = onEditPersona,
             )
-            GlassDivider()
+            SettingsDivider()
             SettingsRow(
                 icon = Icons.Filled.Favorite,
                 iconTint = colors.iconCoral,
@@ -393,7 +393,7 @@ private fun SettingsRoot(
                 enabled = status.accessibilityEnabled,
                 onOpenSettings = actions::openAccessibilitySettings,
             )
-            GlassDivider()
+            SettingsDivider()
             PermissionRow(
                 icon = Icons.Filled.Notifications,
                 iconTint = colors.iconAmber,
@@ -401,7 +401,7 @@ private fun SettingsRoot(
                 enabled = status.notificationListenerEnabled,
                 onOpenSettings = actions::openNotificationListenerSettings,
             )
-            GlassDivider()
+            SettingsDivider()
             SettingsRow(
                 icon = Icons.Filled.Lock,
                 iconTint = colors.iconTeal,
