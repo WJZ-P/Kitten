@@ -56,6 +56,14 @@ data class KittenColors(
     val glassTint: Color,
     /** 比 [glassTint] 更实一点的玻璃，tab 栏这种要压住下面滚动内容的地方用。 */
     val glassTintStrong: Color,
+    /**
+     * 设置页分组卡片的底色。
+     *
+     * [glassTint] 很薄，背景的渐变和光晕透过来，再被玻璃提了饱和，一屏几张卡片从上到下深浅都
+     * 不一样（用户觉得丑）。设置页要的是一排整齐的卡片，所以压一层更实的浅色，把背景的深浅盖住，
+     * 颜色就统一了；液态玻璃的边靠加大圆角、加强折射撑着（见 GlassSection）。
+     */
+    val settingsCardTint: Color,
     /** tab 滑块没按下时的颜色：看得出它停在哪一格。 */
     val sliderIdle: Color,
     /** 分隔线、chip 和输入框的边。 */
@@ -168,6 +176,9 @@ val LightKittenColors = KittenColors(
     // 给得很薄：只把背景压深一点，玻璃的质感还是来自透过去看到的、被边缘掰弯的背景。
     glassTint = Tianyi500.copy(alpha = 0.18f),
     glassTintStrong = Neutral50.copy(alpha = 0.4f),
+    // 不透明度是"颜色统不统一"和"透不透"之间的取舍：调高更整齐、更像白卡，调低更透、但深浅又会
+    // 跟着背景变
+    settingsCardTint = Tianyi50.copy(alpha = 0.45f),
     // catalog 浅色主题这里是 10% 的黑，压在天依蓝背景上像一块脏灰，换成淡天依蓝。
     sliderIdle = Tianyi400.copy(alpha = 0.22f),
     hairline = Ink.copy(alpha = 0.10f),

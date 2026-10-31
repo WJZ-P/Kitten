@@ -25,8 +25,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.LayerBackdrop
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
@@ -38,12 +40,25 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 条目之间的分隔线由调用方放 [GlassDivider]：有的分组里是一排列表项，有的是一段说明
  * 加一个按钮，自动插分隔线反而会插错地方。
  *
+ * ## 设置页的样子
+ *
+ * 现在只有设置页（首页的分组、二级页里的卡片）用它，默认值就是设置页要的：
+ *
+ * - 底色是更实的 settingsCardTint：一屏几张卡片颜色统一，不跟着背景的渐变和光晕变深变浅；
+ * - 圆角大一档（[GlassRadius.XLarge]）；
+ * - 折射比别的玻璃强（[SectionRefraction]）：底色压实之后，透过来的折射也跟着变淡，加强一点
+ *   液态玻璃的边才看得出来。
+ *
  * @param headerTrailing 表头最右边放的东西，比如一个总数。按文字排，右边和正文对齐；它和标题
  *   在同一行，没有 [title] 时不显示。
  * @param interactive 按下卡片本身时有没有按压反馈（放大、折射变强、变深、光雾变浓），见
  *   [GlassSurface]。只是反馈，不触发动作；按在卡片里的控件上时卡片不会跟着动。
  * @param mist 卡片里铺不铺一层流动的光雾，见 [GlassMist]。设置页改成简约的分组列表之后默认关掉了：
  *   一屏好几块卡片都在飘雾，看着花。光雾的代码留着，哪张卡片想要再单独打开。
+ * @param exportedBackdrop 把卡片自己那层录下来，给里面要折射卡片的玻璃用（比如卡片里的玻璃按钮），
+ *   见 [GlassSurface]。
+ * @param verticalPadding 卡片上下边和里面内容之间的留白。放表单、说明文字的卡片留一点；设置首页
+ *   那种一行行的入口给 0，行自己带着上下留白，第一行、最后一行贴着卡片边，和行与行之间一样紧凑。
  */
 @Composable
 fun GlassSection(
@@ -55,18 +70,24 @@ fun GlassSection(
     headerTrailing: (@Composable () -> Unit)? = null,
     interactive: Boolean = true,
     mist: Boolean = false,
+    exportedBackdrop: LayerBackdrop? = null,
+    verticalPadding: Dp = 6.dp,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     GlassSurface(
         backdrop = backdrop,
         modifier = modifier.fillMaxWidth(),
+        cornerRadius = GlassRadius.XLarge,
+        tint = KittenTheme.colors.settingsCardTint,
         interactive = interactive,
         mist = mist,
+        refraction = SectionRefraction,
+        exportedBackdrop = exportedBackdrop,
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp),
+                .padding(vertical = verticalPadding),
         ) {
             if (title != null) {
                 GlassHeader(title = title, icon = icon, trailing = headerTrailing, trailingIsButton = false)
@@ -88,6 +109,12 @@ fun GlassSection(
         }
     }
 }
+
+/**
+ * 分组卡片的折射量（折射带宽的倍数，见 glassEffects）。比默认的 2 大：底色压实之后折射透出来的
+ * 少了，给大一点边缘那圈被掰弯的背景才看得出来。再大边缘的彩边会很花。
+ */
+private const val SectionRefraction = 5f
 
 /**
  * 玻璃容器的表头：图标 + 加粗标题，可选的尾部（比如模态窗的关闭按钮、分组卡片右边的一个数字）。
