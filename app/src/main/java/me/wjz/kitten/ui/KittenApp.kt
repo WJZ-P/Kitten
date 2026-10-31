@@ -244,6 +244,8 @@ fun KittenApp(actions: SetupActions, openChatRequests: Flow<Unit>) {
                                         onModelConfigChanged = chatViewModel::refreshModelConfig,
                                         contentPadding = PaddingValues(bottom = bottomBarHeight),
                                         modifier = Modifier.imePadding(),
+                                        // 设置里有二级页，返回手势只在设置是当前 tab 时才归它。
+                                        isCurrentTab = currentTab == KittenTab.Settings,
                                     )
                                 }
                             }

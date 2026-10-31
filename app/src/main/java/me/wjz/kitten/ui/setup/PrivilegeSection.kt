@@ -34,6 +34,8 @@ import me.wjz.kitten.ui.theme.KittenTheme
 /**
  * 增强模式：通过无线调试拿到 ADB 权限。全程手机闭环。
  *
+ * 放在设置的"增强模式"二级页里，页面标题已经写着了，卡片不再带表头。
+ *
  * controller 是进程级单例，直接在这里取，不用从 Activity 一路往下传。
  */
 @Composable
@@ -47,12 +49,7 @@ fun PrivilegeSection(
     val state by PrivilegeManager.state.collectAsState()
     val step by controller.step.collectAsState()
 
-    GlassSection(
-        backdrop = backdrop,
-        title = stringResource(R.string.setup_privilege_title),
-        icon = Icons.Filled.Build,
-        modifier = modifier,
-    ) {
+    GlassSection(backdrop = backdrop, modifier = modifier) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()

@@ -77,7 +77,16 @@ fun TokenUsageSection(backdrop: Backdrop) {
     val days = remember(revision) { TokenStatsStore.load(context) }
     // 每次重读时顺手对一下今天是哪天：开着设置页跨过零点，下一次有用量进来就换到新的一格。
     val today = remember(revision) { LocalDate.now() }
-    TokenBoard(backdrop = backdrop, title = "Token 看板", days = days, today = today)
+    // 卡片放在"Token 看板"二级页里，页面标题已经叫 Token 看板了，卡片表头换个说法，不重复。
+    TokenBoard(backdrop = backdrop, title = "每日用量", days = days, today = today)
+}
+
+/** 一共用了多少 token，设置首页那一行的说明用。有新用量进来会跟着变。 */
+@Composable
+internal fun rememberAllTimeTokens(): Long {
+    val context = LocalContext.current
+    val revision by TokenStatsStore.revision.collectAsState()
+    return remember(revision) { TokenStatsStore.load(context).values.sumOf { it.total } }
 }
 
 /** 看板的卡片：表头带总数、格子图、底下一行"今天 · 近 N 天"和图例。 */
@@ -306,7 +315,7 @@ private fun dayMessage(date: LocalDate, day: DailyTokens?, today: LocalDate): St
  * token 数换成好读的样子：一万以下照写；一万起按"万"、一亿起按"亿"，都写一位小数（整数就不写 .0），
  * 比如 8532、12.3 万、3 亿。Agent 每步都重发整段历史，累计上亿很常见。
  */
-private fun formatTokens(count: Long): String = when {
+internal fun formatTokens(count: Long): String = when {
     count >= 100_000_000L -> String.format(Locale.ROOT, "%.1f 亿", count / 1e8)
     count >= 10_000L -> String.format(Locale.ROOT, "%.1f 万", count / 1e4)
     else -> count.toString()

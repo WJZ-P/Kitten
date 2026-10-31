@@ -1,5 +1,14 @@
 package me.wjz.kitten.ui.settings
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,9 +20,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountCircle
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Notifications
@@ -28,15 +40,19 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.kyant.backdrop.Backdrop
-import me.wjz.kitten.R
 import kotlinx.coroutines.launch
+import me.wjz.kitten.R
 import me.wjz.kitten.agent.SystemPrompt
 import me.wjz.kitten.data.memory.MemoryStore
 import me.wjz.kitten.llm.LlmConfigStore
@@ -44,6 +60,8 @@ import me.wjz.kitten.llm.LlmProfile
 import me.wjz.kitten.llm.LlmProfiles
 import me.wjz.kitten.permission.PermissionStatus
 import me.wjz.kitten.permission.SelfConfigurator
+import me.wjz.kitten.privilege.PrivilegeManager
+import me.wjz.kitten.privilege.PrivilegeState
 import me.wjz.kitten.privilege.client.WirelessDebugController
 import me.wjz.kitten.ui.component.GlassButton
 import me.wjz.kitten.ui.component.GlassButtonStyle
@@ -58,24 +76,48 @@ import me.wjz.kitten.ui.component.GlassSwitch
 import me.wjz.kitten.ui.component.LocalToast
 import me.wjz.kitten.ui.component.ToastTone
 import me.wjz.kitten.ui.setup.DebugCard
-import me.wjz.kitten.ui.setup.PermissionItem
 import me.wjz.kitten.ui.setup.PrivilegeSection
 import me.wjz.kitten.ui.setup.SetupActions
-import kotlin.math.roundToInt
 import me.wjz.kitten.ui.theme.KittenTheme
+import kotlin.math.roundToInt
+
+/** 设置里的几页：首页，和从首页点进去的二级页。[title] 是页面顶上的标题。 */
+private enum class SettingsPage(val title: String) {
+    Root("设置"),
+    Models("模型服务商"),
+    Tokens("Token 看板"),
+    Memory("记忆"),
+    Privilege("增强模式"),
+    Developer("开发者调试"),
+}
 
 /**
- * 设置页：模型配置 + token 用量 + 记忆 + 系统提示词 + 权限管理。
+ * 设置页。
  *
- * 原先这些内容独占一个启动页（SetupScreen），现在收进 tab。权限引导本来就是
- * 一次性的事，配好之后不该还占着首屏——首屏该是对话。
+ * ## 首页只放入口
+ *
+ * 首页是一串分组列表（模型 / 个性与记忆 / 权限与能力 / 其他），一行一个入口，右边写着现在的状态
+ * （用的哪家模型、记了几件事、权限开没开）。具体内容点进去才看到：
+ *
+ * - 列表类的东西（服务商、Token 看板、记忆、增强模式、开发者调试）是二级页，从右边滑进来，左上角
+ *   返回，系统返回手势也能回去。
+ * - 只改一样东西的（改人设、编辑某一家服务商）还是模态窗。
+ * - 权限没开时那一行写着"去开启"，点了直接跳系统设置；开了就只写"已开启"。
+ *
+ * 以前是一张大卡片一个功能、全摊在一页上，一屏看不全，也分不清哪些常用。
+ *
+ * ## 二级页怎么切
+ *
+ * 三个 tab 平级、没有返回栈（见 KittenApp），设置里多出来的这一层不值得为它引一套导航框架：
+ * 当前在哪一页存在 [rememberSaveable] 里，用 AnimatedContent 换页。首页的滚动位置提到外面存着，
+ * 去二级页再回来还停在原处。
  *
  * 权限状态每次回到前台都要重读：用户是去系统设置里开关的，App 这边收不到回调。
  *
- * 页面本身不再放"设置"大标题：顶栏已经写着了，再写一遍只是占地方。
- *
  * @param contentPadding 滚动内容四周额外留的空白。底部栏浮在页面上面，靠它让最后一张卡片
  *   能滚到栏的上方。
+ * @param isCurrentTab 设置是不是当前的 tab。三页常驻（见 KittenApp），不是当前 tab 时返回手势不能
+ *   被设置的二级页截走。
  */
 @Composable
 fun SettingsScreen(
@@ -84,6 +126,7 @@ fun SettingsScreen(
     onModelConfigChanged: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(),
+    isCurrentTab: Boolean = true,
 ) {
     val context = LocalContext.current
     val controller = remember(context) { WirelessDebugController.getInstance(context) }
@@ -104,9 +147,14 @@ fun SettingsScreen(
     // 记忆：和对话页共用一个 MemoryStore，模型刚记下一条这里就多一行。
     val memoryStore = remember(context) { MemoryStore.get(context) }
     val memories by remember(memoryStore) { memoryStore.observe() }.collectAsState(initial = emptyList())
-    var managingMemory by remember { mutableStateOf(false) }
+    val privilegeState by PrivilegeManager.state.collectAsState()
+    val allTimeTokens = rememberAllTimeTokens()
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
+
+    var page by rememberSaveable { mutableStateOf(SettingsPage.Root) }
+    val rootScroll = rememberScrollState()
+    BackHandler(enabled = isCurrentTab && page != SettingsPage.Root) { page = SettingsPage.Root }
 
     // 存下来，并通知对话页：它的"模型是否已配置"是启动时读的，要主动让它重读。
     fun commit(next: LlmProfiles) {
@@ -126,80 +174,100 @@ fun SettingsScreen(
         onPauseOrDispose { }
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            // 留白放在滚动内容里面：内容能一直滚到底部栏后面，滚到底时最后一张卡片又能完整露出来。
-            .padding(contentPadding)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        ModelProfilesSection(
-            backdrop = backdrop,
-            profiles = profiles,
-            onSelectModel = { profile, model ->
-                commit(
-                    profiles.copy(
-                        profiles = profiles.profiles.map { if (it.id == profile.id) it.copy(model = model) else it },
-                    ),
+    AnimatedContent(
+        targetState = page,
+        modifier = modifier.fillMaxSize(),
+        transitionSpec = {
+            // 往里走：新的一页从右边整页滑进来，盖在上面；首页往左挪一小截、淡下去。往回走反过来。
+            val forward = targetState != SettingsPage.Root
+            val enter = slideInHorizontally(PageSlideSpec) { if (forward) it else -it / 4 } + fadeIn(PageFadeSpec)
+            val exit = slideOutHorizontally(PageSlideSpec) { if (forward) -it / 4 else it } + fadeOut(PageFadeSpec)
+            (enter togetherWith exit).apply { targetContentZIndex = if (forward) 1f else -1f }
+        },
+        label = "settingsPage",
+    ) { current ->
+        val scroll = if (current == SettingsPage.Root) rootScroll else rememberScrollState()
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(scroll)
+                // 留白放在滚动内容里面：内容能一直滚到底部栏后面，滚到底时最后一张卡片又能完整露出来。
+                .padding(contentPadding)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            SettingsPageHeader(
+                title = current.title,
+                backdrop = backdrop,
+                onBack = if (current == SettingsPage.Root) null else ({ page = SettingsPage.Root }),
+            )
+            when (current) {
+                SettingsPage.Root -> SettingsRoot(
+                    backdrop = backdrop,
+                    profiles = profiles,
+                    allTimeTokens = allTimeTokens,
+                    customPrompt = customPrompt,
+                    memoryCount = memories.size,
+                    status = status,
+                    privilegeState = privilegeState,
+                    onOpen = { page = it },
+                    onEditPersona = {
+                        // 打开时拷一份当前在用的：没改过就是默认人设，用户看得到原本写了什么再改。
+                        promptDraft = customPrompt ?: SystemPrompt.DEFAULT_PERSONA
+                        editingPrompt = true
+                    },
+                    actions = actions,
                 )
-            },
-            onActivate = { commit(profiles.copy(activeId = it.id)) },
-            onEdit = {
-                draft = it
-                draftIsNew = false
-                editingModel = true
-            },
-            onAdd = {
-                draft = LlmProfile.create()
-                draftIsNew = true
-                editingModel = true
-            },
-        )
-
-        TokenUsageSection(backdrop = backdrop)
-
-        MemorySection(backdrop = backdrop, memories = memories, onOpen = { managingMemory = true })
-
-        SystemPromptSection(
-            backdrop = backdrop,
-            customPrompt = customPrompt,
-            onEdit = {
-                // 打开时拷一份当前在用的：没改过就是默认人设，用户看得到原本写了什么再改。
-                promptDraft = customPrompt ?: SystemPrompt.DEFAULT_PERSONA
-                editingPrompt = true
-            },
-        )
-
-        GlassSection(backdrop = backdrop, title = "权限", icon = Icons.Filled.Lock) {
-            PermissionItem(
-                backdrop = backdrop,
-                icon = Icons.Filled.Face,
-                title = stringResource(R.string.accessibility_service_label),
-                enabled = status.accessibilityEnabled,
-                onOpenSettings = actions::openAccessibilitySettings,
-            )
-            GlassDivider()
-            PermissionItem(
-                backdrop = backdrop,
-                icon = Icons.Filled.Notifications,
-                title = stringResource(R.string.notification_listener_label),
-                enabled = status.notificationListenerEnabled,
-                onOpenSettings = actions::openNotificationListenerSettings,
-            )
+                SettingsPage.Models -> ModelProfilesSection(
+                    backdrop = backdrop,
+                    profiles = profiles,
+                    onSelectModel = { profile, model ->
+                        commit(
+                            profiles.copy(
+                                profiles = profiles.profiles.map { if (it.id == profile.id) it.copy(model = model) else it },
+                            ),
+                        )
+                    },
+                    onActivate = { commit(profiles.copy(activeId = it.id)) },
+                    onEdit = {
+                        draft = it
+                        draftIsNew = false
+                        editingModel = true
+                    },
+                    onAdd = {
+                        draft = LlmProfile.create()
+                        draftIsNew = true
+                        editingModel = true
+                    },
+                )
+                SettingsPage.Tokens -> TokenUsageSection(backdrop = backdrop)
+                SettingsPage.Memory -> MemoryPage(
+                    memories = memories,
+                    onAdd = { content ->
+                        scope.launch {
+                            if (memoryStore.add(content) == null) {
+                                toast.show("记满 ${MemoryStore.MAX_ENTRIES} 条啦，先删掉几条旧的吧～", tone = ToastTone.Error)
+                            }
+                        }
+                    },
+                    onUpdate = { id, content -> scope.launch { memoryStore.update(id, content) } },
+                    onDelete = { id ->
+                        scope.launch { memoryStore.delete(id) }
+                        toast.show("忘掉啦～")
+                    },
+                    backdrop = backdrop,
+                )
+                SettingsPage.Privilege -> PrivilegeSection(backdrop = backdrop, onStartPairing = actions::startPairing)
+                SettingsPage.Developer -> {
+                    // 临时：看玻璃组件的手感，定下来之后换成真的设置项。
+                    ComponentPreviewSection(backdrop = backdrop)
+                    // 临时：验证副屏可用性，验完连同 DebugCard.kt 一起删。
+                    DebugCard()
+                    // 临时：调 Toast 的样子，调完连同 ToastDebugSection.kt 一起删。
+                    ToastDebugSection(backdrop = backdrop)
+                }
+            }
         }
-
-        PrivilegeSection(backdrop = backdrop, onStartPairing = actions::startPairing)
-
-        // 临时：看玻璃组件的手感，定下来之后换成真的设置项。
-        ComponentPreviewSection(backdrop = backdrop)
-
-        // 临时：验证副屏可用性，验完连同 DebugCard.kt 一起删。
-        DebugCard()
-
-        // 临时：调 Toast 的样子，调完连同 ToastDebugSection.kt 一起删。
-        ToastDebugSection(backdrop = backdrop)
     }
 
     // 模态窗画在浮层上，放在哪里都一样，不占页面的位置。
@@ -242,25 +310,154 @@ fun SettingsScreen(
         onDismiss = { editingPrompt = false },
         backdrop = backdrop,
     )
+}
 
-    MemoryDialog(
-        visible = managingMemory,
-        memories = memories,
-        onAdd = { content ->
-            scope.launch {
-                if (memoryStore.add(content) == null) {
-                    toast.show("记满 ${MemoryStore.MAX_ENTRIES} 条啦，先删掉几条旧的吧～", tone = ToastTone.Error)
-                }
-            }
-        },
-        onUpdate = { id, content -> scope.launch { memoryStore.update(id, content) } },
-        onDelete = { id ->
-            scope.launch { memoryStore.delete(id) }
-            toast.show("忘掉啦～")
-        },
-        onDismiss = { managingMemory = false },
-        backdrop = backdrop,
+/**
+ * 设置首页：四组入口。每一行右边的说明就是那一项现在的样子，不用点进去也知道配好没有。
+ *
+ * @param onOpen 进哪一个二级页。
+ * @param onEditPersona 改人设：只有一样东西要改，直接弹模态窗，不另开一页。
+ */
+@Composable
+private fun SettingsRoot(
+    backdrop: Backdrop,
+    profiles: LlmProfiles,
+    allTimeTokens: Long,
+    customPrompt: String?,
+    memoryCount: Int,
+    status: PermissionStatus,
+    privilegeState: PrivilegeState,
+    onOpen: (SettingsPage) -> Unit,
+    onEditPersona: () -> Unit,
+    actions: SetupActions,
+) {
+    val colors = KittenTheme.colors
+    val active = profiles.profiles.firstOrNull { it.id == profiles.activeId }
+    val (modelText, modelNeedsAttention) = when {
+        profiles.profiles.isEmpty() -> "还没配置，填好 API Key 才能聊天" to true
+        active == null -> "还没选用哪一家" to true
+        !active.isConfigured -> "${active.displayName} · 还没填好 Key 或模型" to true
+        else -> "${active.displayName} · ${active.model}" to false
+    }
+
+    Column {
+        SettingsGroupLabel("模型")
+        SettingsGroup(backdrop = backdrop) {
+            SettingsRow(
+                icon = Icons.Filled.Star,
+                iconTint = colors.iconBlue,
+                title = "模型服务商",
+                subtitle = modelText,
+                subtitleColor = if (modelNeedsAttention) colors.warning else colors.textSecondary,
+                onClick = { onOpen(SettingsPage.Models) },
+            )
+            GlassDivider()
+            SettingsRow(
+                icon = Icons.Filled.DateRange,
+                iconTint = colors.iconGreen,
+                title = "Token 看板",
+                subtitle = "累计 ${formatTokens(allTimeTokens)} tokens",
+                onClick = { onOpen(SettingsPage.Tokens) },
+            )
+        }
+    }
+
+    Column {
+        SettingsGroupLabel("个性与记忆")
+        SettingsGroup(backdrop = backdrop) {
+            SettingsRow(
+                icon = Icons.Filled.Face,
+                iconTint = colors.iconPink,
+                title = "人设",
+                subtitle = if (customPrompt != null) "已自定义" else "默认的 Kitten",
+                onClick = onEditPersona,
+            )
+            GlassDivider()
+            SettingsRow(
+                icon = Icons.Filled.Favorite,
+                iconTint = colors.iconCoral,
+                title = "记忆",
+                subtitle = if (memoryCount == 0) "还什么都没记住" else "记住了 $memoryCount 件事",
+                onClick = { onOpen(SettingsPage.Memory) },
+            )
+        }
+    }
+
+    Column {
+        SettingsGroupLabel("权限与能力")
+        SettingsGroup(backdrop = backdrop) {
+            PermissionRow(
+                icon = Icons.Filled.AccountCircle,
+                iconTint = colors.iconViolet,
+                title = stringResource(R.string.accessibility_service_label),
+                enabled = status.accessibilityEnabled,
+                onOpenSettings = actions::openAccessibilitySettings,
+            )
+            GlassDivider()
+            PermissionRow(
+                icon = Icons.Filled.Notifications,
+                iconTint = colors.iconAmber,
+                title = stringResource(R.string.notification_listener_label),
+                enabled = status.notificationListenerEnabled,
+                onOpenSettings = actions::openNotificationListenerSettings,
+            )
+            GlassDivider()
+            SettingsRow(
+                icon = Icons.Filled.Lock,
+                iconTint = colors.iconTeal,
+                title = "增强模式",
+                subtitle = privilegeState.summary(),
+                subtitleColor = if (privilegeState is PrivilegeState.Error) colors.warning else colors.textSecondary,
+                onClick = { onOpen(SettingsPage.Privilege) },
+            )
+        }
+    }
+
+    Column {
+        SettingsGroupLabel("其他")
+        SettingsGroup(backdrop = backdrop) {
+            SettingsRow(
+                icon = Icons.Filled.Build,
+                iconTint = colors.iconGray,
+                title = "开发者调试",
+                subtitle = "组件预览、副屏、Toast",
+                onClick = { onOpen(SettingsPage.Developer) },
+            )
+        }
+    }
+}
+
+/**
+ * 一项系统权限：开了写"已开启"、点了没反应；没开写"去开启"、点了直接跳系统设置。
+ *
+ * 开了就不再引人去点：要关掉的话去系统设置里关，那本来就是系统的地盘。
+ */
+@Composable
+private fun PermissionRow(
+    icon: ImageVector,
+    iconTint: Color,
+    title: String,
+    enabled: Boolean,
+    onOpenSettings: () -> Unit,
+) {
+    val colors = KittenTheme.colors
+    SettingsRow(
+        icon = icon,
+        iconTint = iconTint,
+        title = title,
+        trailingText = stringResource(if (enabled) R.string.status_enabled else R.string.action_open_settings),
+        trailingColor = if (enabled) colors.positive else colors.accentStrong,
+        showChevron = !enabled,
+        onClick = if (enabled) null else onOpenSettings,
     )
+}
+
+/** 增强模式那一行的说明：连没连上，连上了能干什么。 */
+private fun PrivilegeState.summary(): String = when (this) {
+    is PrivilegeState.Ready -> "已连接 · 能在后台副屏里操作"
+    PrivilegeState.Connecting -> "连接中…"
+    is PrivilegeState.Error -> "出错了，点进去看看"
+    PrivilegeState.Idle -> "没连上 · 配好后能在后台操作，不打扰你"
 }
 
 /**
@@ -367,3 +564,14 @@ private fun ComponentPreviewSection(backdrop: Backdrop, modifier: Modifier = Mod
         }
     }
 }
+
+/**
+ * 换页的滑动：偏硬、几乎不回弹，像系统设置那样干脆地推进推出。淡入淡出比位移快一点，滑到一半
+ * 旧的那页就差不多看不见了，两页叠在一起的时间短。
+ */
+private val PageSlideSpec = spring(
+    dampingRatio = 0.95f,
+    stiffness = 450f,
+    visibilityThreshold = IntOffset.VisibilityThreshold,
+)
+private val PageFadeSpec = spring<Float>(stiffness = 700f)

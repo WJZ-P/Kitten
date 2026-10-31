@@ -77,10 +77,12 @@ import me.wjz.kitten.ui.component.rememberGlassPressState
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
- * 设置页上的"模型"：一张大卡片，里面每家服务一张小卡，最后是"添加服务商"。
+ * "模型服务商"二级页里的那张卡片：每家服务一张小卡，最后是"添加服务商"。
  *
  * 小卡只放最常动的东西：服务商名、这一家用哪个模型（下拉条，选了就生效）、用不用它。地址、
- * Key 这些配一次就很少再动的，点小卡打开模态窗改（[ModelConfigDialog]），不占设置页的地方。
+ * Key 这些配一次就很少再动的，点小卡打开模态窗改（[ModelConfigDialog]）。
+ *
+ * 卡片不带表头：页面标题已经叫"模型服务商"了。
  */
 @Composable
 fun ModelProfilesSection(
@@ -91,7 +93,7 @@ fun ModelProfilesSection(
     onEdit: (LlmProfile) -> Unit,
     onAdd: () -> Unit,
 ) {
-    GlassSection(backdrop = backdrop, title = "模型", icon = Icons.Filled.Star) {
+    GlassSection(backdrop = backdrop) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
