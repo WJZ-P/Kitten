@@ -1,0 +1,30 @@
+<!--
+    阶跃星辰 StepFun 的品牌图标。
+    转自 LobeHub Icons：npm @lobehub/icons-static-svg@1.101.0 的 icons/stepfun-color.svg（MIT 协议），标志本身是品牌方的商标。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillType="evenOdd"
+        android:pathData="M22.012,0 h1.032 v0.927 H24 v0.968 h-0.956 V3.78 h-1.032 V1.896 h-1.878 v-0.97 h1.878 V0 z M2.6,12.371 V1.87 h0.969 v10.502 h-0.97 z m10.423,0.66 h10.95 v0.918 h-6.208 v9.579 h-4.742 V13.03 z M5.629,3.333 v12.356 H0 v4.51 h10.386 V8 L20.859,8 l-0.003,-4.668 -15.227,0.001 z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="1.646"
+                android:startY="1.916"
+                android:endX="18.342"
+                android:endY="22.091">
+                <item
+                    android:color="#01A9FF"
+                    android:offset="0" />
+                <item
+                    android:color="#0160FF"
+                    android:offset="1" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

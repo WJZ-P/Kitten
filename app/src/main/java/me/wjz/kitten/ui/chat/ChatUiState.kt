@@ -3,6 +3,7 @@ package me.wjz.kitten.ui.chat
 import me.wjz.kitten.agent.AgentQuestion
 import me.wjz.kitten.data.session.SessionSummary
 import me.wjz.kitten.llm.ChatMessage
+import me.wjz.kitten.llm.LlmPreset
 
 /**
  * 对话页要渲染的全部状态。
@@ -89,9 +90,11 @@ data class ChatUiState(
  *
  * @param profileId 对应的 [me.wjz.kitten.llm.LlmProfile.id]，切换时按它找回是哪一家。
  * @param name 组名，和设置页卡片上的名字一样。
+ * @param preset 这一家对上的预设，自定义的服务是 null。决定输入栏上那个圆按钮里画谁家的图标，见 [modelBrandOf]。
  */
 data class ModelGroup(
     val profileId: String,
     val name: String,
     val models: List<String>,
+    val preset: LlmPreset? = null,
 )

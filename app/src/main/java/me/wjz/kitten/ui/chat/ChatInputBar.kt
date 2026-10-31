@@ -380,10 +380,11 @@ private val IconSlideSpec = spring(
 private val IconFadeSpec = spring<Float>(stiffness = 900f)
 
 /**
- * 切换模型的按钮和发送之间额外留的空。发送的触摸区每边比圆多出 (48 - 40) / 2 = 4dp，再加这 4dp，
- * 看起来隔着 8dp，不会贴在一起。
+ * 切换模型的按钮和发送之间额外留的空。两个都是 40dp 的圆放在 48dp 的触摸区里，各自每边多出
+ * (48 - 40) / 2 = 4dp，挨着放看起来就隔着 8dp，和"+"、发送这些圆之间的间隔一样，不用再加。
+ * 想让模型按钮离发送远一点就加大它。
  */
-private val ModelSwitcherGap = 4.dp
+private val ModelSwitcherGap = 0.dp
 
 /** 附件区缩略图的大小和圆角。圆角和卡片里的小控件同一档。 */
 private val ThumbnailSize = 72.dp

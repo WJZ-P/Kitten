@@ -1,13 +1,22 @@
 package me.wjz.kitten.ui.chat
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
+import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -17,6 +26,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.isSpecified
@@ -25,13 +35,15 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.util.lerp
@@ -52,11 +64,13 @@ import me.wjz.kitten.ui.component.glassEffects
 import me.wjz.kitten.ui.component.rememberGlassGlow
 import me.wjz.kitten.ui.component.rememberGlassPressState
 import me.wjz.kitten.ui.component.rememberPressMorph
+import me.wjz.kitten.ui.icon.Android
+import me.wjz.kitten.ui.icon.KittenIcons
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /**
- * 输入栏上的模型切换：发送按钮左边一个玻璃小按钮，写着现在用的模型；点开是按服务商分组的
- * 菜单（[GlassGroupedMenu]），每组最多露出 5 个模型，多的在组里滑。选一个就切过去。
+ * 输入栏上的模型切换：发送按钮左边一个玻璃小圆，里面是现在用的模型是哪一家的图标（[ModelBrand]）；
+ * 点开是按服务商分组的菜单（[GlassGroupedMenu]），每组最多露出 5 个模型，多的在组里滑。选一个就切过去。
  *
  * 切换改的是和设置页同一份配置：那一家设为当前，它选中的模型换成这个（见
  * [ChatViewModel.selectModel]）。回设置页看，也是切过之后的样子。
@@ -96,9 +110,12 @@ fun ModelSwitcher(
     } else {
         null
     }
+    val activePreset = groups.firstOrNull { it.profileId == activeProfileId }?.preset
+    val brand = remember(activePreset, activeModel) { modelBrandOf(activePreset, activeModel) }
 
     ModelSwitchButton(
-        label = activeModel ?: "选择模型",
+        brand = brand,
+        modelName = activeModel,
         expanded = expanded,
         enabled = enabled,
         onClick = {
@@ -127,19 +144,19 @@ fun ModelSwitcher(
 private data class ModelChoice(val profileId: String, val model: String)
 
 /**
- * 写着模型名的玻璃小胶囊，两头半圆，和旁边"+"、发送两个圆是一家。不带下拉的尖角：输入栏上
- * 的玻璃一看就是能点的，多一个尖角只是占地方。
+ * 画着模型图标的玻璃小圆，和旁边"+"、发送两个圆一样大，三个圆排成一排。以前是写着模型名的胶囊，
+ * 名字一长就挤，换成图标：哪一家一眼看得出来，具体哪个模型点开菜单就有（读屏会念出模型名）。
  *
- * 玻璃和按压反馈和 [me.wjz.kitten.ui.component.GlassButton] 的透明款一样（按下鼓起、磨砂退场
- * 变成透镜，光雾跟着手指，按住拖动跟手拉长），没直接用它：GlassButton 是卡片里那一档的小圆角，
- * 这里要胶囊。
+ * 玻璃和按压反馈和 [me.wjz.kitten.ui.component.GlassIconButton] 一样（按下鼓起、磨砂退场变成透镜，
+ * 光雾跟着手指，按住拖动跟手拉长），没直接用它：它会把图标整个染成一种颜色，各家的 logo 要原样画。
  *
- * 看得见的部分只有 [ButtonHeight] 高，上下各多出一截触摸区，凑够 [TouchHeight]，和旁边两个圆
- * 按钮一样好按。手指的位置是外面触摸区的坐标，画光雾、拉长时换算到里面。
+ * 看得见的圆只有 [ButtonSize]，四周各多出一截触摸区，凑够 [TouchSize]。手指的位置是外面触摸区的坐标，
+ * 画光雾、拉长时换算到圆里。
  */
 @Composable
 private fun ModelSwitchButton(
-    label: String,
+    brand: ModelBrand?,
+    modelName: String?,
     expanded: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
@@ -155,8 +172,9 @@ private fun ModelSwitchButton(
 
     Box(
         modifier = modifier
-            .semantics(mergeDescendants = true) {
+            .semantics {
                 role = Role.DropdownList
+                contentDescription = if (modelName != null) "切换模型，现在用的是 $modelName" else "选择模型"
                 stateDescription = if (expanded) "已展开" else "已收起"
                 if (enabled) {
                     this.onClick(label = "切换模型") {
@@ -171,21 +189,17 @@ private fun ModelSwitchButton(
                 if (enabled) detectGlassPress(press, followDrag = true) { currentOnClick() }
             }
             .alpha(if (enabled) 1f else DisabledAlpha)
-            .padding(vertical = TouchInset),
+            .padding(TouchInset),
     ) {
         Box(
             modifier = Modifier
-                // 量的是看得见的那块，菜单离它 6dp 开，不是离触摸区。
+                // 量的是看得见的那个圆，菜单离它 6dp 开，不是离触摸区。
                 .onGloballyPositioned { onBoundsChanged(Rect(it.positionInWindow(), it.size.toSize())) }
                 .drawBackdrop(
                     backdrop = backdrop,
-                    // 胶囊：CircleShape 是 50% 圆角，放在扁长条上两头就是半圆。它是 CornerBasedShape，
-                    // 高光那圈边认得（见 GlassTokens）。
                     shape = { CircleShape },
                     effects = {
                         // 按下时磨砂退场、折射变强，变成一块透镜；松手再磨砂回去。和别的按钮一样。
-                        // 折射带宽按小一档的圆角给，和旁边的圆按钮一样：给到胶囊的半高，整块都在
-                        // 折射带里，透出来全是扭曲。
                         val p = morph.value.coerceIn(0f, 1f)
                         glassEffects(GlassRadius.Small, blurRadius = GlassBlur * (1f - p), press = p)
                     },
@@ -200,64 +214,130 @@ private fun ModelSwitchButton(
                         val s = lerp(1f, PressedScale, morph.value)
                         scaleX = s
                         scaleY = s
+                        val inset = TouchInset.toPx()
                         val grab = press.downPosition
                         dragStretch(
                             drag = press.dragOffset,
-                            grab = if (grab.isSpecified) grab - Offset(0f, TouchInset.toPx()) else grab,
+                            grab = if (grab.isSpecified) grab - Offset(inset, inset) else grab,
                             style = ButtonDragStyle,
                         )
                     },
                     onDrawSurface = {
                         // 磨砂的那层底色：按下时退场，把舞台交给折射。
                         drawRect(colors.controlTint, alpha = 1f - morph.value.coerceIn(0f, 1f))
+                        val inset = TouchInset.toPx()
                         val position = press.position
                         drawGlassGlow(
                             glow = glow,
                             intensity = press.pressProgress.coerceIn(0f, 1f) * GlowStrength,
-                            center = if (position.isSpecified) position - Offset(0f, TouchInset.toPx()) else position,
+                            center = if (position.isSpecified) position - Offset(inset, inset) else position,
                             colors = colors.glowOnGlass,
                         )
                     },
                 )
-                .height(ButtonHeight)
-                .widthIn(max = ButtonMaxWidth)
-                .padding(horizontal = ButtonPaddingHorizontal),
+                .size(ButtonSize),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelLarge,
-                color = colors.textSecondary,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            // 换到了另一家：旧图标边缩小边往上滑出去，新图标从下面边长大边滑进来（见 brandIconTransition）。
+            // 同一家里换模型，图标没变，不动。
+            AnimatedContent(
+                targetState = brand,
+                transitionSpec = { brandIconTransition() },
+                contentAlignment = Alignment.Center,
+                label = "modelBrandIcon",
+                // 铺满整个圆再裁成圆：滑动的距离按圆的高度算，滑出去的图标正好整个离开玻璃，露在外面的
+                // 那一截被裁掉。和发送换成停止时一样。
+                modifier = Modifier
+                    .matchParentSize()
+                    .clip(CircleShape),
+            ) { target ->
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    ModelBrandIcon(brand = target, modifier = Modifier.size(IconSize))
+                }
+            }
         }
     }
 }
 
 /**
- * 按钮看得见的部分多高。比旁边的圆（40dp）矮一截：它是个次要的开关，不该和发送抢眼；
- * 但也不能太矮，字是 14sp 的，再矮上下就贴边了。
+ * 换一家时图标怎么换：旧的边缩小边往上滑出圆，新的从圆底下边长大边滑进来，像换上来一张牌。
+ *
+ * 滑动的距离是整个圆的高度，正好整个进出玻璃；缩放到 [IconHiddenScale]，滑到圆边时已经小了一圈；
+ * 顺带淡一点，碰到圆边被裁掉的那一下不那么硬。滑动和缩放用同一个略带回弹的弹簧，新图标落定时会
+ * 微微冲大一点再回来。
  */
-private val ButtonHeight = 34.dp
-
-/** 触摸区多高，和旁边两个圆按钮的触摸区一样（48dp）。 */
-private val TouchHeight = 48.dp
-
-/** 看得见的部分上下各多出来的那截触摸区。 */
-private val TouchInset = (TouchHeight - ButtonHeight) / 2
+private fun brandIconTransition(): ContentTransform {
+    val enter = slideInVertically(IconSlideSpec) { height -> height } +
+        scaleIn(IconScaleSpec, initialScale = IconHiddenScale) +
+        fadeIn(IconFadeSpec)
+    val exit = slideOutVertically(IconSlideSpec) { height -> -height } +
+        scaleOut(IconScaleSpec, targetScale = IconHiddenScale) +
+        fadeOut(IconFadeSpec)
+    return enter togetherWith exit
+}
 
 /**
- * 按钮最宽多宽，模型名再长就出省略号。它只是提示"现在用的是哪个"，看全名点开菜单就有；
- * 给宽了在输入栏上太抢眼（试过 180dp，用户嫌宽，减到一半）。
+ * 一家的图标。认得出是谁家的，画那一家的 logo，原样的颜色；认不出画安卓小机器人。设置页的 Token 看板
+ * 按模型列用量时也用它。
  */
-private val ButtonMaxWidth = 90.dp
+@Composable
+internal fun ModelBrandIcon(brand: ModelBrand?, modifier: Modifier = Modifier) {
+    if (brand != null) {
+        Icon(
+            painter = painterResource(brand.icon),
+            contentDescription = null,
+            // Icon 默认会按内容色把图标整个染成一种颜色，彩色的 logo 就成了一块色块。
+            tint = Color.Unspecified,
+            modifier = modifier,
+        )
+    } else {
+        Icon(
+            imageVector = KittenIcons.Android,
+            contentDescription = null,
+            // 安卓的绿。别家的 logo 都带着自己的颜色，它也得有颜色：灰的摆在旁边像是不能点。
+            // 想换颜色改这里，从 KittenColors 里挑。
+            tint = KittenTheme.colors.iconGreen,
+            modifier = modifier,
+        )
+    }
+}
 
-/** 字到胶囊两头的距离。两头是半圆，留白比方角按钮多一点，字才不会顶到弧上。 */
-private val ButtonPaddingHorizontal = 14.dp
+/** 看得见的圆多大，和旁边"+"、发送一样（输入栏的 ActionButtonSize）。 */
+private val ButtonSize = 40.dp
 
-/** 按下鼓起多少。按钮小，和紧凑款的 GlassButton 一样给多一点才看得出来。 */
-private const val PressedScale = 1.15f
+/** 触摸区多大，和旁边两个圆按钮的触摸区一样（48dp）。 */
+private val TouchSize = 48.dp
+
+/** 看得见的圆四周各多出来的那截触摸区。 */
+private val TouchInset = (TouchSize - ButtonSize) / 2
+
+/**
+ * 圆里的图标多大。比"+"、发送的图标小一点：各家 logo 大多是铺满整个画布的实心图形，一样大的话
+ * 看起来比旁边的线条图标重。
+ */
+private val IconSize = 22.dp
+
+/**
+ * 换图标时滑动的弹簧：略冲过头一点再落定。和发送换成停止时的一样（ChatInputBar 的 IconSlideSpec）。
+ * dampingRatio 越小晃得越多，stiffness 越大越快。
+ */
+private val IconSlideSpec = spring(
+    dampingRatio = 0.75f,
+    stiffness = 500f,
+    visibilityThreshold = IntOffset.VisibilityThreshold,
+)
+
+/** 换图标时缩放的弹簧，和滑动同一个手感：变大、变小和滑动一起到位。 */
+private val IconScaleSpec = spring<Float>(dampingRatio = 0.75f, stiffness = 500f)
+
+/** 换图标时淡入淡出：比滑动快，滑到一半就已经看得清了。和发送换成停止时一样。 */
+private val IconFadeSpec = spring<Float>(stiffness = 900f)
+
+/** 换图标时，旧图标缩到多小离开、新图标从多小开始长：1 就是不缩放，只滑动。 */
+private const val IconHiddenScale = 0.4f
+
+/** 按下鼓起多少，和旁边的圆按钮（GlassIconButton）一样。 */
+private const val PressedScale = 1.25f
 
 /** 快速点按时，在最鼓的状态至少停多久（毫秒）再收回，见 [rememberPressMorph]。 */
 private const val MinMorphMillis = 100L
@@ -268,8 +348,11 @@ private val MorphInSpec = spring<Float>(dampingRatio = 0.7f, stiffness = 600f)
 /** 收回：软一点，晃一下，像液体落回去。和别的按钮一样。 */
 private val MorphOutSpec = spring<Float>(dampingRatio = 0.6f, stiffness = 300f)
 
-/** 按住拖动时的形变，和 GlassButton 一样，各项含义见 [GlassDragStyle]。 */
-private val ButtonDragStyle = GlassDragStyle(range = 80.dp, stretch = 0.08f, squeeze = 0.5f, tilt = 3f)
+/**
+ * 按住拖动时的形变，和旁边的圆按钮一样，各项含义见 [GlassDragStyle]。圆很小，拉长的比例给得大；
+ * 不歪：圆转了看不出来，只会把图标转歪。
+ */
+private val ButtonDragStyle = GlassDragStyle(range = 60.dp, stretch = 0.15f, squeeze = 0.5f, tilt = 0f)
 
 /** 光雾的最大亮度，和按钮一样。 */
 private const val GlowStrength = 0.25f

@@ -1,0 +1,25 @@
+<!--
+    Mistral AI 的品牌图标。
+    转自 LobeHub Icons：npm @lobehub/icons-static-svg@1.101.0 的 icons/mistral-color.svg（MIT 协议），标志本身是品牌方的商标。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFD700"
+        android:pathData="M3.428,3.4 h3.429 v3.428 H3.428 V3.4 z m13.714,0 h3.43 v3.428 h-3.43 V3.4 z" />
+    <path
+        android:fillColor="#FFAF00"
+        android:pathData="M3.428,6.828 h6.857 v3.429 H3.429 V6.828 z m10.286,0 h6.857 v3.429 h-6.857 V6.828 z" />
+    <path
+        android:fillColor="#FF8205"
+        android:pathData="M3.428,10.258 h17.144 v3.428 H3.428 v-3.428 z" />
+    <path
+        android:fillColor="#FA500F"
+        android:pathData="M3.428,13.686 h3.429 v3.428 H3.428 v-3.428 z m6.858,0 h3.429 v3.428 h-3.429 v-3.428 z m6.856,0 h3.43 v3.428 h-3.43 v-3.428 z" />
+    <path
+        android:fillColor="#E10500"
+        android:pathData="M0,17.114 h10.286 v3.429 H0 v-3.429 z m13.714,0 H24 v3.429 H13.714 v-3.429 z" />
+</vector>
