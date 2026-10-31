@@ -15,6 +15,14 @@ okhttp = "4.12.0"
 backdrop = "2.0.1"
 # Capsule 等连续圆角形状。backdrop 自己就依赖它，这里版本要跟 backdrop 拉的那份对齐。
 shapes = "1.2.1"
+# 模型回复的 Markdown 渲染（mikepenz/multiplatform-markdown-renderer，Apache 2.0）。KMP 库，Gradle 会解析到
+# -android；它依赖的 compose-foundation 1.12.1 和 Kotlin 2.4.21 都和我们现在用的一致。
+markdownRenderer = "0.46.0"
+# 代码块的语法高亮（SnipMeDev/Highlights，Apache 2.0）。和 markdown 库的 -code 模块用的是同一个版本。
+highlights = "1.1.0"
+# 公式（LaTeX）排版（huarangmeng/latex，MIT）。不带后缀的是按 Kotlin 2.3 / Compose Multiplatform 1.10 编译的
+# 那一版（-kt2.1.0 后缀的是给老 Kotlin 用的）。几个模块的版本要一致。
+latex = "1.6.3"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -37,6 +45,12 @@ conscrypt-android = { group = "org.conscrypt", name = "conscrypt-android", versi
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "backdrop" }
 shapes = { group = "io.github.kyant0", name = "shapes", version.ref = "shapes" }
+markdown-renderer = { group = "com.mikepenz", name = "multiplatform-markdown-renderer", version.ref = "markdownRenderer" }
+markdown-renderer-m3 = { group = "com.mikepenz", name = "multiplatform-markdown-renderer-m3", version.ref = "markdownRenderer" }
+# 它只发布了 JVM 版（没有单独的 Android 版），直接引 -jvm 的那份。
+highlights = { group = "dev.snipme", name = "highlights-jvm", version.ref = "highlights" }
+latex-renderer = { group = "io.github.huarangmeng", name = "latex-renderer", version.ref = "latex" }
+latex-fonts-katex = { group = "io.github.huarangmeng", name = "latex-fonts-katex", version.ref = "latex" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

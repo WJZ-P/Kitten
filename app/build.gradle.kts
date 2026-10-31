@@ -74,5 +74,20 @@ dependencies {
     // 运行时 classpath 上，编译期看不到——不显式依赖的话 `com.kyant.shapes.Capsule` 会报
     // Unresolved reference。
     implementation(libs.shapes)
+    // 模型回复的 Markdown。core 是解析和排版（底下是 JetBrains 的 Markdown 解析器），-m3 是 Material 3 的
+    // 默认配色、字号和任务列表的勾选框。加载图片（-coil）没引：模型给的图片链接不去下载。
+    implementation(libs.markdown.renderer)
+    implementation(libs.markdown.renderer.m3)
+    // 代码块的语法高亮引擎。没用 markdown 库的 -code 模块：它在流式时会在"没上色""上了色"之间来回闪，
+    // 代码块自己画（ui/chat/ChatCodeBlock），只借它底下的这个引擎。
+    // 它的结果类型标了 @Serializable，所以会带进 kotlinx-serialization 的运行时（连同引擎本身，jar 加起来
+    // 七八百 KB，没开混淆时包会大这么多）。上面说不引 kotlinx.serialization 是怕它的编译器插件和 Kotlin 版本
+    // 对不上；这里只是带进运行时，我们自己不用 @Serializable，不涉及插件。
+    implementation(libs.highlights)
+    // 回复里的数学公式。renderer 是排版（会带上它的 parser、base）；fonts-katex 是配套的 KaTeX 数学字体，
+    // 排版用的尺寸参数是按这套字体定的，换别的字体符号会错位，作者也强烈建议带上。加起来约 1.7MB（排版、
+    // 解析各五百多 KB，字体六百多 KB）。只在 ui/chat/ChatMath.kt 里用。
+    implementation(libs.latex.renderer)
+    implementation(libs.latex.fonts.katex)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
