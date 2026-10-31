@@ -94,6 +94,8 @@ fun KittenApp(actions: SetupActions, openChatRequests: Flow<Unit>) {
     LaunchedEffect(openChatRequests) {
         openChatRequests.collect { currentTab = KittenTab.Chat }
     }
+    // 对话里点了"已学习到新知识！"：切到设置，翻到那个技能。设置页翻完了清掉。
+    var skillToOpen by remember { mutableStateOf<String?>(null) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val toast = remember { ToastState() }
@@ -227,6 +229,10 @@ fun KittenApp(actions: SetupActions, openChatRequests: Flow<Unit>) {
                                         onAnswerQuestion = chatViewModel::answerQuestion,
                                         onSelectModel = chatViewModel::selectModel,
                                         onStop = chatViewModel::stop,
+                                        onOpenSkill = {
+                                            skillToOpen = it
+                                            currentTab = KittenTab.Settings
+                                        },
                                         bottomInsets = aboveBarOrIme,
                                     )
 
@@ -246,6 +252,8 @@ fun KittenApp(actions: SetupActions, openChatRequests: Flow<Unit>) {
                                         modifier = Modifier.imePadding(),
                                         // 设置里有二级页，返回手势只在设置是当前 tab 时才归它。
                                         isCurrentTab = currentTab == KittenTab.Settings,
+                                        openSkillRequest = skillToOpen,
+                                        onOpenSkillHandled = { skillToOpen = null },
                                     )
                                 }
                             }

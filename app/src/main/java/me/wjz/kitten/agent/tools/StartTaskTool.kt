@@ -52,5 +52,18 @@ class StartTaskTool : AgentTool {
         /** 这次调用开的任务叫什么。模型没给标题（参数坏了）时退回一个泛泛的说法。 */
         fun titleOf(call: ToolCall): String =
             call.argumentsJson().optString("title").trim().take(MAX_TITLE_LENGTH).ifEmpty { "办一件事" }
+
+        /**
+         * 模型没开任务时用什么标题：用户那句话的第一行，太长截断。只发了图片的退回一句泛泛的。
+         * 对话里自动开的任务卡片、任务页上正在办的那件事、复盘的那件事都用它，几处叫法一样。
+         */
+        fun autoTitle(userText: String): String {
+            val firstLine = userText.trim().lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+            if (firstLine.isEmpty()) return DEFAULT_AUTO_TITLE
+            return if (firstLine.length > MAX_TITLE_LENGTH) firstLine.take(MAX_TITLE_LENGTH) + "…" else firstLine
+        }
+
+        /** 用户只发了图片、没打字时，自动开的任务叫什么。 */
+        const val DEFAULT_AUTO_TITLE = "办你交代的事"
     }
 }

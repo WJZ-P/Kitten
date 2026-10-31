@@ -1,6 +1,7 @@
 package me.wjz.kitten.ui.chat
 
 import me.wjz.kitten.agent.AgentQuestion
+import me.wjz.kitten.agent.Reflection
 import me.wjz.kitten.data.session.SessionSummary
 import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.llm.LlmPreset
@@ -48,6 +49,12 @@ data class ChatUiState(
      * 常驻通知上也会显示同一个问题（见 [me.wjz.kitten.agent.AgentTaskHandle]）。
      */
     val pendingQuestion: AgentQuestion? = null,
+
+    /**
+     * 办完的事复盘到哪了（所有会话的），按 anchor 记，见 [me.wjz.kitten.agent.SkillReflector]。对话里
+     * 任务卡片下面那一行看它。
+     */
+    val reflections: Map<String, Reflection> = emptyMap(),
 
     /**
      * 模型是否已配置。

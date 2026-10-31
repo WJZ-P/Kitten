@@ -1,12 +1,18 @@
 package me.wjz.kitten.ui.chat
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.VisibilityThreshold
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -15,20 +21,26 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
@@ -37,14 +49,19 @@ import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
+import me.wjz.kitten.agent.Reflection
 import me.wjz.kitten.agent.describe
 import me.wjz.kitten.ui.component.GlassContentPadding
 import me.wjz.kitten.ui.component.GlassModal
+import me.wjz.kitten.ui.component.GlassRadius
 import me.wjz.kitten.ui.component.detectGlassPress
 import me.wjz.kitten.ui.component.rememberGlassPressState
+import me.wjz.kitten.ui.icon.AutoAwesome
+import me.wjz.kitten.ui.icon.KittenIcons
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /** 任务走到哪了。 */
@@ -371,6 +388,121 @@ private fun TaskStatus.color(): Color {
     }
 }
 
+/**
+ * 任务卡片下面那一行：办完以后 Kitten 在后台复盘（见 SkillReflector），复盘到哪了。
+ *
+ * - 复盘中："Kitten 在复盘这次的经过…"，字上扫流光，和卡片上正在执行的那一步一个样子。
+ * - 学到了："已学习到新知识！「技能名」 ›"，点了去设置里看那个技能。按下铺一层水波，松手才跳。
+ * - 没学到、复盘失败：这一行收掉。复盘是顺手的事，没学到不用特意告诉用户。
+ *
+ * 出现、换状态、收掉，高度都跟着长缩，下面的回复跟着挪，不会跳。
+ *
+ * @param reflection 复盘到哪了，没复盘过是 null。
+ */
+@Composable
+internal fun ReflectionLine(reflection: Reflection?, onOpenSkill: (skillId: String) -> Unit) {
+    val shown = reflection?.takeIf { it !is Reflection.NothingLearned }
+    // 收起的动画还在放时 shown 已经是 null 了，里面的字不能跟着没：记着最后那一份。
+    var last by remember { mutableStateOf(shown) }
+    SideEffect { if (shown != null) last = shown }
+    AnimatedVisibility(
+        visible = shown != null,
+        enter = expandVertically(LineSizeSpec, expandFrom = Alignment.Top) + fadeIn(RowFadeSpec),
+        exit = shrinkVertically(LineSizeSpec, shrinkTowards = Alignment.Top) + fadeOut(RowFadeSpec),
+    ) {
+        AnimatedContent(
+            targetState = shown ?: last,
+            // 只在换状态时换（复盘中 → 学到了），复盘里换一步不用动。
+            contentKey = { it?.javaClass },
+            transitionSpec = { fadeIn(RowFadeSpec) togetherWith fadeOut(RowFadeSpec) using SizeTransform(clip = false) },
+            label = "reflectionLine",
+        ) { state ->
+            when (state) {
+                is Reflection.Running -> ReflectingRow()
+                is Reflection.Learned -> LearnedRow(state, onOpenSkill)
+                Reflection.NothingLearned, null -> Unit
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReflectingRow() {
+    val colors = KittenTheme.colors
+    val shimmer = rememberShimmerProgress(active = true)
+    Row(
+        modifier = Modifier.padding(start = ReflectionInset, end = ReflectionInset, top = ReflectionGap),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ReflectionIconGap),
+    ) {
+        Icon(
+            imageVector = KittenIcons.AutoAwesome,
+            contentDescription = null,
+            tint = colors.accent,
+            modifier = Modifier.size(ReflectionIconSize),
+        )
+        Text(
+            text = "Kitten 在复盘这次的经过…",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.textSecondary,
+            maxLines = 1,
+            modifier = if (shimmer != null) {
+                Modifier.shimmer(progress = { shimmer.value }, color = colors.accent)
+            } else {
+                Modifier
+            },
+        )
+    }
+}
+
+@Composable
+private fun LearnedRow(learned: Reflection.Learned, onOpenSkill: (skillId: String) -> Unit) {
+    val colors = KittenTheme.colors
+    Row(
+        modifier = Modifier
+            // 按下的那层底色比字宽一圈：往外让出这一圈，字还和"复盘中"那一行对齐。
+            .padding(start = ReflectionInset - LearnedPressPadding, top = ReflectionGap - LearnedPressPaddingVertical)
+            .clip(RoundedCornerShape(GlassRadius.Small))
+            .clickable(
+                interactionSource = null,
+                indication = ripple(color = colors.accentStrong),
+                role = Role.Button,
+                onClickLabel = "查看学到的技能",
+            ) { onOpenSkill(learned.skillId) }
+            .padding(horizontal = LearnedPressPadding, vertical = LearnedPressPaddingVertical),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(ReflectionIconGap),
+    ) {
+        Icon(
+            imageVector = KittenIcons.AutoAwesome,
+            contentDescription = null,
+            tint = colors.accentStrong,
+            modifier = Modifier.size(ReflectionIconSize),
+        )
+        Text(
+            text = "已学习到新知识！",
+            style = MaterialTheme.typography.bodySmall,
+            fontWeight = FontWeight.SemiBold,
+            color = colors.accentStrong,
+            maxLines = 1,
+        )
+        Text(
+            text = "「${learned.skillName}」",
+            style = MaterialTheme.typography.bodySmall,
+            color = colors.textSecondary,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        Icon(
+            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = colors.textTertiary,
+            modifier = Modifier.size(LearnedArrowSize),
+        )
+    }
+}
+
 /** 标题行末尾那个"›"多大，提示整张卡能点。 */
 private val ArrowSize = 18.dp
 
@@ -382,3 +514,27 @@ private const val PressedScale = 1.02f
 
 /** 模态窗里的字往里缩多少，和工具清单那一行的字左边对齐（清单行的左右留白是 8dp）。 */
 private val DetailTextInset = 8.dp
+
+/** 复盘那一行往里缩多少：和卡片里的字左边对齐，看着是挂在这张卡片底下的。 */
+private val ReflectionInset = ChatCardPadding
+
+/** 复盘那一行和卡片之间空多少。贴太近像卡片里的字，太远又像另起一段。 */
+private val ReflectionGap = 6.dp
+
+/** 复盘那一行打头的小星星多大、和字隔多远：比字（bodySmall，12sp）略大一点。 */
+private val ReflectionIconSize = 14.dp
+private val ReflectionIconGap = 6.dp
+
+/** "已学习到新知识！"那一行按下时的底色比字宽出多少，好按。 */
+private val LearnedPressPadding = 8.dp
+private val LearnedPressPaddingVertical = 4.dp
+
+/** "已学习到新知识！"那一行末尾的"›"。比卡片标题行上的小一号，这一行字也小。 */
+private val LearnedArrowSize = 16.dp
+
+/** 复盘那一行长出来、收回去的弹簧，和工具清单展开收起一个性格，几乎不回弹。 */
+private val LineSizeSpec = spring(
+    dampingRatio = 0.9f,
+    stiffness = 500f,
+    visibilityThreshold = IntSize.VisibilityThreshold,
+)

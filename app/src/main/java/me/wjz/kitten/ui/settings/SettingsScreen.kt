@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -57,6 +58,7 @@ import me.wjz.kitten.R
 import me.wjz.kitten.agent.SystemPrompt
 import me.wjz.kitten.data.memory.MemoryStore
 import me.wjz.kitten.data.skills.BuiltinSkill
+import me.wjz.kitten.data.skills.SkillSource
 import me.wjz.kitten.data.skills.SkillStore
 import me.wjz.kitten.data.skills.UserSkill
 import me.wjz.kitten.llm.LlmConfigStore
@@ -163,6 +165,8 @@ private val PageSaver = Saver<SettingsPage, String>(
  *   能滚到栏的上方。
  * @param isCurrentTab 设置是不是当前的 tab。三页常驻（见 KittenApp），不是当前 tab 时返回手势不能
  *   被设置的二级页截走。
+ * @param openSkillRequest 别处要打开的一个技能（它的 id）：对话里点了"已学习到新知识！"那一行。
+ *   不为 null 时直接翻到那个技能的编辑页，翻完调 [onOpenSkillHandled]。
  */
 @Composable
 fun SettingsScreen(
@@ -172,6 +176,8 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(),
     isCurrentTab: Boolean = true,
+    openSkillRequest: String? = null,
+    onOpenSkillHandled: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val controller = remember(context) { WirelessDebugController.getInstance(context) }
@@ -206,6 +212,20 @@ fun SettingsScreen(
     var page by rememberSaveable(stateSaver = PageSaver) { mutableStateOf(SettingsPage.Root) }
     val rootScroll = rememberScrollState()
     BackHandler(enabled = isCurrentTab && page != SettingsPage.Root) { page = page.parent ?: SettingsPage.Root }
+
+    // 对话里点了"已学习到新知识！"：直接翻到那个技能的编辑页，返回回到技能列表。用户可能已经把它删了。
+    LaunchedEffect(openSkillRequest) {
+        val id = openSkillRequest ?: return@LaunchedEffect
+        val skill = SkillStore.userSkills(context).firstOrNull { it.id == id }
+        if (skill != null) {
+            skillDraft = skill
+            skillDraftIsNew = false
+            page = SettingsPage.SkillEditor
+        } else {
+            toast.show("这个技能已经被删掉啦～", tone = ToastTone.Error)
+        }
+        onOpenSkillHandled()
+    }
 
     // 存下来，并通知对话页：它的"模型是否已配置"是启动时读的，要主动让它重读。
     fun commit(next: LlmProfiles) {
@@ -387,6 +407,9 @@ fun SettingsScreen(
                                 name = skillDraft.name.trim(),
                                 whenToUse = skillDraft.whenToUse.trim(),
                                 instructions = skillDraft.instructions.trim(),
+                                // Kitten 自己学的，用户看过、点了保存，就算用户的了：以后提示词里和用户写的
+                                // 放在一起，复盘也不会再改它。见 UserSkill 的类注释。
+                                source = SkillSource.User,
                             )
                             // 模型按名字读技能（read_skill），重名的话它分不清读哪个。
                             val clash = userSkills.any { it.id != skill.id && it.name.trim().equals(skill.name, ignoreCase = true) }

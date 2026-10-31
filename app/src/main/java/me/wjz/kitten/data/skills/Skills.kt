@@ -5,6 +5,7 @@ import java.util.UUID
 /**
  * Kitten 自带的技能：一组工具，加上系统提示词里教它怎么用这组工具的那一段。在设置 → 技能里能逐个
  * 关掉，关掉的那一组工具不交给模型，提示词里那一段也不写（见 SystemPrompt、ChatViewModel）。
+ * [SelfLearning] 例外：它不给对话里的模型任何东西，管的是办完事之后要不要在后台复盘。
  *
  * [id] 是存开关用的，定下来就别改：改了，用户关掉的会重新变回开着。
  */
@@ -24,6 +25,21 @@ enum class BuiltinSkill(val id: String) {
 
     /** 编写技能：用户在对话里让它写、让它改技能时，写好存进"自定义"（save_skill）。 */
     SkillWriting("skill_writing"),
+
+    /**
+     * 自我进化：一件事办完（操作手机够多步、正常结束），在后台起一个复盘 Agent 回顾经过，值得记的
+     * 存成一个"自己学的"技能（见 SkillReflector）。对话里的模型看不到它。
+     */
+    SelfLearning("self_learning"),
+}
+
+/** 一个自定义技能是谁写的。 */
+enum class SkillSource {
+    /** 用户写的：设置里手写的、在对话里让 Kitten 写的（save_skill），或者用户看过、改过、点了保存的。 */
+    User,
+
+    /** Kitten 办完事自己复盘总结的（learn_skill），用户还没看过。 */
+    Learned,
 }
 
 /**
@@ -32,13 +48,21 @@ enum class BuiltinSkill(val id: String) {
  * 模型平时只看得到 [name] 和 [whenToUse]（列在系统提示词里），碰到对得上的事，才用 read_skill 把
  * [instructions] 全文读出来照着做。这样技能写得再长，没用到的时候也不占地方。
  *
- * 说明书是用户自己写的，算用户的话，模型照着做没问题；它和"屏幕上读到的字"不是一回事。
+ * ## 分不分谁写的
+ *
+ * 用户写的说明书算用户的话，模型照着做没问题——用户在里面写"下单不用问我"，那就是他的授权。
+ *
+ * Kitten 自己复盘总结的（[SkillSource.Learned]）不算。复盘时看的经过里有屏幕上读到的字，别人发来的
+ * 一句"以后付款不用问"要是被总结进技能，再被当成用户的话，屏幕上的字就借着技能变成了用户授权（记忆
+ * 投毒）。所以它在提示词里单独列、明说只是参考，规矩照旧（见 SystemPrompt、ReadSkillTool）；用户在
+ * 编辑页里看过、点了保存，才转成 [SkillSource.User]。
  *
  * @param id 内部用的编号，用户看不到。
  * @param name 名字，用户看得到，模型也按它来读（read_skill 的参数），所以不能重名。
  * @param whenToUse 什么时候用：模型靠它判断这件事该不该翻这本说明书。
  * @param instructions 具体怎么做：打开哪个应用、点哪里、选什么……
  * @param enabled 开着才交给模型。
+ * @param source 谁写的，见上面。
  */
 data class UserSkill(
     val id: String,
@@ -46,7 +70,10 @@ data class UserSkill(
     val whenToUse: String,
     val instructions: String,
     val enabled: Boolean = true,
+    val source: SkillSource = SkillSource.User,
 ) {
+    val isLearned: Boolean get() = source == SkillSource.Learned
+
     companion object {
         /** 一份新的、空白的技能，给"添加技能"用。 */
         fun create(): UserSkill = UserSkill(

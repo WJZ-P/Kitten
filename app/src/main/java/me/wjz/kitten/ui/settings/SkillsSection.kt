@@ -29,6 +29,7 @@ import me.wjz.kitten.ui.component.GlassContentPadding
 import me.wjz.kitten.ui.component.GlassSection
 import me.wjz.kitten.ui.component.GlassSwitch
 import me.wjz.kitten.ui.component.GlassTextField
+import me.wjz.kitten.ui.icon.AutoAwesome
 import me.wjz.kitten.ui.icon.ContactSupport
 import me.wjz.kitten.ui.icon.Extension
 import me.wjz.kitten.ui.icon.KittenIcons
@@ -45,8 +46,9 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * ChatViewModel）。正在进行的那一轮不受影响：一轮里工具和提示词都不能变。
  *
  * 默认技能只能开关；自定义的点一下进编辑页（[SkillEditorPage]）改，最后一行"教 Kitten 一个新技能"
- * 手动加一个。在对话里让 Kitten 写的技能（save_skill）也存进"自定义"。开关是玻璃的，它自己接手指，
- * 按在开关上不会算成点了那一行。
+ * 手动加一个。在对话里让 Kitten 写的技能（save_skill）、它办完事自己学的技能（自我进化，见
+ * SkillReflector）也存进"自定义"，自己学的打头是小星星。开关是玻璃的，它自己接手指，按在开关上不会
+ * 算成点了那一行。
  *
  * @param builtins 每个默认技能开没开。
  * @param userSkills 全部自定义技能（开着的、关着的都有）。
@@ -68,11 +70,14 @@ fun SkillsPage(
         SettingsGroup(backdrop = backdrop) {
             userSkills.forEach { skill ->
                 key(skill.id) {
+                    // Kitten 自己学的打头是小星星、说明前面标一句，一眼分得出哪些是它自己记的、还没看过。
+                    // 点进去看过、保存了，就算用户的了（见 SettingsScreen）。
+                    val whenToUse = skill.whenToUse.trim().ifEmpty { "还没写什么时候用" }
                     SettingsRow(
-                        icon = KittenIcons.Extension,
-                        iconTint = colors.iconAmber,
+                        icon = if (skill.isLearned) KittenIcons.AutoAwesome else KittenIcons.Extension,
+                        iconTint = if (skill.isLearned) colors.iconPink else colors.iconAmber,
                         title = skill.name,
-                        subtitle = skill.whenToUse.trim().ifEmpty { "还没写什么时候用" },
+                        subtitle = if (skill.isLearned) "Kitten 自己学的 · $whenToUse" else whenToUse,
                         showChevron = false,
                         trailing = {
                             GlassSwitch(
@@ -93,12 +98,12 @@ fun SkillsPage(
                 onClick = onAdd,
             )
         }
-        // 告诉用户还能在对话里让 Kitten 写技能。"编写技能"关着的话，顺口提一句要先打开它，免得用户去说了
-        // 却没反应。
+        // 告诉用户还能在对话里让 Kitten 写技能、它办完事也会自己学。"编写技能"关着的话，顺口提一句要先
+        // 打开它，免得用户去说了却没反应。
         val writingOn = builtins[BuiltinSkill.SkillWriting] ?: true
         Text(
-            text = "可以直接在对话里让 Kitten 帮你写技能，写好的会自动存到这里～" +
-                (if (writingOn) "" else "先把下面的「编写技能」打开哦。"),
+            text = "可以在对话里让 Kitten 帮你写技能，它办完事也会自己学，都会存到这里～" +
+                (if (writingOn) "" else "让它写要先把下面的「编写技能」打开哦。"),
             style = MaterialTheme.typography.labelSmall,
             color = colors.textTertiary,
             modifier = Modifier.padding(start = HintInset, top = 8.dp, end = HintInset),
@@ -157,7 +162,11 @@ fun SkillEditorPage(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(
-                text = "教 Kitten 一个新本事～写清楚什么时候用、怎么做，它碰到对得上的事就会照着做。",
+                text = if (draft.isLearned) {
+                    "这是 Kitten 办完事自己学的，看看哪里不对就改～点保存就算你教的啦。"
+                } else {
+                    "教 Kitten 一个新本事～写清楚什么时候用、怎么做，它碰到对得上的事就会照着做。"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.textSecondary,
             )
@@ -224,6 +233,7 @@ private val BuiltinSkill.title: String
         BuiltinSkill.Ask -> "向你提问"
         BuiltinSkill.Memory -> "记忆"
         BuiltinSkill.SkillWriting -> "编写技能"
+        BuiltinSkill.SelfLearning -> "自我进化"
     }
 
 /** 默认技能下面那行小字：它能干什么，一句大白话。 */
@@ -233,23 +243,26 @@ private val BuiltinSkill.summary: String
         BuiltinSkill.Ask -> "拿不准的时候，弹出选项问你"
         BuiltinSkill.Memory -> "记住你的偏好，换了对话也记得"
         BuiltinSkill.SkillWriting -> "在对话里帮你写技能，写好存到上面"
+        BuiltinSkill.SelfLearning -> "办完事自己复盘，学到的也存到上面"
     }
 
-/** 默认技能的图标，和对话里对应的东西用同一个（提问卡片的问号、记忆的心）。 */
+/** 默认技能的图标，和对话里对应的东西用同一个（提问卡片的问号、记忆的心、学到新知识的小星星）。 */
 private val BuiltinSkill.icon: ImageVector
     get() = when (this) {
         BuiltinSkill.Phone -> KittenIcons.Smartphone
         BuiltinSkill.Ask -> KittenIcons.ContactSupport
         BuiltinSkill.Memory -> Icons.Filled.Favorite
         BuiltinSkill.SkillWriting -> Icons.Filled.Edit
+        BuiltinSkill.SelfLearning -> KittenIcons.AutoAwesome
     }
 
-/** 默认技能图标的颜色：一个技能一种，记忆和设置首页"记忆"那一行同色。 */
+/** 默认技能图标的颜色：一个技能一种，记忆和设置首页"记忆"那一行同色，自我进化和它学到的技能同色。 */
 private fun KittenColors.tintOf(skill: BuiltinSkill): Color = when (skill) {
     BuiltinSkill.Phone -> iconBlue
     BuiltinSkill.Ask -> iconViolet
     BuiltinSkill.Memory -> iconCoral
     BuiltinSkill.SkillWriting -> iconGreen
+    BuiltinSkill.SelfLearning -> iconPink
 }
 
 /** 页底那句小字往里缩多少：和分组名对齐。 */

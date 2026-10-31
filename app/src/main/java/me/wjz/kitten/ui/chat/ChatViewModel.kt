@@ -23,6 +23,7 @@ import me.wjz.kitten.agent.AgentTaskHandle
 import me.wjz.kitten.agent.AgentTool
 import me.wjz.kitten.agent.ChatCaller
 import me.wjz.kitten.agent.DeviceSession
+import me.wjz.kitten.agent.SkillReflector
 import me.wjz.kitten.agent.SystemPrompt
 import me.wjz.kitten.agent.ToolRegistry
 import me.wjz.kitten.agent.tools.AskUserTool
@@ -95,7 +96,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         observeSessions()
+        observeReflections()
         refreshModelConfig()
+    }
+
+    /** 办完的事复盘到哪了，任务卡片下面那一行跟着它，见 SkillReflector。 */
+    private fun observeReflections() {
+        SkillReflector.load(getApplication())
+        viewModelScope.launch {
+            SkillReflector.reflections.collect { reflections ->
+                _uiState.update { it.copy(reflections = reflections) }
+            }
+        }
     }
 
     /** 侧边栏列表跟着库走，任何地方改了会话这里都会自动更新。 */
@@ -286,6 +298,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // 先落库再请求：请求可能失败或超时，但用户说过的话不该因此丢掉。
             val sessionId = ensureSession(content.ifEmpty { IMAGE_ONLY_TITLE })
             repository.appendMessage(sessionId, userMessage)
+            // 这一轮的消息（存进历史的那一份），办完交给复盘，见 SkillReflector。单独记一份，不读界面
+            // 状态：用户可能已经切到别的会话去了。
+            val runLog = mutableListOf<ChatMessage>(userMessage)
             _uiState.update {
                 it.copy(
                     sessionId = sessionId,
@@ -361,6 +376,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         // 存进历史的是"瘦身版"：thinking 块不落库、超长的工具结果截短，
                         // 见 forHistory。正在跑的这一轮用的是 AgentRunner 自己那份全量的。
                         val stored = message.forHistory()
+                        runLog += stored
                         repository.appendMessage(sessionId, stored)
                         _uiState.update {
                             if (it.sessionId != sessionId) {
@@ -403,6 +419,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             } finally {
                 // 不管成功、失败还是被取消，副屏都要收掉。
                 device.release()
+            }
+
+            // 正常办完了：够分量就在后台复盘，值得记的存成技能（自我进化）。被停掉、出错的不复盘，
+            // 走不到这里或者 outcome 是 Failed。
+            if (outcome is AgentResult.Done && BuiltinSkill.SelfLearning in skills) {
+                SkillReflector.onRunFinished(getApplication(), sessionId, runLog)
             }
 
             val repaired = repairedUrl

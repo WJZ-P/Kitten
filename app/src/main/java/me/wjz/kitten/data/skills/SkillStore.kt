@@ -23,6 +23,8 @@ object SkillStore {
     private const val TAG = "KittenSkills"
     private const val PREFS = "kitten_skills"
     private const val KEY_USER_SKILLS = "user_skills"
+    private const val SOURCE_USER = "user"
+    private const val SOURCE_LEARNED = "learned"
 
     private val _revision = MutableStateFlow(0)
 
@@ -55,8 +57,13 @@ object SkillStore {
     fun findByName(context: Context, name: String): UserSkill? =
         userSkills(context).firstOrNull { it.name.trim().equals(name.trim(), ignoreCase = true) }
 
-    /** 存一个用户技能：[skill] 的 id 已经有了就替换（编辑），没有就加在最后（新加）。 */
-    fun saveUserSkill(context: Context, skill: UserSkill) {
+    /**
+     * 存一个用户技能：[skill] 的 id 已经有了就替换（编辑），没有就加在最后（新加）。
+     *
+     * 读、改、写整份是一体的，要锁住：设置页在主线程改，模型存技能在 IO 线程（工具都在那里执行，
+     * 见 ToolRegistry），后台复盘也会存，两边同时改的话后写的会把先写的盖掉。
+     */
+    fun saveUserSkill(context: Context, skill: UserSkill) = synchronized(this) {
         val skills = userSkills(context)
         val next = if (skills.any { it.id == skill.id }) {
             skills.map { if (it.id == skill.id) skill else it }
@@ -66,11 +73,11 @@ object SkillStore {
         writeUserSkills(context, next)
     }
 
-    fun setUserSkillEnabled(context: Context, id: String, enabled: Boolean) {
+    fun setUserSkillEnabled(context: Context, id: String, enabled: Boolean) = synchronized(this) {
         writeUserSkills(context, userSkills(context).map { if (it.id == id) it.copy(enabled = enabled) else it })
     }
 
-    fun deleteUserSkill(context: Context, id: String) {
+    fun deleteUserSkill(context: Context, id: String) = synchronized(this) {
         writeUserSkills(context, userSkills(context).filterNot { it.id == id })
     }
 
@@ -93,6 +100,7 @@ object SkillStore {
         .put("when", skill.whenToUse)
         .put("body", skill.instructions)
         .put("on", skill.enabled)
+        .put("src", if (skill.isLearned) SOURCE_LEARNED else SOURCE_USER)
 
     /** 解析不了、或者没有名字的那一条跳过。 */
     private fun decode(json: JSONObject?): UserSkill? {
@@ -105,6 +113,8 @@ object SkillStore {
             whenToUse = json.optString("when"),
             instructions = json.optString("body"),
             enabled = json.optBoolean("on", true),
+            // 没存过来源的是加上这一项之前存的，那时只有用户自己写的。
+            source = if (json.optString("src") == SOURCE_LEARNED) SkillSource.Learned else SkillSource.User,
         )
     }
 
