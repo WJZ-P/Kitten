@@ -42,7 +42,8 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *   在同一行，没有 [title] 时不显示。
  * @param interactive 按下卡片本身时有没有按压反馈（放大、折射变强、变深、光雾变浓），见
  *   [GlassSurface]。只是反馈，不触发动作；按在卡片里的控件上时卡片不会跟着动。
- * @param mist 卡片里铺不铺一层流动的光雾，见 [GlassMist]。
+ * @param mist 卡片里铺不铺一层流动的光雾，见 [GlassMist]。设置页改成简约的分组列表之后默认关掉了：
+ *   一屏好几块卡片都在飘雾，看着花。光雾的代码留着，哪张卡片想要再单独打开。
  */
 @Composable
 fun GlassSection(
@@ -53,7 +54,7 @@ fun GlassSection(
     footer: String? = null,
     headerTrailing: (@Composable () -> Unit)? = null,
     interactive: Boolean = true,
-    mist: Boolean = true,
+    mist: Boolean = false,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     GlassSurface(

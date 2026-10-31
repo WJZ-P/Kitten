@@ -112,6 +112,19 @@ data class KittenColors(
     val cardMistHaze: Color,
     val cardMistLight: Color,
 
+    /**
+     * 设置页列表里每一行前面的彩色图标（像系统设置那样，一类一个颜色，扫一眼就找得到）。
+     * 只是分类的记号，不表示状态，状态用下面那几个。
+     */
+    val iconBlue: Color,
+    val iconGreen: Color,
+    val iconTeal: Color,
+    val iconPink: Color,
+    val iconCoral: Color,
+    val iconViolet: Color,
+    val iconAmber: Color,
+    val iconGray: Color,
+
     /** 状态：正常 / 需要处理 / 危险操作。 */
     val positive: Color,
     val warning: Color,
@@ -175,6 +188,15 @@ val LightKittenColors = KittenColors(
     chatCardTint = Tianyi500.copy(alpha = 0.32f),
     cardMistHaze = Tianyi450,
     cardMistLight = Color.White,
+
+    iconBlue = Tianyi600,
+    iconGreen = Green600,
+    iconTeal = Teal500,
+    iconPink = Rose500,
+    iconCoral = Coral500,
+    iconViolet = Violet500,
+    iconAmber = Amber500,
+    iconGray = Slate500,
 
     positive = Green600,
     warning = Orange600,

@@ -62,3 +62,12 @@ internal val SystemGray = Color(0xFF787878)
 internal val Green600 = Color(0xFF16A06C)
 internal val Orange600 = Color(0xFFE0861A)
 internal val Red600 = Color(0xFFD9483B)
+
+// ---- 设置页图标的分类色 ----
+// 每一行前面的图标各带一种颜色，扫一眼就分得出是哪一类。都取中间偏淡的一档：压在浅蓝的玻璃上
+// 看得清，又不会像一排彩色按钮那样抢眼。
+internal val Teal500 = Color(0xFF1FA89A)
+internal val Rose500 = Color(0xFFE0608E)
+internal val Coral500 = Color(0xFFE5764A)
+internal val Violet500 = Color(0xFF7A6FE0)
+internal val Amber500 = Color(0xFFDF9A1E)
