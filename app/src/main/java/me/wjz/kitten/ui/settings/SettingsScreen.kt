@@ -40,6 +40,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -81,15 +82,45 @@ import me.wjz.kitten.ui.setup.SetupActions
 import me.wjz.kitten.ui.theme.KittenTheme
 import kotlin.math.roundToInt
 
-/** 设置里的几页：首页，和从首页点进去的二级页。[title] 是页面顶上的标题。 */
+/** 设置里的几页：首页、从首页点进去的二级页，和"编辑服务商"这一个三级页。[title] 是页面顶上的标题。 */
 private enum class SettingsPage(val title: String) {
     Root("设置"),
     Models("模型服务商"),
+    /** 编辑一家服务商，从"模型服务商"点进来。新加一家时标题换成"添加服务商"，见 [SettingsScreen]。 */
+    ProviderEditor("编辑服务商"),
     Tokens("Token 看板"),
+    Persona("人设"),
     Memory("记忆"),
     Privilege("增强模式"),
-    Developer("开发者调试"),
+    Developer("开发者调试");
+
+    /** 返回到哪一页。首页没有上一级。 */
+    val parent: SettingsPage?
+        get() = when (this) {
+            Root -> null
+            ProviderEditor -> Models
+            else -> Root
+        }
+
+    /** 第几层：首页是 0。换页时往里走（层数变大）新页从右边滑进来，往回走反过来。 */
+    val depth: Int
+        get() = parent?.let { it.depth + 1 } ?: 0
+
+    /** 这一页改的是一份草稿（人设、一家服务商），草稿不跨进程保存，见 [PageSaver]。 */
+    val holdsDraft: Boolean
+        get() = this == ProviderEditor || this == Persona
 }
+
+/**
+ * 存当前在哪一页。
+ *
+ * 编辑页里改到一半的草稿只在内存里：进程被系统回收、再恢复回来时草稿已经没了，回到编辑页只会
+ * 对着一张空表单（新加的样子），所以存的是它的上一级。认不出存下来的名字（改过名）就回首页。
+ */
+private val PageSaver = Saver<SettingsPage, String>(
+    save = { page -> (if (page.holdsDraft) page.parent ?: SettingsPage.Root else page).name },
+    restore = { name -> SettingsPage.entries.firstOrNull { it.name == name } ?: SettingsPage.Root },
+)
 
 /**
  * 设置页。
@@ -99,18 +130,23 @@ private enum class SettingsPage(val title: String) {
  * 首页是一串分组列表（模型 / 个性与记忆 / 权限与能力 / 其他），一行一个入口，右边写着现在的状态
  * （用的哪家模型、记了几件事、权限开没开）。具体内容点进去才看到：
  *
- * - 列表类的东西（服务商、Token 看板、记忆、增强模式、开发者调试）是二级页，从右边滑进来，左上角
+ * - 每一项都是一页（服务商、Token 看板、人设、记忆、增强模式、开发者调试），从右边滑进来，左上角
  *   返回，系统返回手势也能回去。
- * - 只改一样东西的（改人设、编辑某一家服务商）还是模态窗。
+ * - 编辑某一家服务商是从"模型服务商"再点进去的第三层，返回回到服务商列表。
+ * - 改人设、编辑服务商改的是一份草稿：点保存才写回、回到上一级；不保存直接返回就丢掉。
  * - 权限没开时那一行写着"去开启"，点了直接跳系统设置；开了就只写"已开启"。
  *
- * 以前是一张大卡片一个功能、全摊在一页上，一屏看不全，也分不清哪些常用。
+ * 以前是一张大卡片一个功能、全摊在一页上，一屏看不全，也分不清哪些常用。改人设、编辑服务商以前是
+ * 模态窗，后来和别的入口统一成了页面：设置里点进去的东西都是同一种走法。
  *
- * ## 二级页怎么切
+ * ## 页面怎么切
  *
- * 三个 tab 平级、没有返回栈（见 KittenApp），设置里多出来的这一层不值得为它引一套导航框架：
- * 当前在哪一页存在 [rememberSaveable] 里，用 AnimatedContent 换页。首页的滚动位置提到外面存着，
- * 去二级页再回来还停在原处。
+ * 三个 tab 平级、没有返回栈（见 KittenApp），设置里多出来的这几层不值得为它引一套导航框架：
+ * 当前在哪一页存在 [rememberSaveable] 里，每一页知道自己的上一级（[SettingsPage.parent]），用
+ * AnimatedContent 换页。首页的滚动位置提到外面存着，去二级页再回来还停在原处。
+ *
+ * 二级页（和更深的）的标题、返回按钮钉在页面顶上，内容在它下面滚，滚到底也随手点得到返回；首页的
+ * "设置"没有返回按钮，跟着内容一起滚走。
  *
  * 权限状态每次回到前台都要重读：用户是去系统设置里开关的，App 这边收不到回调。
  *
@@ -131,19 +167,17 @@ fun SettingsScreen(
     val context = LocalContext.current
     val controller = remember(context) { WirelessDebugController.getInstance(context) }
     var status by remember { mutableStateOf(PermissionStatus.read(context)) }
-    // 已保存的配置，和模态窗里正在改的草稿分开：不保存就关掉，草稿直接丢掉。
+    // 已保存的配置，和编辑页里正在改的草稿分开：不保存就返回，草稿直接丢掉。
     // 别处改了配置（比如对话页自动补了 /v1）时重读：设置页一直活着，不重读的话手里那份是旧的，
     // 下次保存会把别处的改动盖回去。
     val revision by LlmConfigStore.revision.collectAsState()
     var profiles by remember(revision) { mutableStateOf(LlmConfigStore.loadProfiles(context)) }
     var draft by remember { mutableStateOf(LlmProfile.create()) }
-    // 草稿是新加的一家还是在改已有的：决定保存时是追加还是替换，以及有没有删除按钮。
+    // 草稿是新加的一家还是在改已有的：决定保存时是追加还是替换，页面标题，以及有没有删除按钮。
     var draftIsNew by remember { mutableStateOf(true) }
-    var editingModel by remember { mutableStateOf(false) }
-    // 系统提示词里用户能改的人设：存着的（没改过是 null）和模态窗里的草稿分开，同上。
+    // 系统提示词里用户能改的人设：存着的（没改过是 null）和人设页里的草稿分开，同上。
     var customPrompt by remember { mutableStateOf(SystemPrompt.loadCustomPersona(context)) }
     var promptDraft by remember { mutableStateOf("") }
-    var editingPrompt by remember { mutableStateOf(false) }
     // 记忆：和对话页共用一个 MemoryStore，模型刚记下一条这里就多一行。
     val memoryStore = remember(context) { MemoryStore.get(context) }
     val memories by remember(memoryStore) { memoryStore.observe() }.collectAsState(initial = emptyList())
@@ -152,9 +186,9 @@ fun SettingsScreen(
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
 
-    var page by rememberSaveable { mutableStateOf(SettingsPage.Root) }
+    var page by rememberSaveable(stateSaver = PageSaver) { mutableStateOf(SettingsPage.Root) }
     val rootScroll = rememberScrollState()
-    BackHandler(enabled = isCurrentTab && page != SettingsPage.Root) { page = SettingsPage.Root }
+    BackHandler(enabled = isCurrentTab && page != SettingsPage.Root) { page = page.parent ?: SettingsPage.Root }
 
     // 存下来，并通知对话页：它的"模型是否已配置"是启动时读的，要主动让它重读。
     fun commit(next: LlmProfiles) {
@@ -178,8 +212,8 @@ fun SettingsScreen(
         targetState = page,
         modifier = modifier.fillMaxSize(),
         transitionSpec = {
-            // 往里走：新的一页从右边整页滑进来，盖在上面；首页往左挪一小截、淡下去。往回走反过来。
-            val forward = targetState != SettingsPage.Root
+            // 往里走：新的一页从右边整页滑进来，盖在上面；上一页往左挪一小截、淡下去。往回走反过来。
+            val forward = targetState.depth > initialState.depth
             val enter = slideInHorizontally(PageSlideSpec) { if (forward) it else -it / 4 } + fadeIn(PageFadeSpec)
             val exit = slideOutHorizontally(PageSlideSpec) { if (forward) -it / 4 else it } + fadeOut(PageFadeSpec)
             (enter togetherWith exit).apply { targetContentZIndex = if (forward) 1f else -1f }
@@ -187,136 +221,143 @@ fun SettingsScreen(
         label = "settingsPage",
     ) { current ->
         val scroll = if (current == SettingsPage.Root) rootScroll else rememberScrollState()
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(scroll)
-                // 留白放在滚动内容里面：内容能一直滚到底部栏后面，滚到底时最后一张卡片又能完整露出来。
-                .padding(contentPadding)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            SettingsPageHeader(
-                title = current.title,
-                backdrop = backdrop,
-                onBack = if (current == SettingsPage.Root) null else ({ page = SettingsPage.Root }),
-            )
-            when (current) {
-                SettingsPage.Root -> SettingsRoot(
+        val title = if (current == SettingsPage.ProviderEditor && draftIsNew) "添加服务商" else current.title
+        val onBack: (() -> Unit)? = current.parent?.let { parent -> { page = parent } }
+        Column(modifier = Modifier.fillMaxSize()) {
+            if (onBack != null) {
+                // 二级页：标题和返回按钮钉在顶上，内容在它下面滚，滚到哪里都点得到返回。
+                SettingsPageHeader(
+                    title = title,
                     backdrop = backdrop,
-                    profiles = profiles,
-                    allTimeTokens = allTimeTokens,
-                    customPrompt = customPrompt,
-                    memoryCount = memories.size,
-                    status = status,
-                    privilegeState = privilegeState,
-                    onOpen = { page = it },
-                    onEditPersona = {
-                        // 打开时拷一份当前在用的：没改过就是默认人设，用户看得到原本写了什么再改。
-                        promptDraft = customPrompt ?: SystemPrompt.DEFAULT_PERSONA
-                        editingPrompt = true
-                    },
-                    actions = actions,
+                    onBack = onBack,
+                    modifier = Modifier.padding(start = PageGutter, end = PageGutter, top = PageTopPadding),
                 )
-                SettingsPage.Models -> ModelProfilesSection(
-                    backdrop = backdrop,
-                    profiles = profiles,
-                    onSelectModel = { profile, model ->
-                        commit(
-                            profiles.copy(
-                                profiles = profiles.profiles.map { if (it.id == profile.id) it.copy(model = model) else it },
-                            ),
-                        )
-                    },
-                    onActivate = { commit(profiles.copy(activeId = it.id)) },
-                    onEdit = {
-                        draft = it
-                        draftIsNew = false
-                        editingModel = true
-                    },
-                    onAdd = {
-                        draft = LlmProfile.create()
-                        draftIsNew = true
-                        editingModel = true
-                    },
-                )
-                SettingsPage.Tokens -> TokenUsageSection(backdrop = backdrop)
-                SettingsPage.Memory -> MemoryPage(
-                    memories = memories,
-                    onAdd = { content ->
-                        scope.launch {
-                            if (memoryStore.add(content) == null) {
-                                toast.show("记满 ${MemoryStore.MAX_ENTRIES} 条啦，先删掉几条旧的吧～", tone = ToastTone.Error)
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .verticalScroll(scroll)
+                    // 留白放在滚动内容里面：内容能一直滚到底部栏后面，滚到底时最后一张卡片又能完整露出来。
+                    // 钉着标题的页面，标题和第一张卡片之间那截空也在里面：往上滚时卡片一直滚到标题底下
+                    // 才被裁掉，不会在半空就消失。
+                    .padding(contentPadding)
+                    .padding(horizontal = PageGutter)
+                    .padding(top = if (onBack != null) SectionGap else PageTopPadding, bottom = PageTopPadding),
+                verticalArrangement = Arrangement.spacedBy(SectionGap),
+            ) {
+                // 首页没有返回按钮，"设置"两个字跟着内容一起滚走，不一直占着屏幕。
+                if (onBack == null) SettingsPageHeader(title = title, backdrop = backdrop)
+                when (current) {
+                    SettingsPage.Root -> SettingsRoot(
+                        backdrop = backdrop,
+                        profiles = profiles,
+                        allTimeTokens = allTimeTokens,
+                        customPrompt = customPrompt,
+                        memoryCount = memories.size,
+                        status = status,
+                        privilegeState = privilegeState,
+                        onOpen = { page = it },
+                        onEditPersona = {
+                            // 进来时拷一份当前在用的：没改过就是默认人设，用户看得到原本写了什么再改。
+                            promptDraft = customPrompt ?: SystemPrompt.DEFAULT_PERSONA
+                            page = SettingsPage.Persona
+                        },
+                        actions = actions,
+                    )
+                    SettingsPage.Models -> ModelProfilesSection(
+                        backdrop = backdrop,
+                        profiles = profiles,
+                        onSelectModel = { profile, model ->
+                            commit(
+                                profiles.copy(
+                                    profiles = profiles.profiles.map { if (it.id == profile.id) it.copy(model = model) else it },
+                                ),
+                            )
+                        },
+                        onActivate = { commit(profiles.copy(activeId = it.id)) },
+                        onEdit = {
+                            draft = it
+                            draftIsNew = false
+                            page = SettingsPage.ProviderEditor
+                        },
+                        onAdd = {
+                            draft = LlmProfile.create()
+                            draftIsNew = true
+                            page = SettingsPage.ProviderEditor
+                        },
+                    )
+                    SettingsPage.ProviderEditor -> ProviderEditorPage(
+                        draft = draft,
+                        isNew = draftIsNew,
+                        onDraftChange = { draft = it },
+                        onSave = {
+                            val list = if (draftIsNew) {
+                                profiles.profiles + draft
+                            } else {
+                                profiles.profiles.map { if (it.id == draft.id) draft else it }
                             }
-                        }
-                    },
-                    onUpdate = { id, content -> scope.launch { memoryStore.update(id, content) } },
-                    onDelete = { id ->
-                        scope.launch { memoryStore.delete(id) }
-                        toast.show("忘掉啦～")
-                    },
-                    backdrop = backdrop,
-                )
-                SettingsPage.Privilege -> PrivilegeSection(backdrop = backdrop, onStartPairing = actions::startPairing)
-                SettingsPage.Developer -> {
-                    // 临时：看玻璃组件的手感，定下来之后换成真的设置项。
-                    ComponentPreviewSection(backdrop = backdrop)
-                    // 临时：验证副屏可用性，验完连同 DebugCard.kt 一起删。
-                    DebugCard()
-                    // 临时：调 Toast 的样子，调完连同 ToastDebugSection.kt 一起删。
-                    ToastDebugSection(backdrop = backdrop)
+                            // 第一家配好的服务直接设为当前，不用用户再点一次"使用"。
+                            commit(LlmProfiles(list, profiles.activeId ?: draft.id))
+                            page = SettingsPage.Models
+                        },
+                        onDelete = {
+                            val list = profiles.profiles.filterNot { it.id == draft.id }
+                            // 删的是正在用的那一家：换成剩下的第一家，一家都不剩就没有当前。
+                            val active = if (profiles.activeId == draft.id) list.firstOrNull()?.id else profiles.activeId
+                            commit(LlmProfiles(list, active))
+                            page = SettingsPage.Models
+                        },
+                        backdrop = backdrop,
+                    )
+                    SettingsPage.Tokens -> TokenUsageSection(backdrop = backdrop)
+                    SettingsPage.Persona -> PersonaPage(
+                        draft = promptDraft,
+                        onDraftChange = { promptDraft = it },
+                        onSave = {
+                            SystemPrompt.savePersona(context, promptDraft)
+                            // 存的时候会把"和默认的一样""清空了"都归成没改过，从存储里读回来才准。
+                            customPrompt = SystemPrompt.loadCustomPersona(context)
+                            page = SettingsPage.Root
+                        },
+                        backdrop = backdrop,
+                    )
+                    SettingsPage.Memory -> MemoryPage(
+                        memories = memories,
+                        onAdd = { content ->
+                            scope.launch {
+                                if (memoryStore.add(content) == null) {
+                                    toast.show("记满 ${MemoryStore.MAX_ENTRIES} 条啦，先删掉几条旧的吧～", tone = ToastTone.Error)
+                                }
+                            }
+                        },
+                        onUpdate = { id, content -> scope.launch { memoryStore.update(id, content) } },
+                        onDelete = { id ->
+                            scope.launch { memoryStore.delete(id) }
+                            toast.show("忘掉啦～")
+                        },
+                        backdrop = backdrop,
+                    )
+                    SettingsPage.Privilege -> PrivilegeSection(backdrop = backdrop, onStartPairing = actions::startPairing)
+                    SettingsPage.Developer -> {
+                        // 临时：看玻璃组件的手感，定下来之后换成真的设置项。
+                        ComponentPreviewSection(backdrop = backdrop)
+                        // 临时：验证副屏可用性，验完连同 DebugCard.kt 一起删。
+                        DebugCard()
+                        // 临时：调 Toast 的样子，调完连同 ToastDebugSection.kt 一起删。
+                        ToastDebugSection(backdrop = backdrop)
+                    }
                 }
             }
         }
     }
-
-    // 模态窗画在浮层上，放在哪里都一样，不占页面的位置。
-    ModelConfigDialog(
-        visible = editingModel,
-        draft = draft,
-        isNew = draftIsNew,
-        onDraftChange = { draft = it },
-        onSave = {
-            val list = if (draftIsNew) {
-                profiles.profiles + draft
-            } else {
-                profiles.profiles.map { if (it.id == draft.id) draft else it }
-            }
-            // 第一家配好的服务直接设为当前，不用用户再点一次"使用"。
-            commit(LlmProfiles(list, profiles.activeId ?: draft.id))
-            editingModel = false
-        },
-        onDelete = {
-            val list = profiles.profiles.filterNot { it.id == draft.id }
-            // 删的是正在用的那一家：换成剩下的第一家，一家都不剩就没有当前。
-            val active = if (profiles.activeId == draft.id) list.firstOrNull()?.id else profiles.activeId
-            commit(LlmProfiles(list, active))
-            editingModel = false
-        },
-        onDismiss = { editingModel = false },
-        backdrop = backdrop,
-    )
-
-    SystemPromptDialog(
-        visible = editingPrompt,
-        draft = promptDraft,
-        onDraftChange = { promptDraft = it },
-        onSave = {
-            SystemPrompt.savePersona(context, promptDraft)
-            // 存的时候会把"和默认的一样""清空了"都归成没改过，从存储里读回来才准。
-            customPrompt = SystemPrompt.loadCustomPersona(context)
-            editingPrompt = false
-        },
-        onDismiss = { editingPrompt = false },
-        backdrop = backdrop,
-    )
 }
 
 /**
  * 设置首页：四组入口。每一行右边的说明就是那一项现在的样子，不用点进去也知道配好没有。
  *
  * @param onOpen 进哪一个二级页。
- * @param onEditPersona 改人设：只有一样东西要改，直接弹模态窗，不另开一页。
+ * @param onEditPersona 进人设页。和 [onOpen] 分开：进去之前要先拷一份人设当草稿。
  */
 @Composable
 private fun SettingsRoot(
@@ -564,6 +605,15 @@ private fun ComponentPreviewSection(backdrop: Backdrop, modifier: Modifier = Mod
         }
     }
 }
+
+/** 页面内容左右的留白。 */
+private val PageGutter = 16.dp
+
+/** 页面最上面（标题上方）和最下面留的空。 */
+private val PageTopPadding = 12.dp
+
+/** 卡片和卡片之间、标题和第一张卡片之间隔多远。 */
+private val SectionGap = 16.dp
 
 /**
  * 换页的滑动：偏硬、几乎不回弹，像系统设置那样干脆地推进推出。淡入淡出比位移快一点，滑到一半

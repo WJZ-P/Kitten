@@ -213,16 +213,18 @@ internal fun SettingsRow(
 /**
  * 页面顶上的标题，居中。二级页左边多一个返回按钮（玻璃小圆，和对话页顶栏的按钮一样）；首页没有。
  *
+ * 二级页的这一行钉在页面顶上，内容在它下面滚；首页的跟着内容一起滚。见 SettingsScreen。
  * 系统的返回手势同样能回到上一级，见 SettingsScreen 里的 BackHandler。
  */
 @Composable
 internal fun SettingsPageHeader(
     title: String,
     backdrop: Backdrop,
+    modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
 ) {
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .heightIn(min = HeaderHeight),
         contentAlignment = Alignment.Center,

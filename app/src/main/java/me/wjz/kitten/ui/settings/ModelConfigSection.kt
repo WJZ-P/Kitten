@@ -20,7 +20,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -63,7 +62,6 @@ import me.wjz.kitten.ui.component.GlassButtonStyle
 import me.wjz.kitten.ui.component.GlassContentPadding
 import me.wjz.kitten.ui.component.GlassDropdown
 import me.wjz.kitten.ui.component.GlassIconButton
-import me.wjz.kitten.ui.component.GlassModal
 import me.wjz.kitten.ui.component.GlassRadius
 import me.wjz.kitten.ui.component.GlassSection
 import me.wjz.kitten.ui.component.GlassStatus
@@ -80,7 +78,7 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * "模型服务商"二级页里的那张卡片：每家服务一张小卡，最后是"添加服务商"。
  *
  * 小卡只放最常动的东西：服务商名、这一家用哪个模型（下拉条，选了就生效）、用不用它。地址、
- * Key 这些配一次就很少再动的，点小卡打开模态窗改（[ModelConfigDialog]）。
+ * Key 这些配一次就很少再动的，点小卡进编辑页改（[ProviderEditorPage]）。
  *
  * 卡片不带表头：页面标题已经叫"模型服务商"了。
  */
@@ -134,7 +132,7 @@ fun ModelProfilesSection(
 /**
  * 一家服务的小卡：第一行服务商名，第二行左边选模型、右边"使用 / 使用中"。
  *
- * 点小卡的空白处（不是下拉条和按钮——它们先消费了按下）打开编辑窗，按下时垫一层淡天依蓝，
+ * 点小卡的空白处（不是下拉条和按钮——它们先消费了按下）进编辑页，按下时垫一层淡天依蓝，
  * 和下拉菜单的选项一样；名字后面一个"›"提示能点。
  *
  * "使用"要等这一家配好了（有 Key、有模型）才能点，不然切过去对话也发不出去。正在用的那一家
@@ -248,10 +246,11 @@ private fun ProviderTile(
 private val TileShape = RoundedCornerShape(GlassRadius.Small)
 
 /**
- * 一家服务的编辑窗。
+ * 编辑一家服务的页面：从"模型服务商"点一家小卡（或"添加服务商"）进来，是设置里的第三层。页面标题
+ * （"添加服务商""编辑服务商"）和返回按钮在 SettingsScreen 里。
  *
- * 编辑的是一份草稿（[draft]），由调用方在打开时拷一份：点保存才写回，不保存直接关掉就丢弃，
- * 不会出现"改了一半关掉，下次打开还是改了一半的样子"。
+ * 编辑的是一份草稿（[draft]），由调用方在进来时拷一份：点保存才写回，不保存直接返回就丢弃，
+ * 不会出现"改了一半退出去，下次进来还是改了一半的样子"。
  *
  * 预设只是帮用户省掉查文档，不是白名单——任何兼容 OpenAI 或 Anthropic 协议的服务（包括
  * 自建的 Ollama、各种中转）填上地址就能用，所以每个字段都保持可编辑。地址对不上任何预设时，
@@ -260,28 +259,20 @@ private val TileShape = RoundedCornerShape(GlassRadius.Small)
  * 预设用玻璃下拉菜单（[GlassDropdown]）选。Material 的下拉菜单是另开窗口的不透明弹层，
  * 和玻璃格格不入，所以没用它。
  *
- * @param isNew 新加的一家：标题是"添加服务商"，没有删除按钮。
+ * @param isNew 新加的一家：没有删除按钮。
  */
 @Composable
-fun ModelConfigDialog(
-    visible: Boolean,
+fun ProviderEditorPage(
     draft: LlmProfile,
     isNew: Boolean,
     onDraftChange: (LlmProfile) -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
-    onDismiss: () -> Unit,
     backdrop: Backdrop,
 ) {
-    GlassModal(
-        visible = visible,
-        onDismissRequest = onDismiss,
-        backdrop = backdrop,
-        title = if (isNew) "添加服务商" else "编辑服务商",
-        icon = Icons.Filled.Star,
-    ) { modalBackdrop ->
+    GlassSection(backdrop = backdrop, interactive = false) {
         ModelConfigForm(
-            backdrop = modalBackdrop,
+            backdrop = backdrop,
             config = draft,
             isNew = isNew,
             onConfigChange = onDraftChange,
