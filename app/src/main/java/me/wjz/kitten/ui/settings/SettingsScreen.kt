@@ -56,6 +56,9 @@ import kotlinx.coroutines.launch
 import me.wjz.kitten.R
 import me.wjz.kitten.agent.SystemPrompt
 import me.wjz.kitten.data.memory.MemoryStore
+import me.wjz.kitten.data.skills.BuiltinSkill
+import me.wjz.kitten.data.skills.SkillStore
+import me.wjz.kitten.data.skills.UserSkill
 import me.wjz.kitten.llm.LlmConfigStore
 import me.wjz.kitten.llm.LlmProfile
 import me.wjz.kitten.llm.LlmProfiles
@@ -76,6 +79,8 @@ import me.wjz.kitten.ui.component.GlassSlider
 import me.wjz.kitten.ui.component.GlassSwitch
 import me.wjz.kitten.ui.component.LocalToast
 import me.wjz.kitten.ui.component.ToastTone
+import me.wjz.kitten.ui.icon.Extension
+import me.wjz.kitten.ui.icon.KittenIcons
 import me.wjz.kitten.ui.setup.DebugCard
 import me.wjz.kitten.ui.setup.PrivilegeSection
 import me.wjz.kitten.ui.setup.SetupActions
@@ -91,6 +96,9 @@ private enum class SettingsPage(val title: String) {
     Tokens("Token 看板"),
     Persona("人设"),
     Memory("记忆"),
+    Skills("技能"),
+    /** 改一个自己教的技能，从"技能"点进来。新教一个时标题换成"教一个新技能"，见 [SettingsScreen]。 */
+    SkillEditor("编辑技能"),
     Privilege("增强模式"),
     Developer("开发者调试");
 
@@ -99,6 +107,7 @@ private enum class SettingsPage(val title: String) {
         get() = when (this) {
             Root -> null
             ProviderEditor -> Models
+            SkillEditor -> Skills
             else -> Root
         }
 
@@ -106,9 +115,9 @@ private enum class SettingsPage(val title: String) {
     val depth: Int
         get() = parent?.let { it.depth + 1 } ?: 0
 
-    /** 这一页改的是一份草稿（人设、一家服务商），草稿不跨进程保存，见 [PageSaver]。 */
+    /** 这一页改的是一份草稿（人设、一家服务商、一个技能），草稿不跨进程保存，见 [PageSaver]。 */
     val holdsDraft: Boolean
-        get() = this == ProviderEditor || this == Persona
+        get() = this == ProviderEditor || this == Persona || this == SkillEditor
 }
 
 /**
@@ -127,13 +136,13 @@ private val PageSaver = Saver<SettingsPage, String>(
  *
  * ## 首页只放入口
  *
- * 首页是一串分组列表（模型 / 个性与记忆 / 权限与能力 / 其他），一行一个入口，右边写着现在的状态
+ * 首页是一串分组列表（模型 / 个性、记忆与技能 / 权限与能力 / 其他），一行一个入口，右边写着现在的状态
  * （用的哪家模型、记了几件事、权限开没开）。具体内容点进去才看到：
  *
- * - 每一项都是一页（服务商、Token 看板、人设、记忆、增强模式、开发者调试），从右边滑进来，左上角
- *   返回，系统返回手势也能回去。
- * - 编辑某一家服务商是从"模型服务商"再点进去的第三层，返回回到服务商列表。
- * - 改人设、编辑服务商改的是一份草稿：点保存才写回、回到上一级；不保存直接返回就丢掉。
+ * - 每一项都是一页（服务商、Token 看板、人设、记忆、技能、增强模式、开发者调试），从右边滑进来，
+ *   左上角返回，系统返回手势也能回去。
+ * - 编辑某一家服务商、改某个自己教的技能，是从"模型服务商""技能"再点进去的第三层，返回回到列表。
+ * - 改人设、编辑服务商、改技能改的是一份草稿：点保存才写回、回到上一级；不保存直接返回就丢掉。
  * - 权限没开时那一行写着"去开启"，点了直接跳系统设置；开了就只写"已开启"。
  *
  * 以前是一张大卡片一个功能、全摊在一页上，一屏看不全，也分不清哪些常用。改人设、编辑服务商以前是
@@ -178,6 +187,14 @@ fun SettingsScreen(
     // 系统提示词里用户能改的人设：存着的（没改过是 null）和人设页里的草稿分开，同上。
     var customPrompt by remember { mutableStateOf(SystemPrompt.loadCustomPersona(context)) }
     var promptDraft by remember { mutableStateOf("") }
+    // 技能：开关一拨就存，盯着 revision 重读。编辑页里改的是草稿，同上。
+    val skillRevision by SkillStore.revision.collectAsState()
+    val builtinSkills = remember(skillRevision) {
+        BuiltinSkill.entries.associateWith { SkillStore.isEnabled(context, it) }
+    }
+    val userSkills = remember(skillRevision) { SkillStore.userSkills(context) }
+    var skillDraft by remember { mutableStateOf(UserSkill.create()) }
+    var skillDraftIsNew by remember { mutableStateOf(true) }
     // 记忆：和对话页共用一个 MemoryStore，模型刚记下一条这里就多一行。
     val memoryStore = remember(context) { MemoryStore.get(context) }
     val memories by remember(memoryStore) { memoryStore.observe() }.collectAsState(initial = emptyList())
@@ -221,7 +238,11 @@ fun SettingsScreen(
         label = "settingsPage",
     ) { current ->
         val scroll = if (current == SettingsPage.Root) rootScroll else rememberScrollState()
-        val title = if (current == SettingsPage.ProviderEditor && draftIsNew) "添加服务商" else current.title
+        val title = when {
+            current == SettingsPage.ProviderEditor && draftIsNew -> "添加服务商"
+            current == SettingsPage.SkillEditor && skillDraftIsNew -> "教一个新技能"
+            else -> current.title
+        }
         val onBack: (() -> Unit)? = current.parent?.let { parent -> { page = parent } }
         Column(modifier = Modifier.fillMaxSize()) {
             if (onBack != null) {
@@ -255,6 +276,8 @@ fun SettingsScreen(
                         allTimeTokens = allTimeTokens,
                         customPrompt = customPrompt,
                         memoryCount = memories.size,
+                        skillsOn = builtinSkills.count { it.value } + userSkills.count { it.enabled },
+                        skillsTotal = builtinSkills.size + userSkills.size,
                         status = status,
                         privilegeState = privilegeState,
                         onOpen = { page = it },
@@ -338,6 +361,51 @@ fun SettingsScreen(
                         },
                         backdrop = backdrop,
                     )
+                    SettingsPage.Skills -> SkillsPage(
+                        builtins = builtinSkills,
+                        userSkills = userSkills,
+                        onToggleBuiltin = { skill, on -> SkillStore.setEnabled(context, skill, on) },
+                        onToggleUser = { skill, on -> SkillStore.setUserSkillEnabled(context, skill.id, on) },
+                        onEdit = {
+                            skillDraft = it
+                            skillDraftIsNew = false
+                            page = SettingsPage.SkillEditor
+                        },
+                        onAdd = {
+                            skillDraft = UserSkill.create()
+                            skillDraftIsNew = true
+                            page = SettingsPage.SkillEditor
+                        },
+                        backdrop = backdrop,
+                    )
+                    SettingsPage.SkillEditor -> SkillEditorPage(
+                        draft = skillDraft,
+                        isNew = skillDraftIsNew,
+                        onDraftChange = { skillDraft = it },
+                        onSave = {
+                            val skill = skillDraft.copy(
+                                name = skillDraft.name.trim(),
+                                whenToUse = skillDraft.whenToUse.trim(),
+                                instructions = skillDraft.instructions.trim(),
+                            )
+                            // 模型按名字读技能（read_skill），重名的话它分不清读哪个。
+                            val clash = userSkills.any { it.id != skill.id && it.name.trim().equals(skill.name, ignoreCase = true) }
+                            val full = skillDraftIsNew && userSkills.size >= UserSkill.MAX_COUNT
+                            if (clash) {
+                                toast.show("已经有一个叫「${skill.name}」的技能啦，换个名字吧～", tone = ToastTone.Error)
+                            } else if (full) {
+                                toast.show("技能存满 ${UserSkill.MAX_COUNT} 个啦，先删掉几个吧～", tone = ToastTone.Error)
+                            } else {
+                                SkillStore.saveUserSkill(context, skill)
+                                page = SettingsPage.Skills
+                            }
+                        },
+                        onDelete = {
+                            SkillStore.deleteUserSkill(context, skillDraft.id)
+                            page = SettingsPage.Skills
+                        },
+                        backdrop = backdrop,
+                    )
                     SettingsPage.Privilege -> PrivilegeSection(backdrop = backdrop, onStartPairing = actions::startPairing)
                     SettingsPage.Developer -> {
                         // 临时：看玻璃组件的手感，定下来之后换成真的设置项。
@@ -366,6 +434,8 @@ private fun SettingsRoot(
     allTimeTokens: Long,
     customPrompt: String?,
     memoryCount: Int,
+    skillsOn: Int,
+    skillsTotal: Int,
     status: PermissionStatus,
     privilegeState: PrivilegeState,
     onOpen: (SettingsPage) -> Unit,
@@ -404,7 +474,7 @@ private fun SettingsRoot(
     }
 
     Column {
-        SettingsGroupLabel("个性与记忆")
+        SettingsGroupLabel("个性、记忆与技能")
         SettingsGroup(backdrop = backdrop) {
             SettingsRow(
                 icon = Icons.Filled.Face,
@@ -420,6 +490,18 @@ private fun SettingsRoot(
                 title = "记忆",
                 subtitle = if (memoryCount == 0) "还什么都没记住" else "记住了 $memoryCount 件事",
                 onClick = { onOpen(SettingsPage.Memory) },
+            )
+            SettingsDivider()
+            SettingsRow(
+                icon = KittenIcons.Extension,
+                iconTint = colors.iconAmber,
+                title = "技能",
+                subtitle = if (skillsOn == skillsTotal) {
+                    "$skillsTotal 个都开着"
+                } else {
+                    "开着 $skillsOn 个，关了 ${skillsTotal - skillsOn} 个"
+                },
+                onClick = { onOpen(SettingsPage.Skills) },
             )
         }
     }

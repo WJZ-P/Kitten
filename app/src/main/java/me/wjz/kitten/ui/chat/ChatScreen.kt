@@ -63,7 +63,9 @@ import me.wjz.kitten.agent.AgentQuestion
 import me.wjz.kitten.agent.tools.AskUserTool
 import me.wjz.kitten.agent.tools.FORGET_MEMORY
 import me.wjz.kitten.agent.tools.RECALL_MEMORY
+import me.wjz.kitten.agent.tools.ReadSkillTool
 import me.wjz.kitten.agent.tools.SAVE_MEMORY
+import me.wjz.kitten.agent.tools.SaveSkillTool
 import me.wjz.kitten.agent.tools.StartTaskTool
 import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.ui.component.GlassButton
@@ -670,13 +672,15 @@ private fun buildChatItems(
     return items
 }
 
-/** 不算"操作手机"的工具：查记忆、提问、开任务。自动开任务时数步数不数它们。 */
+/** 不算"操作手机"的工具：查记忆、提问、开任务、读写技能。自动开任务时数步数不数它们。 */
 private val NotPhoneOperations = setOf(
     StartTaskTool.NAME,
     AskUserTool.NAME,
     RECALL_MEMORY,
     SAVE_MEMORY,
     FORGET_MEMORY,
+    ReadSkillTool.NAME,
+    SaveSkillTool.NAME,
 )
 
 /**

@@ -99,6 +99,12 @@ fun ToolCall.describe(): String {
             ?: "翻记忆"
         "save_memory" -> if (args.has("replace_id") && !args.isNull("replace_id")) "修改一条记忆" else "记下一件事"
         "forget_memory" -> "忘掉一件事"
+        "read_skill" -> args.optString("name").trim().takeIf { it.isNotEmpty() }
+            ?.let { "翻开技能「${it.take(MaxQuotedChars)}」" }
+            ?: "翻开一个技能"
+        "save_skill" -> args.optString("name").trim().takeIf { it.isNotEmpty() }
+            ?.let { "写好技能「${it.take(MaxQuotedChars)}」" }
+            ?: "写好一个技能"
         else -> name
     }
 }

@@ -34,6 +34,8 @@ import me.wjz.kitten.agent.tools.LongPressTool
 import me.wjz.kitten.agent.tools.MainScreenshotTool
 import me.wjz.kitten.agent.tools.PressKeyTool
 import me.wjz.kitten.agent.tools.ReadScreenTool
+import me.wjz.kitten.agent.tools.ReadSkillTool
+import me.wjz.kitten.agent.tools.SaveSkillTool
 import me.wjz.kitten.agent.tools.RecallMemoryTool
 import me.wjz.kitten.agent.tools.SaveMemoryTool
 import me.wjz.kitten.agent.tools.ScreenshotTool
@@ -48,6 +50,9 @@ import me.wjz.kitten.data.attachment.AttachmentStore
 import me.wjz.kitten.data.memory.MemoryStore
 import me.wjz.kitten.data.session.SessionRepository
 import me.wjz.kitten.data.session.sqlite.SqliteSessionRepository
+import me.wjz.kitten.data.skills.BuiltinSkill
+import me.wjz.kitten.data.skills.SkillSet
+import me.wjz.kitten.data.skills.SkillStore
 import me.wjz.kitten.data.stats.TokenStatsStore
 import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.llm.EndpointRepair
@@ -305,13 +310,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // 上次被喊停时没等到结果的工具调用，补上"被中断"的结果再发，不然请求会被拒，见
             // withInterruptedResults。
             val history = _uiState.value.messages.withInterruptedResults()
+            // 这一轮开着哪些技能：开始时读一次，整轮用同一份，工具和提示词都按它拼，见 SystemPrompt。
+            val skills = SkillStore.enabled(getApplication())
             // 这一轮的工具和现场。用完要 release，副屏得收掉。
             val device = DeviceSession(getApplication())
-            val registry = ToolRegistry(deviceTools(device) + memoryTools() + StartTaskTool())
+            val registry = ToolRegistry(toolsFor(skills, device, history))
 
             var config = LlmConfigStore.load(getApplication())
             // 这一轮开始时读一次，整轮用同一份：中途变了会让 thinking 块失效，见 SystemPrompt。
-            val systemPrompt = SystemPrompt.load(getApplication())
+            val systemPrompt = SystemPrompt.load(getApplication(), skills)
             var repairedUrl: String? = null
             var firstCall = true
 
@@ -498,11 +505,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * 这一轮能用的工具。顺序就是给模型看的顺序，按"先查、再开、再看、最后动手"排。
+     * 这一轮能用的工具：开着的技能各自带上自己那组（设置 → 技能里关掉的那组不给）。顺序就是给模型
+     * 看的顺序：操作手机、提问、记忆、开任务，然后是写技能、读技能。
+     *
+     * ## 技能全关了，历史里又有工具调用
+     *
+     * 一个工具都不给的话，请求里就不带工具定义；可这段对话之前调过工具，历史里留着调用和结果。
+     * Anthropic 的接口要求带着工具调用的请求必须定义工具，不然直接报错，别家可能也一样。这时候垫一个
+     * read_skill（没有技能可读，调了也只是说一声），请求才发得出去。
+     */
+    private fun toolsFor(skills: SkillSet, device: DeviceSession, history: List<ChatMessage>): List<AgentTool> =
+        buildList {
+            if (BuiltinSkill.Phone in skills) addAll(phoneTools(device))
+            if (BuiltinSkill.Ask in skills) add(AskUserTool(asker))
+            if (BuiltinSkill.Memory in skills) addAll(memoryTools())
+            // 开任务跟着"操作手机"：卡片收的就是操作手机的步骤（见 BuiltinSkill.Phone）。
+            if (BuiltinSkill.Phone in skills) add(StartTaskTool())
+            if (BuiltinSkill.SkillWriting in skills) add(SaveSkillTool(getApplication()))
+            // 读技能：有开着的自定义技能时要用；会写技能时也带上（改技能要先读出原来的）。
+            val needsPlaceholder = isEmpty() && history.any { it is ChatMessage.ToolResult }
+            if (skills.userSkills.isNotEmpty() || BuiltinSkill.SkillWriting in skills || needsPlaceholder) {
+                add(ReadSkillTool(skills.userSkills))
+            }
+        }
+
+    /**
+     * 操作手机的那组工具，按"先查、再开、再看、最后动手"排。
      *
      * 每轮任务新建一份：它们共享同一个 [DeviceSession]（在哪块屏、最近看到的界面）。
      */
-    private fun deviceTools(device: DeviceSession): List<AgentTool> = listOf(
+    private fun phoneTools(device: DeviceSession): List<AgentTool> = listOf(
         ListAppsTool(getApplication()),
         LaunchAppTool(device),
         ReadScreenTool(device),
@@ -515,7 +547,6 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         ScreenshotTool(device),
         MainScreenshotTool(device),
         WaitTool(),
-        AskUserTool(asker),
     )
 
     /** 记忆的三个工具。不依赖这一轮的屏幕，和操作手机的那些分开放。 */

@@ -127,6 +127,8 @@ internal fun SettingsDivider() {
  * @param iconTint 图标的颜色，取 KittenColors 里 icon 开头的那一组：一类一个颜色。
  * @param subtitleColor 说明文字的颜色。没配好、要用户注意的时候给 warning。
  * @param trailingText 右边的状态文字（"已开启""去开启"）。
+ * @param trailing 右边放的控件，比如一个开关。排在状态文字后面、"›"前面；它自己接手指，按在它上面
+ *   不会算成点了这一行。
  * @param showChevron 右边画不画"›"。点了进二级页的行画，点了只是去系统设置开个开关的行也画——
  *   都表示"点这里会去别的地方"。
  */
@@ -140,6 +142,7 @@ internal fun SettingsRow(
     subtitleColor: Color = KittenTheme.colors.textSecondary,
     trailingText: String? = null,
     trailingColor: Color = KittenTheme.colors.textTertiary,
+    trailing: (@Composable () -> Unit)? = null,
     showChevron: Boolean = true,
     onClick: (() -> Unit)? = null,
 ) {
@@ -199,6 +202,7 @@ internal fun SettingsRow(
                 maxLines = 1,
             )
         }
+        trailing?.invoke()
         if (showChevron) {
             Icon(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
@@ -260,7 +264,7 @@ internal fun SettingsPageHeader(
 /** 页面标题（"设置""模型服务商"）。 */
 private val PageTitleFontSize = 22.sp
 
-/** 分组名（"模型""个性与记忆"）。比行标题小一档、颜色浅一档，但不能小到看不清。 */
+/** 分组名（"模型""权限与能力"）。比行标题小一档、颜色浅一档，但不能小到看不清。 */
 private val GroupLabelFontSize = 15.sp
 private val GroupLabelLineHeight = 20.sp
 
