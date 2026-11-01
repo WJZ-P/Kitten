@@ -3,12 +3,17 @@ package me.wjz.kitten.agent
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import me.wjz.kitten.agent.tools.APP_USAGE
 import me.wjz.kitten.agent.tools.AskUserTool
+import me.wjz.kitten.agent.tools.CALENDAR
+import me.wjz.kitten.agent.tools.DEVICE_STATUS
 import me.wjz.kitten.agent.tools.FORGET_MEMORY
 import me.wjz.kitten.agent.tools.LearnSkillTool
 import me.wjz.kitten.agent.tools.RECALL_MEMORY
+import me.wjz.kitten.agent.tools.REMINDER
 import me.wjz.kitten.agent.tools.ReadSkillTool
 import me.wjz.kitten.agent.tools.SAVE_MEMORY
+import me.wjz.kitten.agent.tools.SET_ALARM
 import me.wjz.kitten.agent.tools.SaveFlowTool
 import me.wjz.kitten.agent.tools.SaveSkillTool
 import me.wjz.kitten.agent.tools.StartTaskTool
@@ -123,12 +128,27 @@ fun ToolCall.describe(): String {
         "save_flow" -> args.optString("name").trim().takeIf { it.isNotEmpty() }
             ?.let { "存下流程「${it.take(MaxQuotedChars)}」" }
             ?: "存下一个流程"
+        // 提醒、日程叫什么同样不写：「复查」「面试」这种也不该亮在锁屏上。
+        SET_ALARM -> when (args.optString("kind")) {
+            "timer" -> "开个倒计时"
+            "show" -> "打开闹钟列表"
+            else -> args.optString("time").trim().takeIf { it.isNotEmpty() }?.let { "定 $it 的闹钟" } ?: "定个闹钟"
+        }
+        REMINDER -> when (args.optString("action")) {
+            "list" -> "看看排着的提醒"
+            "cancel" -> "取消一个提醒"
+            else -> "排一个提醒"
+        }
+        CALENDAR -> if (args.optString("action") == "list") "查日程" else "往日历里加日程"
+        DEVICE_STATUS -> "看看手机状态"
+        APP_USAGE -> "查应用使用记录"
         else -> name
     }
 }
 
 /**
- * 这次调用是不是在操作手机（读屏、点按、输入、打开应用、跑流程……）。查记忆、提问、开任务、读写技能不算。
+ * 这次调用是不是在操作手机（读屏、点按、输入、打开应用、跑流程……）。查记忆、提问、开任务、读写技能、
+ * 调系统能力（闹钟、提醒、日程这些一步就办完，不碰界面）不算。
  *
  * 一件事算不算"在办事"都按它数：对话里满几步自动收进任务卡片（ChatScreen 的 buildChatItems）、
  * 任务页上要不要显示成正在办的任务（[AgentTaskHandle]）、办完要不要复盘（[SkillReflector]）。
@@ -145,6 +165,11 @@ private val NotPhoneOperations = setOf(
     SaveSkillTool.NAME,
     LearnSkillTool.NAME,
     SaveFlowTool.NAME,
+    SET_ALARM,
+    REMINDER,
+    CALENDAR,
+    DEVICE_STATUS,
+    APP_USAGE,
 )
 
 /** 说明里引用用户输入的内容时最多带几个字，再长就省略：一行放不下，也没必要全写出来。 */

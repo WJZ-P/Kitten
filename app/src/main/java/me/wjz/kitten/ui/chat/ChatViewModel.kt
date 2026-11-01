@@ -48,6 +48,7 @@ import me.wjz.kitten.agent.tools.SwipeTool
 import me.wjz.kitten.agent.tools.TapTool
 import me.wjz.kitten.agent.tools.UserAsker
 import me.wjz.kitten.agent.tools.WaitTool
+import me.wjz.kitten.agent.tools.systemTools
 import me.wjz.kitten.agent.withInterruptedResults
 import me.wjz.kitten.data.attachment.AttachmentStore
 import me.wjz.kitten.data.memory.MemoryStore
@@ -573,7 +574,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * 这一轮能用的工具：开着的技能各自带上自己那组（设置 → 技能里关掉的那组不给）。顺序就是给模型
-     * 看的顺序：操作手机（有带流程的技能时加上跑流程）、提问、记忆、开任务，然后是写技能、读技能。
+     * 看的顺序：操作手机（有带流程的技能时加上跑流程）、提问、记忆、系统能力、开任务，然后是写技能、读技能。
      *
      * ## 技能全关了，历史里又有工具调用
      *
@@ -590,6 +591,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             if (BuiltinSkill.Ask in skills) add(AskUserTool(asker))
             if (BuiltinSkill.Memory in skills) addAll(memoryTools())
+            if (BuiltinSkill.System in skills) addAll(systemTools(getApplication()))
             // 开任务跟着"操作手机"：卡片收的就是操作手机的步骤（见 BuiltinSkill.Phone）。
             if (BuiltinSkill.Phone in skills) add(StartTaskTool())
             if (BuiltinSkill.SkillWriting in skills) add(SaveSkillTool(getApplication()))

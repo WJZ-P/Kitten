@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import me.wjz.kitten.permission.SelfConfigurator
 import me.wjz.kitten.privilege.PrivilegeManager
 import me.wjz.kitten.privilege.client.WirelessDebugController
+import me.wjz.kitten.system.reminder.Reminders
 
 /**
  * 开机后自动把特权链路重建起来，全程零交互。
@@ -36,6 +37,8 @@ class BootCompletedReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        // 重启会清掉系统里排着的闹钟，提醒要照着存下的重排一遍。这件事不靠增强模式，放在下面的提前返回之前。
+        Reminders.rescheduleAll(context)
         if (!SelfConfigurator.hasPermission(context)) {
             Log.i(TAG, "没有 WRITE_SECURE_SETTINGS，开机不做自动恢复")
             return

@@ -44,6 +44,14 @@
     <string name="agent_action_stop">停止</string>
     <string name="agent_answer_in_app">回 Kitten 里回答</string>
 
+    <!-- 提醒 · 到点一直响的那条通知 -->
+    <string name="reminder_channel_name">提醒</string>
+    <string name="reminder_channel_description">你让 Kitten 提醒的事，到点会一直响，点掉才停</string>
+    <string name="reminder_title">Kitten 提醒你</string>
+    <string name="reminder_missed_title">刚才的提醒没人理</string>
+    <string name="reminder_action_dismiss">知道了</string>
+    <string name="reminder_action_snooze">10 分钟后再提醒</string>
+
     <!-- 引导页 · ADB 链路进度 -->
     <string name="setup_privilege_step_pairing">配对中</string>
     <string name="setup_privilege_step_connecting">连接中</string>

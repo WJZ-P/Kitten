@@ -230,11 +230,12 @@ private fun EditingRow(
 }
 
 /**
- * 行上的小图标按钮，不带玻璃（原因见 [MemoryPage]）：按下垫一个淡天依蓝的圆，松手才算数。
+ * 行上的小图标按钮，不带玻璃（原因见 [MemoryPage]）：按下垫一个淡天依蓝的圆，松手才算数。任务页里取消提醒
+ * 那个也是它。
  * 触摸区比图标大一圈，好按。
  */
 @Composable
-private fun RowAction(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) {
+internal fun RowAction(icon: ImageVector, label: String, tint: Color, onClick: () -> Unit) {
     val colors = KittenTheme.colors
     val currentOnClick by rememberUpdatedState(onClick)
     val press = rememberGlassPressState()

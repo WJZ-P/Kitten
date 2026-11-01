@@ -47,6 +47,7 @@ import me.wjz.kitten.ui.component.GlassRadius
 import me.wjz.kitten.ui.component.GlassSection
 import me.wjz.kitten.ui.component.GlassSwitch
 import me.wjz.kitten.ui.component.GlassTextField
+import me.wjz.kitten.ui.icon.Alarm
 import me.wjz.kitten.ui.icon.AutoAwesome
 import me.wjz.kitten.ui.icon.ContactSupport
 import me.wjz.kitten.ui.icon.Extension
@@ -360,6 +361,7 @@ private val BuiltinSkill.title: String
         BuiltinSkill.Phone -> "操作手机"
         BuiltinSkill.Ask -> "向你提问"
         BuiltinSkill.Memory -> "记忆"
+        BuiltinSkill.System -> "系统能力"
         BuiltinSkill.SkillWriting -> "编写技能"
         BuiltinSkill.SelfLearning -> "自我进化"
     }
@@ -370,6 +372,7 @@ private val BuiltinSkill.summary: String
         BuiltinSkill.Phone -> "给AI装上眼睛和双手！"
         BuiltinSkill.Ask -> "拿不准的时候，弹出选项问你"
         BuiltinSkill.Memory -> "记住你的偏好，换了对话也记得"
+        BuiltinSkill.System -> "定闹钟、排提醒、记日程，不用点来点去"
         BuiltinSkill.SkillWriting -> "在对话里帮你写技能，写好存到上面"
         BuiltinSkill.SelfLearning -> "办完事自己复盘，学到的也存到上面"
     }
@@ -380,6 +383,7 @@ private val BuiltinSkill.icon: ImageVector
         BuiltinSkill.Phone -> KittenIcons.Smartphone
         BuiltinSkill.Ask -> KittenIcons.ContactSupport
         BuiltinSkill.Memory -> Icons.Filled.Favorite
+        BuiltinSkill.System -> KittenIcons.Alarm
         BuiltinSkill.SkillWriting -> Icons.Filled.Edit
         BuiltinSkill.SelfLearning -> KittenIcons.AutoAwesome
     }
@@ -389,6 +393,7 @@ private fun KittenColors.tintOf(skill: BuiltinSkill): Color = when (skill) {
     BuiltinSkill.Phone -> iconBlue
     BuiltinSkill.Ask -> iconViolet
     BuiltinSkill.Memory -> iconCoral
+    BuiltinSkill.System -> iconTeal
     BuiltinSkill.SkillWriting -> iconGreen
     BuiltinSkill.SelfLearning -> iconPink
 }

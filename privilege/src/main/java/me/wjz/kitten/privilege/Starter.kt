@@ -18,10 +18,10 @@ object Starter {
      * 只能靠活着的特权进程去用。
      *
      * 电池白名单是附带的尽力而为项：失败也不影响主流程，所以用 `;` 串联而不是 `&&`。
+     *
+     * 顺手把「系统能力」要的几项（通知、日程、精确闹钟、应用使用记录）也一起授了，清单见 [SelfGrants]。
      */
-    fun buildSelfGrantCommand(packageName: String): String =
-        "pm grant $packageName android.permission.WRITE_SECURE_SETTINGS; " +
-            "cmd deviceidle whitelist +$packageName"
+    fun buildSelfGrantCommand(packageName: String): String = SelfGrants.command(packageName)
 
     private const val NICE_NAME = "me.wjz.kitten:privilege"
 

@@ -54,6 +54,31 @@
         tools:ignore="ForegroundServicesPolicy" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
+    <!--
+        「系统能力」要的权限，调系统接口的代码在 system/ 下。
+
+        - SET_ALARM：在系统时钟里定闹钟、开倒计时。普通权限，装上就有。
+        - SCHEDULE_EXACT_ALARM：Kitten 自己的提醒要精确到点（见 Reminders）。Android 14 起新装的应用默认没有，
+          增强模式连上时用 `appops set` 补上（见 privilege 模块的 SelfGrants）。
+          没用 USE_EXACT_ALARM（装上就有、用户关不掉）：Google Play 只许闹钟、日历类应用声明它。
+        - READ_CALENDAR / WRITE_CALENDAR：读写日历。运行时权限，增强模式连上时用 `pm grant` 补上。
+        - PACKAGE_USAGE_STATS：查应用使用记录。系统设置里"使用情况访问权限"那个开关，同样由增强模式补上；
+          它是受保护权限，lint 默认不让声明，所以 tools:ignore。
+        - FOREGROUND_SERVICE_MEDIA_PLAYBACK、VIBRATE：提醒到点后一直响、一直震（见 ReminderRingService）。
+        - ACCESS_NETWORK_STATE：手机状态里的"连的什么网、能不能上网"（见 DeviceStatus）。普通权限，装上就有；
+          不声明的话 ConnectivityManager 直接抛 SecurityException。
+    -->
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
     <application
         android:allowBackup="false"
         android:networkSecurityConfig="@xml/network_security_config"
@@ -118,6 +143,20 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="agent_task" />
         </service>
+
+        <!-- 提醒到点：AlarmManager 发广播给它，它交给下面的响铃服务。 -->
+        <receiver
+            android:name=".system.reminder.ReminderReceiver"
+            android:exported="false" />
+
+        <!--
+            提醒一直响到用户点掉。mediaPlayback 类型：它就是在放声音；到点时系统放行精确闹钟的应用从后台
+            起前台服务，起得来。
+        -->
+        <service
+            android:name=".system.reminder.ReminderRingService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
 
         <service
             android:name=".service.KittenNotificationListener"

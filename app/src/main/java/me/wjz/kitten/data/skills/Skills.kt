@@ -23,6 +23,12 @@ enum class BuiltinSkill(val id: String) {
     /** 记忆：关于用户的小本子，换了对话也还在（recall / save / forget_memory）。 */
     Memory("memory"),
 
+    /**
+     * 系统能力：直接调安卓的接口办事，不用去点界面——定闹钟、排提醒、读写日历、看手机状态、查应用使用
+     * 记录（见 SystemTools，接口那一层在 system/ 下）。
+     */
+    System("system"),
+
     /** 编写技能：用户在对话里让它写、让它改技能时，写好存进"自定义"（save_skill）。 */
     SkillWriting("skill_writing"),
 

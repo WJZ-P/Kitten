@@ -16,6 +16,7 @@ import kotlinx.coroutines.withContext
 import me.wjz.kitten.privilege.PrivilegeManager
 import me.wjz.kitten.privilege.PrivilegeState
 import me.wjz.kitten.privilege.R
+import me.wjz.kitten.privilege.SelfGrants
 import me.wjz.kitten.privilege.Starter
 import java.io.IOException
 import java.util.concurrent.atomic.AtomicBoolean
@@ -51,6 +52,9 @@ class WirelessDebugController private constructor(private val appContext: Contex
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val inProgress = AtomicBoolean(false)
+
+    /** 这个进程里是不是已经在"特权进程就绪、只差授权"时补过一次了，见 [autoConnect]。 */
+    private val grantsRetried = AtomicBoolean(false)
 
     /**
      * 首次：用通知里收到的配对码完成配对，接着连接并启动。
@@ -99,7 +103,16 @@ class WirelessDebugController private constructor(private val appContext: Contex
         // 还在跑旧 dex。isStale() 为真就往下走，connectAndLaunchInternal 里的
         // pkill 会把旧进程换掉。
         if (PrivilegeManager.state.value is PrivilegeState.Ready && !PrivilegeManager.isStale()) {
-            Log.d(TAG, "特权进程已就绪且版本一致，无需自动连接")
+            // 特权进程好好的，但可能还缺授权：装了新版本、新版本多要了几项（比如「系统能力」的日程、精确闹钟），
+            // 而补授权本来只在拉起特权进程的路上顺手做，特权进程不重启就一直补不上。这里单独连一下 adbd
+            // 只补授权，不重启特权进程——重启会把副屏连同上面正在办的事一起收掉。
+            // 每个进程只补一次：ROM 拦着、怎么也补不上的，别每回到前台就连一遍。
+            if (!SelfGrants.allGranted(appContext) && grantsRetried.compareAndSet(false, true)) {
+                Log.i(TAG, "特权进程已就绪，但还缺授权，只补授权")
+                grantOnly()
+            } else {
+                Log.d(TAG, "特权进程已就绪且版本一致，无需自动连接")
+            }
             return
         }
         if (!KittenAdbManager.hasKeyPair(appContext)) {
@@ -118,40 +131,12 @@ class WirelessDebugController private constructor(private val appContext: Contex
 
     private suspend fun connectAndLaunchInternal() {
         _step.value = Step.Connecting
-        Log.i(TAG, "正在连接本机 adbd…")
-        val manager = adbManager()
-        val connected = withContext(Dispatchers.IO) {
-            manager.autoConnect(appContext, CONNECT_TIMEOUT_MS)
-        }
-        if (!connected) {
-            throw IOException(appContext.getString(R.string.privilege_error_connect_failed))
-        }
-        Log.i(TAG, "已连上 adbd")
+        val backend = connectAdb()
 
         _step.value = Step.Launching
-        val backend = AdbBackend(manager)
-
-        // 趁 ADB 还连着，把永久授权办了。只在还没拿到时跑——授权是一次性的，
-        // 之后每次连接都重跑纯属浪费一个来回。失败不阻断启动：拿不到授权只是
-        // 少了"开机自动恢复"的能力，特权进程本身照常可用。
-        if (!hasSecureSettings()) {
-            Log.i(TAG, "尚未取得 WRITE_SECURE_SETTINGS，执行一次性自助授权")
-            runCatching { backend.launch(Starter.buildSelfGrantCommand(appContext.packageName)) }
-                .onFailure { Log.w(TAG, "自助授权命令执行失败", it) }
-            // 立刻回读确认。这是整条"开机全自动"链路成不成立的分水岭，
-            // 所以无论成败都要在日志里说死，别让人去猜。
-            if (hasSecureSettings()) {
-                Log.i(TAG, "自助授权成功：已取得 WRITE_SECURE_SETTINGS，之后可开机自动恢复")
-            } else {
-                Log.w(
-                    TAG,
-                    "自助授权未生效。特权进程本身不受影响，但开机自动恢复用不了。" +
-                        "请在 KittenAdbShell 的日志里看 pm grant 的输出",
-                )
-            }
-        } else {
-            Log.d(TAG, "已有 WRITE_SECURE_SETTINGS，跳过自助授权")
-        }
+        // 趁 ADB 还连着，把自己要的授权办了。失败不阻断启动：拿不到授权只是少了"开机自动恢复"、
+        // 精确提醒这些能力，特权进程本身照常可用。
+        grantIfMissing(backend)
 
         val apkPath = appContext.applicationInfo.sourceDir
         val token = PrivilegeManager.newLaunchToken()
@@ -162,6 +147,66 @@ class WirelessDebugController private constructor(private val appContext: Contex
         // 到这里只代表命令发出去了。真正是否就绪看 PrivilegeManager 的
         // "特权已就绪，uid=2000"——binder 走的是另一条通路。
         Log.i(TAG, "启动命令已送达，等待特权进程交回 binder")
+    }
+
+    /**
+     * 特权进程已经在跑、只差授权时：连上 adbd 补一遍就走，不碰特权进程，也不动 [step]——这是后台悄悄
+     * 做的事，界面上的连接状态不该跟着闪一下。连不上（无线调试被关了）就算了，下次开机会补。
+     */
+    private suspend fun grantOnly() {
+        if (!inProgress.compareAndSet(false, true)) {
+            Log.w(TAG, "已有流程在进行中，这次不补授权")
+            return
+        }
+        try {
+            grantIfMissing(connectAdb())
+        } catch (t: Throwable) {
+            Log.w(TAG, "补授权时没连上 adbd，等下次开机再补", t)
+        } finally {
+            inProgress.set(false)
+        }
+    }
+
+    /** 连上本机 adbd，连不上抛 IOException。密钥是配对时存下的，不用再配对。 */
+    private suspend fun connectAdb(): AdbBackend {
+        Log.i(TAG, "正在连接本机 adbd…")
+        val manager = adbManager()
+        val connected = withContext(Dispatchers.IO) {
+            manager.autoConnect(appContext, CONNECT_TIMEOUT_MS)
+        }
+        if (!connected) {
+            throw IOException(appContext.getString(R.string.privilege_error_connect_failed))
+        }
+        Log.i(TAG, "已连上 adbd")
+        return AdbBackend(manager)
+    }
+
+    /**
+     * 自己要的授权（清单见 SelfGrants）都有了就不跑，省一个来回；缺一项（第一次、新版本多要了几项、
+     * 或者用户在系统设置里关掉了）就整条再跑一遍。
+     */
+    private suspend fun grantIfMissing(backend: AdbBackend) {
+        if (!SelfGrants.allGranted(appContext)) {
+            Log.i(TAG, "还缺授权，执行自助授权")
+            runCatching { backend.launch(Starter.buildSelfGrantCommand(appContext.packageName)) }
+                .onFailure { Log.w(TAG, "自助授权命令执行失败", it) }
+            // 立刻回读确认。WRITE_SECURE_SETTINGS 是整条"开机全自动"链路成不成立的分水岭，
+            // 所以无论成败都要在日志里说死，别让人去猜。
+            if (hasSecureSettings()) {
+                Log.i(TAG, "已取得 WRITE_SECURE_SETTINGS，之后可开机自动恢复")
+            } else {
+                Log.w(
+                    TAG,
+                    "自助授权未生效。特权进程本身不受影响，但开机自动恢复用不了。" +
+                        "请在 KittenAdbShell 的日志里看 pm grant 的输出",
+                )
+            }
+            if (!SelfGrants.allGranted(appContext)) {
+                Log.w(TAG, "还有授权没补上（精确闹钟 / 使用记录 / 日程 / 通知之一），见 KittenAdbShell 的日志")
+            }
+        } else {
+            Log.d(TAG, "授权都齐了，跳过自助授权")
+        }
     }
 
     private fun hasSecureSettings(): Boolean =
