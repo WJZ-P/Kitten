@@ -108,7 +108,7 @@ class MemoryStore private constructor(context: Context) {
         if (ids.isEmpty()) return@withContext
         helper.writableDatabase.execSQL(
             "UPDATE $TABLE SET $COL_LAST_USED_AT = ? WHERE $COL_ID IN (${ids.joinToString(",") { "?" }})",
-            arrayOf<Any>(System.currentTimeMillis()) + ids.map { it as Any },
+            arrayOf<Any>(System.currentTimeMillis(), *ids.toTypedArray()),
         )
     }
 
