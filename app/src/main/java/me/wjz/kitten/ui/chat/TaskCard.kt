@@ -5,18 +5,22 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.expandHorizontally
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkHorizontally
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -42,6 +46,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.onClick
@@ -53,6 +58,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
+import me.wjz.kitten.agent.AgentScreen
 import me.wjz.kitten.agent.Reflection
 import me.wjz.kitten.agent.describe
 import me.wjz.kitten.ui.component.GlassContentPadding
@@ -63,6 +69,7 @@ import me.wjz.kitten.ui.component.detectGlassPress
 import me.wjz.kitten.ui.component.rememberGlassPressState
 import me.wjz.kitten.ui.icon.AutoAwesome
 import me.wjz.kitten.ui.icon.KittenIcons
+import me.wjz.kitten.ui.live.LiveScreen
 import me.wjz.kitten.ui.theme.KittenTheme
 
 /** 任务走到哪了。 */
@@ -139,7 +146,15 @@ internal class TaskInfo(
  *
  * 按下整张卡微微鼓起，松手才打开，和气泡长按的手感一样。
  *
+ * ## 右边的缩略图
+ *
+ * 还在办、而且 Kitten 正在后台副屏上操作时，卡片右边是那块副屏的直播缩略图（[LiveScreen]）：一眼看得到它
+ * 还在动、在哪个页面。缩略图太小看不清字，点它打开全屏直播（[onOpenLive]）；点卡片别处照旧是看过程。
+ * 办完了副屏收掉，缩略图跟着收起来。
+ *
  * @param waitingForAnswer 这会儿在等用户回答（提问卡片压在对话最下面）。
+ * @param live 正在直播的副屏。不在办、或者没有副屏（还没拉起应用、在操作主屏）时是 null。
+ * @param onOpenLive 点了缩略图。
  */
 @Composable
 internal fun TaskCard(
@@ -147,12 +162,18 @@ internal fun TaskCard(
     waitingForAnswer: Boolean,
     backdrop: Backdrop,
     onOpen: () -> Unit,
+    live: AgentScreen? = null,
+    onOpenLive: () -> Unit = {},
 ) {
     val colors = KittenTheme.colors
     val press = rememberGlassPressState()
     val currentOnOpen by rememberUpdatedState(onOpen)
+    val shownLive = live?.takeIf { task.status == TaskStatus.Running }
+    // 收起的动画还在放时 shownLive 已经是 null 了，缩略图不能跟着没：记着最后那一份。
+    var lastLive by remember { mutableStateOf(shownLive) }
+    SideEffect { if (shownLive != null) lastLive = shownLive }
 
-    Column(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
             .semantics(mergeDescendants = true) {
@@ -170,6 +191,59 @@ internal fun TaskCard(
                 scale = { lerp(1f, PressedScale, press.pressProgress) },
             )
             .padding(ChatCardPadding),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TaskCardText(task = task, waitingForAnswer = waitingForAnswer, modifier = Modifier.weight(1f))
+        AnimatedVisibility(
+            visible = shownLive != null,
+            enter = fadeIn(RowFadeSpec) + expandHorizontally(ThumbnailSizeSpec, expandFrom = Alignment.Start),
+            exit = fadeOut(RowFadeSpec) + shrinkHorizontally(ThumbnailSizeSpec, shrinkTowards = Alignment.Start),
+        ) {
+            lastLive?.let { screen ->
+                LiveThumbnail(screen = screen, onClick = onOpenLive, modifier = Modifier.padding(start = ThumbnailGap))
+            }
+        }
+    }
+}
+
+/**
+ * 正在办的那块副屏的缩略图。按下微微鼓起，松手才打开全屏（和整张卡的手感一样，只是鼓得多一点，它小）。
+ * 按在它上面不会算成点了卡片：按下事件它自己吃掉了。
+ */
+@Composable
+private fun LiveThumbnail(screen: AgentScreen, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val colors = KittenTheme.colors
+    val press = rememberGlassPressState()
+    val currentOnClick by rememberUpdatedState(onClick)
+    LiveScreen(
+        screen = screen,
+        modifier = modifier
+            .width(ThumbnailWidth)
+            .aspectRatio(screen.width.toFloat() / screen.height.coerceAtLeast(1))
+            .semantics(mergeDescendants = true) {
+                role = Role.Button
+                onClick(label = "全屏看 Kitten 在干什么") {
+                    currentOnClick()
+                    true
+                }
+            }
+            .pointerInput(press) { detectGlassPress(press) { currentOnClick() } }
+            .graphicsLayer {
+                val s = lerp(1f, ThumbnailPressedScale, press.pressProgress)
+                scaleX = s
+                scaleY = s
+            }
+            .clip(ThumbnailShape)
+            .border(ThumbnailBorder, colors.hairline, ThumbnailShape),
+    )
+}
+
+/** 卡片左边的字：标题、状态和步数，最近说的一句，最近一步在干什么。 */
+@Composable
+private fun TaskCardText(task: TaskInfo, waitingForAnswer: Boolean, modifier: Modifier = Modifier) {
+    val colors = KittenTheme.colors
+    Column(
+        modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -512,6 +586,25 @@ private fun LearnedRow(learned: Reflection.Learned, onOpenSkill: (skillId: Strin
 
 /** 标题行末尾那个"›"多大，提示整张卡能点。 */
 private val ArrowSize = 18.dp
+
+/**
+ * 缩略图：多宽（高按副屏的宽高比算，手机竖屏大约是宽的两倍出头）、和左边的字隔多远、圆角、描边、按下鼓多大。
+ *
+ * 48dp 宽、一百出头高：比卡片里三行字略高一点，看得出是哪个页面、在不在动；再大就把字挤得太窄。圆角取小一档，
+ * 它是嵌在卡片里的东西。描一道细边：副屏画面常是白底，贴在浅色卡片上分不出边界。
+ */
+private val ThumbnailWidth = 48.dp
+private val ThumbnailGap = 12.dp
+private val ThumbnailShape = RoundedCornerShape(GlassRadius.Small)
+private val ThumbnailBorder = 1.dp
+private const val ThumbnailPressedScale = 1.06f
+
+/** 缩略图出现、收起时宽度的弹簧，和复盘那一行长缩一个性格。 */
+private val ThumbnailSizeSpec = spring(
+    dampingRatio = 0.9f,
+    stiffness = 500f,
+    visibilityThreshold = IntSize.VisibilityThreshold,
+)
 
 /** 卡片上"最近说的一句"最多几行。再多卡片就长成气泡了，想看全文点开。 */
 private const val LatestLineMaxLines = 2

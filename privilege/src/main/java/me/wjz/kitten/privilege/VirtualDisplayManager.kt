@@ -135,28 +135,28 @@ object VirtualDisplayManager {
     }
 
     /**
-     * 让副屏显示到给定的 [surface] 上。传 null 则重新隐身。
+     * 让副屏的画面同时画到 [surface] 上给用户看；传 null 则不看了。
      *
-     * 典型用法：界面上放一个 SurfaceView，在它的 surfaceCreated 回调里把
-     * `holder.surface` 传进来，副屏画面就实时投上去了；surfaceDestroyed 时传 null。
+     * 没人看时副屏没有任何额外开销，有人看时特权进程按 [surface] 的大小画（缩略图就画小图）。不影响截图。
+     * 细节见特权侧的 `VirtualDisplayHost.setPreview`。界面上一般不直接调它，谁在看、交给谁由 App 侧的
+     * LivePreviews 管。
      *
-     * 隐藏时回到的是创建副屏时那块离屏缓冲，所以来回切不会影响以后的截图通道。
+     * 是一次 binder 调用，特权那边还要等 GL 线程做完，别放主线程。
      */
-    fun setSurface(displayId: Int, surface: Surface?): Boolean {
+    fun setPreview(displayId: Int, surface: Surface?): Boolean {
         val service = PrivilegeManager.get() ?: run {
-            Log.w(TAG, "特权进程未就绪，无法切换副屏显示")
+            Log.w(TAG, "特权进程未就绪，看不了副屏")
             return false
         }
-        return runCatching { service.setDisplaySurface(displayId, surface) }
-            .onFailure { Log.e(TAG, "切换副屏 $displayId 显示失败", it) }
+        return runCatching { service.setPreviewSurface(displayId, surface) }
+            .onFailure { Log.e(TAG, "切换副屏 $displayId 的预览失败", it) }
             .getOrDefault(false)
     }
 
     /**
      * 截一张副屏的图，返回 JPEG 字节；拿不到返回 null。
      *
-     * 只对自己创建的副屏有效，而且副屏得是隐藏状态（正显示在某个 Surface 上时画面不往
-     * 截图通道写）。细节见 `VirtualDisplayHost.capture`。
+     * 只对自己创建的副屏有效，有没有人在看都截得到。细节见 `VirtualDisplayHost.capture`。
      *
      * @param maxEdge 长边最多多少像素，超了等比缩小。
      * @param quality JPEG 质量 1..100。结果太大时特权侧会自己再降，见那边的 MAX_BYTES。
@@ -170,9 +170,6 @@ object VirtualDisplayManager {
             .onFailure { Log.e(TAG, "截取副屏 $displayId 失败", it) }
             .getOrNull()
     }
-
-    /** 隐藏副屏：画面切回离屏缓冲。 */
-    fun hide(displayId: Int): Boolean = setSurface(displayId, null)
 
     fun releaseDisplay(displayId: Int) {
         val service = PrivilegeManager.get() ?: return

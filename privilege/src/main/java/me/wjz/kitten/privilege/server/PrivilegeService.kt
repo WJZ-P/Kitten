@@ -33,8 +33,8 @@ class PrivilegeService : IPrivilegeService.Stub() {
     override fun captureDisplay(displayId: Int, maxEdge: Int, quality: Int): ByteArray? =
         VirtualDisplayHost.capture(displayId, maxEdge, quality)
 
-    override fun setDisplaySurface(displayId: Int, surface: Surface?): Boolean =
-        VirtualDisplayHost.setSurface(displayId, surface)
+    override fun setPreviewSurface(displayId: Int, surface: Surface?): Boolean =
+        VirtualDisplayHost.setPreview(displayId, surface)
 
     override fun launchAppOnDisplay(
         packageName: String?,

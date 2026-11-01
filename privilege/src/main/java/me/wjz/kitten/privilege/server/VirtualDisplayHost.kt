@@ -6,6 +6,8 @@ import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.Image
 import android.media.ImageReader
+import android.os.Handler
+import android.os.HandlerThread
 import android.util.Log
 import android.view.Surface
 import java.io.ByteArrayOutputStream
@@ -80,13 +82,69 @@ internal object VirtualDisplayHost {
     private const val FLAG_DESTROY_CONTENT_ON_REMOVAL = 1 shl 8
 
     /**
-     * 画面缓冲区的张数。
+     * 画面缓冲区的张数（这一端同时能拿着几张）。
      *
-     * 2 张够用：一张正在被系统写入、一张可以被读走。给多了只是白占内存。
+     * 2 张够用：一张一直握在手里（最新的一帧，见 [LatestFrame]），新的一帧来了先拿到第二张、再放掉
+     * 旧的。给多了只是白占内存——一张全分辨率的帧十几 MB。
      */
     private const val IMAGE_BUFFER_COUNT = 2
 
-    private class Holder(val display: VirtualDisplay, val reader: ImageReader)
+    /**
+     * 一块副屏。
+     *
+     * 两种模式：没人看时副屏直接画进 [reader]（直出），有人看时画进 [preview] 的管线、再分给预览和截图
+     * （见 [setPreview]）。
+     */
+    private class Holder(
+        val display: VirtualDisplay,
+        val reader: ImageReader,
+        val frames: LatestFrame,
+        val width: Int,
+        val height: Int,
+    ) {
+        /** 换模式和截图都拿着它：截图截到一半管线被收掉，读回来的就是空的。 */
+        val modeLock = Any()
+
+        /** 有人在看时的预览管线；没人看（直出）是 null。 */
+        var preview: PreviewPipeline? = null
+    }
+
+    /**
+     * 一直握着 ImageReader 最新的那一帧，截图从这里读。
+     *
+     * 以前截图时才去 `acquireLatestImage`，读完就关。问题是它只给"还没被拿走的新帧"：页面静止时连截两次，
+     * 第二次拿到的是 null，模型只能干等，可页面不动就永远不会有新帧。现在每来一帧就换到手里（旧的放掉），
+     * 截图读手里这张，和页面动没动无关。
+     */
+    private class LatestFrame(private val reader: ImageReader) {
+        private var image: Image? = null
+
+        /** 新的一帧到了：先拿到新的再放掉旧的，手里一直有一张。 */
+        fun onAvailable() = synchronized(this) {
+            // 每来一帧回调一次、拿一张，所以用 acquireNextImage；手里一张、再拿一张，正好是 IMAGE_BUFFER_COUNT。
+            val next = try {
+                reader.acquireNextImage()
+            } catch (e: IllegalStateException) {
+                // ImageReader 已经关了（副屏正在收），或者缓冲区一时拿满了：这一帧不要了。
+                null
+            } ?: return@synchronized
+            image?.close()
+            image = next
+        }
+
+        /** 手里这一帧转成位图；一帧都还没来过是 null。 */
+        fun snapshot(): Bitmap? = synchronized(this) { image?.let { VirtualDisplayHost.toBitmap(it) } }
+
+        fun close() = synchronized(this) {
+            image?.close()
+            image = null
+        }
+    }
+
+    /** 所有副屏的 ImageReader 共用一条线程收帧：收帧只是换一下手里那张，很轻。 */
+    private val frameHandler: Handler by lazy {
+        Handler(HandlerThread("KittenDisplayFrames").apply { start() }.looper)
+    }
 
     private val holders = ConcurrentHashMap<Int, Holder>()
 
@@ -94,8 +152,8 @@ internal object VirtualDisplayHost {
      * 创建一块副屏，返回 displayId；失败返回 -1。
      *
      * 用 ImageReader 的 Surface 当画面输出，而不是随便塞个 SurfaceTexture：
-     * 虚拟屏幕必须有地方渲染，而 ImageReader 额外带来一个好处——以后要给视觉模型
-     * 喂截图时，直接从这里读帧即可，不用再走 MediaProjection 那套要用户授权的流程。
+     * 虚拟屏幕必须有地方渲染，而 ImageReader 额外带来一个好处——给视觉模型喂截图时直接从这里读帧，
+     * 不用再走 MediaProjection 那套要用户授权的流程。有人看时才换成预览管线，见 [setPreview]。
      */
     fun create(width: Int, height: Int, densityDpi: Int): Int {
         val context = SystemContext.get() ?: run {
@@ -127,6 +185,9 @@ internal object VirtualDisplayHost {
                 PixelFormat.RGBA_8888,
                 IMAGE_BUFFER_COUNT,
             )
+            // 建屏之前就挂上：副屏一建好就开始出帧，第一帧也得接住。
+            val frames = LatestFrame(reader)
+            reader.setOnImageAvailableListener({ frames.onAvailable() }, frameHandler)
             // PUBLIC：别的应用的 Activity 才能被放到这块屏上。
             // OWN_CONTENT_ONLY：只显示扔上来的内容，不镜像主屏。
             // DESTROY_CONTENT_ON_REMOVAL：收掉副屏时上面的应用一起关，不挪到主屏，见常量注释。
@@ -151,7 +212,7 @@ internal object VirtualDisplayHost {
             }
 
             val id = display.display.displayId
-            holders[id] = Holder(display, reader)
+            holders[id] = Holder(display, reader, frames, width, height)
             Log.i(
                 TAG,
                 "副屏已创建：displayId=$id ${width}x$height @${densityDpi}dpi " +
@@ -181,28 +242,64 @@ internal object VirtualDisplayHost {
     ) ?: error("createVirtualDisplay 返回 null，flags=$flags")
 
     /**
-     * 切换副屏的渲染目标，从而控制它是否可见。
+     * 让副屏的画面同时画到 [surface] 上给用户看（App 里的 TextureView）；传 null 则不看了。
      *
-     * @param surface 传 SurfaceView 的 Surface 则画面参与系统合成，用户看得见；
-     *                传 null 则切回 ImageReader 的离屏缓冲，重新隐身。
+     * - 第一次有人看：起一条预览管线（[PreviewPipeline]），副屏的输出从 ImageReader 换到管线里，管线每来
+     *   一帧画到 [surface] 上。
+     * - 已经有人在看、又换了个地方看（缩略图 → 全屏）：管线不动，只换它画到哪。
+     * - 没人看了：副屏的输出换回 ImageReader，管线收掉，回到直出——和从来没人看过一样，没有额外开销。
      *
-     * 切回离屏时用的还是**同一个** ImageReader，所以来回切不会丢掉截图通道。
+     * 截图通道两种模式下都不断，见 [capture]。
      */
-    fun setSurface(displayId: Int, surface: Surface?): Boolean {
+    fun setPreview(displayId: Int, surface: Surface?): Boolean {
         val holder = holders[displayId] ?: run {
             Log.w(TAG, "displayId=$displayId 不是 Kitten 创建的，忽略")
+            surface?.release()
             return false
         }
-        return runCatching {
-            // null 表示隐藏：回到创建时那块离屏缓冲。
-            val target = surface ?: holder.reader.surface
-            holder.display.surface = target
-            Log.i(TAG, "副屏 $displayId 渲染目标已切换：${if (surface == null) "离屏（隐藏）" else "可见"}")
-            true
-        }.getOrElse {
-            Log.e(TAG, "切换副屏 $displayId 的渲染目标失败", it)
-            false
+        return synchronized(holder.modeLock) {
+            runCatching {
+                if (surface != null) startPreview(displayId, holder, surface) else stopPreview(displayId, holder)
+            }.getOrElse {
+                Log.e(TAG, "切换副屏 $displayId 的预览失败", it)
+                false
+            }
         }
+    }
+
+    private fun startPreview(displayId: Int, holder: Holder, surface: Surface): Boolean {
+        holder.preview?.let { pipeline ->
+            pipeline.setOutput(surface)
+            Log.i(TAG, "副屏 $displayId 的预览换了个地方画")
+            return true
+        }
+        val pipeline = PreviewPipeline(holder.width, holder.height)
+        // 开场画面用 ImageReader 手里最新的那一帧：页面静止时系统未必马上给新帧，见 PreviewPipeline。
+        val input = pipeline.start(seed = holder.frames.snapshot())
+        if (input == null) {
+            Log.w(TAG, "副屏 $displayId 的预览管线起不来，还是直出")
+            pipeline.release()
+            surface.release()
+            return false
+        }
+        holder.display.surface = input
+        holder.preview = pipeline
+        pipeline.setOutput(surface)
+        Log.i(TAG, "副屏 $displayId 开始预览")
+        return true
+    }
+
+    private fun stopPreview(displayId: Int, holder: Holder): Boolean {
+        val pipeline = holder.preview ?: return true
+        pipeline.setOutput(null)
+        // 先把最新一帧写回 ImageReader，再把副屏切回去：切回去之后页面不动的话不会有新帧，ImageReader 手里
+        // 得已经是现在的样子。写回和切回之间那几毫秒里画面要是正好变了，那一下要等到下次变化才补上。
+        pipeline.writeTo(holder.reader.surface)
+        holder.display.surface = holder.reader.surface
+        pipeline.release()
+        holder.preview = null
+        Log.i(TAG, "副屏 $displayId 没人看了，回到直出")
+        return true
     }
 
     /**
@@ -210,11 +307,10 @@ internal object VirtualDisplayHost {
      *
      * ## 画面是从哪来的
      *
-     * 副屏创建时就把 [ImageReader] 的 Surface 当成了渲染目标（见 [create]），画面一直在往
-     * 那里写，取帧只是把最新的一张读出来，不需要 MediaProjection 那套要用户授权的流程。
+     * 没人看时（直出）：副屏一直往 [ImageReader] 里画，手里握着最新的那一帧（[LatestFrame]），读它就行，
+     * 页面动没动都读得到。不需要 MediaProjection 那套要用户授权的流程。
      *
-     * 副屏正显示在别的 Surface 上时（[setSurface] 传了非 null）画面不再往 ImageReader 写，
-     * 这时取不到帧。Agent 用的副屏本来就是隐藏的，不受影响。
+     * 有人看时：副屏画进预览管线，从管线里读最新的一帧（[PreviewPipeline.capture]）。
      *
      * ## 为什么要缩小、压缩
      *
@@ -231,15 +327,15 @@ internal object VirtualDisplayHost {
         // 顺手记一笔屏上的 task：应用自己开出来的 task 也能被记到，收屏时一起清。
         DisplayTaskCleaner.remember(displayId)
         return runCatching {
-            // acquireLatestImage 会丢掉积压的旧帧只留最新一张，正是我们要的。
-            // 返回 null 说明这块屏还没渲染过任何东西。
-            val image = holder.reader.acquireLatestImage() ?: run {
+            val scaled = synchronized(holder.modeLock) {
+                val preview = holder.preview
+                // 管线读回来时已经按长边缩好了；直出握着的那张是原尺寸，这里再缩。
+                if (preview != null) preview.capture(maxEdge) else holder.frames.snapshot()?.scaleToMaxEdge(maxEdge)
+            } ?: run {
+                // 这块屏还没渲染过任何东西。
                 Log.w(TAG, "display=$displayId 还没有可用的画面")
                 return null
             }
-            // 必须 close，否则缓冲区占满之后副屏就不再出新帧了。
-            val raw = image.use(::toBitmap)
-            val scaled = raw.scaleToMaxEdge(maxEdge)
             compressToJpeg(scaled, quality).also {
                 Log.i(TAG, "display=$displayId 截图 ${scaled.width}x${scaled.height}，${it.size / 1024}KB")
             }
@@ -308,6 +404,12 @@ internal object VirtualDisplayHost {
         }
         DisplayTaskCleaner.removeTasksOn(displayId)
         runCatching { holder.display.release() }.onFailure { Log.w(TAG, "释放副屏失败", it) }
+        // 屏先收、管线后收：反过来的话，收屏前那一下副屏还在往一个已经没了的 Surface 里画。
+        synchronized(holder.modeLock) {
+            holder.preview?.release()
+            holder.preview = null
+        }
+        holder.frames.close()
         runCatching { holder.reader.close() }.onFailure { Log.w(TAG, "关闭 ImageReader 失败", it) }
         Log.i(TAG, "副屏已释放：displayId=$displayId")
     }

@@ -45,8 +45,14 @@ import java.util.UUID
  * 跟着关掉，不会被系统挪到主屏、盖在用户眼前（见特权侧 VirtualDisplayHost 的
  * FLAG_DESTROY_CONTENT_ON_REMOVAL）；最近任务里也不会多出一个黑屏的它（见特权侧
  * DisplayTaskCleaner）。
+ *
+ * @param onScreen 建好了副屏（第一次拉起应用时）、收掉了副屏（[release]）时告诉外面，界面上好直播它
+ *   （见 AgentTaskHandle 的 showScreen）。
  */
-class DeviceSession(private val context: Context) {
+class DeviceSession(
+    private val context: Context,
+    private val onScreen: (AgentScreen?) -> Unit = {},
+) {
 
     /**
      * 现在在操作哪块屏。默认主屏；[launchApp] 建了副屏之后指向副屏。
@@ -125,7 +131,10 @@ class DeviceSession(private val context: Context) {
                 densityDpi = metrics.densityDpi,
                 forceNewInstance = NewInstance,
             ).takeIf { it != VirtualDisplayManager.INVALID_DISPLAY_ID }
-                ?.also { ownedDisplayId = it }
+                ?.also {
+                    ownedDisplayId = it
+                    onScreen(AgentScreen(it, metrics.widthPixels, metrics.heightPixels))
+                }
         }
         if (target == null) {
             Log.w(TAG, "副屏拉起 $packageName 失败")
@@ -174,6 +183,8 @@ class DeviceSession(private val context: Context) {
         screenshotDir = null
         if (ownedDisplayId != VirtualDisplayManager.INVALID_DISPLAY_ID) {
             Log.i(TAG, "回收副屏 display=$ownedDisplayId（$currentPackage）")
+            // 先让界面别看了，再收屏。
+            onScreen(null)
             VirtualDisplayManager.releaseDisplay(ownedDisplayId)
             ownedDisplayId = VirtualDisplayManager.INVALID_DISPLAY_ID
         }

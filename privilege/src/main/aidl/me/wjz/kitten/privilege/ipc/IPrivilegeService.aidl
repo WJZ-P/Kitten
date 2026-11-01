@@ -48,22 +48,20 @@ interface IPrivilegeService {
 
     // 取一帧副屏画面，压成 JPEG 返回；拿不到返回 null。
     //
-    // 只对 Kitten 自己创建的副屏有效：画面是从创建时挂上去的 ImageReader 里读的。
-    // 副屏正显示在某个 Surface 上时（setDisplaySurface 传了非 null），画面不再往
-    // ImageReader 写，这时取不到帧——Agent 用的副屏本来就是隐藏的，不受影响。
+    // 只对 Kitten 自己创建的副屏有效。有没有人在看（setPreviewSurface）都截得到：没人看时读
+    // ImageReader 手里握着的最新一帧，有人看时从预览管线里读（见 VirtualDisplayHost）。
     //
     // maxEdge：长边最多多少像素，超了等比缩小；quality：JPEG 质量 1..100。
     // 两个参数都由调用方给：给模型看的截图不需要原始清晰度，缩小 + 压缩之后
     // 文字照样读得清，而字节数要受 Binder 单次事务的限制（见 VirtualDisplayHost）。
     byte[] captureDisplay(int displayId, int maxEdge, int quality);
 
-    // 把副屏的画面接到 surface 上，让用户看见；传 null 则切回离屏缓冲、重新隐身。
+    // 让副屏的画面同时画到 surface 上给用户看（App 里的 TextureView）；传 null 则不看了。
     //
-    // 副屏可见与否，取决于它往哪个 Surface 渲染：
-    //   离屏（ImageReader）→ 没有东西把它合成到物理屏 → 用户看不见
-    //   SurfaceView 的 Surface → 正常参与合成 → 用户看得见
-    // VirtualDisplay.setSurface 支持运行时切换，所以"显示/隐藏"是免费的。
-    boolean setDisplaySurface(int displayId, in Surface surface);
+    // 没人看时副屏直接画进 ImageReader，没有任何额外开销；有人看时特权进程起一条 GL 管线，
+    // 每来一帧按 surface 的大小画上去（见 PreviewPipeline）。截图通道两种情况下都不断。
+    // 同一块副屏同一时间只往一个 surface 上画，再调一次就换过去。
+    boolean setPreviewSurface(int displayId, in Surface surface);
 
     // ---- 输入注入 ----
     //

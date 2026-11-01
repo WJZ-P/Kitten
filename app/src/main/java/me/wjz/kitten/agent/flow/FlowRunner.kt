@@ -15,6 +15,8 @@ import me.wjz.kitten.a11y.selector.Selector
 import me.wjz.kitten.a11y.selector.SelectorSyntaxException
 import me.wjz.kitten.agent.DeviceSession
 import me.wjz.kitten.agent.tools.KeyOutcome
+import me.wjz.kitten.agent.tools.markScroll
+import me.wjz.kitten.agent.tools.markTouch
 import me.wjz.kitten.agent.tools.pressKey
 import me.wjz.kitten.agent.tools.settle
 import me.wjz.kitten.agent.tools.swipe
@@ -187,6 +189,12 @@ class FlowRunner(private val session: DeviceSession) {
                         else -> when (val result = action(snapshot, node.id)) {
                             is ActionResult.Ok -> {
                                 session.trace.record(step, snapshot.packageName, flowName)
+                                // 跑流程也在直播画面上标出来，和模型自己动手时一样。
+                                when (step) {
+                                    is FlowStep.Scroll -> markScroll(snapshot, node.id, step.forward)
+                                    is FlowStep.LongPress -> markTouch(snapshot, node.id, long = true)
+                                    else -> markTouch(snapshot, node.id)
+                                }
                                 settle()
                                 return null
                             }

@@ -35,7 +35,9 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -62,6 +64,8 @@ import com.kyant.backdrop.backdrops.rememberCombinedBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.launch
 import me.wjz.kitten.agent.AgentQuestion
+import me.wjz.kitten.agent.AgentScreen
+import me.wjz.kitten.agent.AgentTaskHandle
 import me.wjz.kitten.agent.Reflection
 import me.wjz.kitten.agent.SkillReflector
 import me.wjz.kitten.agent.isPhoneOperation
@@ -76,6 +80,7 @@ import me.wjz.kitten.ui.component.GlassMenuItem
 import me.wjz.kitten.ui.component.GlassRadius
 import me.wjz.kitten.ui.component.GlassSurface
 import me.wjz.kitten.ui.component.ImageViewer
+import me.wjz.kitten.ui.live.LiveScreenViewer
 import me.wjz.kitten.ui.component.LocalFrostedBackdrop
 import me.wjz.kitten.ui.component.rememberGlassContextMenuState
 import me.wjz.kitten.ui.icon.ContactSupport
@@ -149,6 +154,12 @@ fun ChatScreen(
     val reflections = remember(state.reflections, state.sessionId) {
         SkillReflector.inSession(state.reflections, state.sessionId)
     }
+    // Agent 正在操作的副屏：这一轮是在这个会话里办的，才在任务卡片旁边直播它。
+    val agentTask by AgentTaskHandle.task.collectAsState()
+    val liveScreen = agentTask?.takeIf { it.sessionId == state.sessionId }?.screen
+    // 全屏直播开着没有。副屏收掉了（任务办完）就跟着关。
+    var watchingLive by remember { mutableStateOf(false) }
+    LaunchedEffect(liveScreen) { if (liveScreen == null) watchingLive = false }
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -187,6 +198,8 @@ fun ChatScreen(
                             onDeleteMessage = onDeleteMessage,
                             onOpenImage = { viewingImage = it },
                             onOpenSkill = onOpenSkill,
+                            liveScreen = liveScreen,
+                            onOpenLive = { watchingLive = true },
                         )
                     }
                 }
@@ -231,6 +244,21 @@ fun ChatScreen(
     ImageViewer(
         image = viewingImage,
         onDismissRequest = { viewingImage = null },
+        backdrop = backdrop,
+    )
+
+    val task = agentTask
+    LiveScreenViewer(
+        screen = liveScreen.takeIf { watchingLive },
+        status = when {
+            task == null -> ""
+            task.question != null -> "在等你回答…"
+            task.detail != null -> "第 ${task.steps} 步 · ${task.detail}"
+            else -> "正在思考…"
+        },
+        busy = task?.question == null,
+        onStop = onStop,
+        onDismissRequest = { watchingLive = false },
         backdrop = backdrop,
     )
 }
@@ -307,6 +335,8 @@ private fun MessageList(
     onDeleteMessage: (index: Int, message: ChatMessage) -> Unit,
     onOpenImage: (Uri) -> Unit,
     onOpenSkill: (skillId: String) -> Unit,
+    liveScreen: AgentScreen?,
+    onOpenLive: () -> Unit,
 ) {
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
@@ -376,6 +406,9 @@ private fun MessageList(
                         waitingForAnswer = pendingQuestion != null,
                         backdrop = backdrop,
                         onOpen = { openTaskKey = item.key },
+                        // 只有还在办的那张会画缩略图，见 TaskCard。
+                        live = liveScreen,
+                        onOpenLive = onOpenLive,
                     )
                     ReflectionLine(reflection = item.reflection, onOpenSkill = onOpenSkill)
                 }

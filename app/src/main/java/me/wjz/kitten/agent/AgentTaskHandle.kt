@@ -13,6 +13,14 @@ data class AgentQuestion(
     val options: List<String> = emptyList(),
 )
 
+/**
+ * Agent 正在操作的那块副屏，界面上直播它用（任务卡片旁的缩略图、全屏直播）。
+ *
+ * @param width 副屏的宽，像素。和建屏时主屏的尺寸一样（见 DeviceSession），用户后来转了屏也不变。
+ * @param height 副屏的高，像素。
+ */
+data class AgentScreen(val displayId: Int, val width: Int, val height: Int)
+
 /** 正在跑的那一轮任务，给常驻通知和任务页看。 */
 data class AgentTask(
     /**
@@ -38,6 +46,8 @@ data class AgentTask(
     val lastSaid: String? = null,
     /** 正在等用户回答的问题。没有就是 null。 */
     val question: AgentQuestion? = null,
+    /** 正在操作的副屏。还没拉起应用、或者在操作主屏（用户眼前本来就看得见）时是 null。 */
+    val screen: AgentScreen? = null,
 )
 
 /**
@@ -115,6 +125,11 @@ object AgentTaskHandle {
      */
     fun say(text: String) {
         _task.update { it?.copy(lastSaid = text) }
+    }
+
+    /** 建好了副屏、或者把它收掉了，见 [AgentTask.screen]。 */
+    fun showScreen(screen: AgentScreen?) {
+        _task.update { it?.copy(screen = screen) }
     }
 
     fun ask(question: AgentQuestion) {

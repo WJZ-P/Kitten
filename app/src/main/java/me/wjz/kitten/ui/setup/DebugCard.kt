@@ -235,9 +235,8 @@ fun DebugCard(modifier: Modifier = Modifier) {
                 )
             }
 
-            // 开关打开时才挂 SurfaceView。副屏画面是否可见，取决于它往哪个 Surface
-            // 渲染——这里把 SurfaceView 的 Surface 交过去，画面就参与系统合成了；
-            // 关掉时切回离屏缓冲，重新隐身。
+            // 开关打开时才挂 SurfaceView，把它的 Surface 交给特权进程的预览管线，画面按它的大小
+            // 画上来；关掉时不看了，副屏回到直出。
             if (previewing && hasDisplay) {
                 AndroidView(
                     modifier = Modifier
@@ -245,16 +244,10 @@ fun DebugCard(modifier: Modifier = Modifier) {
                         .aspectRatio(width.toFloat() / height),
                     factory = { context ->
                         SurfaceView(context).apply {
-                            // 关键：把缓冲区固定成副屏的真实分辨率。
-                            // 不设的话缓冲区会跟着 View 在屏幕上的像素大小走（比如 400x711），
-                            // 而副屏仍按 1080x1920 渲染——生产者写得比消费者缓冲区大，
-                            // 结果是**裁切**而不是缩放，只能看到左上角那一块。
-                            // 设成固定尺寸后，由 SurfaceView 在合成阶段把整幅画面缩放到 View 大小。
-                            holder.setFixedSize(width, height)
                             holder.addCallback(object : SurfaceHolder.Callback {
                                 override fun surfaceCreated(h: SurfaceHolder) {
                                     scope.launch(Dispatchers.IO) {
-                                        VirtualDisplayManager.setSurface(displayId, h.surface)
+                                        VirtualDisplayManager.setPreview(displayId, h.surface)
                                     }
                                 }
 
@@ -266,9 +259,9 @@ fun DebugCard(modifier: Modifier = Modifier) {
                                 ) = Unit
 
                                 override fun surfaceDestroyed(h: SurfaceHolder) {
-                                    // Surface 没了还往上面渲染会出错，立刻切回离屏。
+                                    // Surface 没了还往上面画会出错，立刻不看了。
                                     scope.launch(Dispatchers.IO) {
-                                        VirtualDisplayManager.hide(displayId)
+                                        VirtualDisplayManager.setPreview(displayId, null)
                                     }
                                 }
                             })

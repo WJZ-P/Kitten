@@ -366,7 +366,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             // 这一轮开着哪些技能：开始时读一次，整轮用同一份，工具和提示词都按它拼，见 SystemPrompt。
             val skills = SkillStore.enabled(getApplication())
             // 这一轮的工具和现场。用完要 release，副屏得收掉。
-            val device = DeviceSession(getApplication())
+            val device = DeviceSession(getApplication(), onScreen = AgentTaskHandle::showScreen)
             val registry = ToolRegistry(toolsFor(skills, device, history))
 
             var config = LlmConfigStore.load(getApplication())

@@ -9,6 +9,8 @@ import me.wjz.kitten.a11y.ScreenError
 import me.wjz.kitten.a11y.UiSnapshot
 import me.wjz.kitten.agent.AgentTool
 import me.wjz.kitten.agent.DeviceSession
+import me.wjz.kitten.agent.ScreenMark
+import me.wjz.kitten.agent.ScreenMarks
 import me.wjz.kitten.agent.enumParam
 import me.wjz.kitten.agent.flow.labelFor
 import me.wjz.kitten.agent.intParam
@@ -16,6 +18,7 @@ import me.wjz.kitten.agent.objectSchema
 import me.wjz.kitten.agent.stringParam
 import me.wjz.kitten.data.skills.FlowStep
 import org.json.JSONObject
+import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -77,9 +80,34 @@ internal fun tapNode(snapshot: UiSnapshot, nodeId: Int): TapOutcome {
     return TapOutcome(byCoordinate, byCoordinate = true)
 }
 
-/** 按坐标滑一下，走特权进程的注入（指定了屏，副屏上也管用）。 */
+/** 按坐标滑一下，走特权进程的注入（指定了屏，副屏上也管用）。滑成了在直播画面上画一道。 */
 internal fun swipe(displayId: Int, fromX: Int, fromY: Int, toX: Int, toY: Int, durationMs: Int): ActionResult =
-    InjectActuator.swipe(displayId, fromX, fromY, toX, toY, durationMs)
+    InjectActuator.swipe(displayId, fromX, fromY, toX, toY, durationMs).also {
+        if (it is ActionResult.Ok) ScreenMarks.emit(ScreenMark.Slide(displayId, fromX, fromY, toX, toY))
+    }
+
+/**
+ * 在直播画面上标出刚动过的节点：在它中间泛一圈（见 [ScreenMarks]）。点、长按、填字都用它。节点在快照里
+ * 找不到就不标。
+ */
+internal fun markTouch(snapshot: UiSnapshot, nodeId: Int, long: Boolean = false) {
+    val bounds = (snapshot.findById(nodeId) ?: snapshot.findRawById(nodeId))?.bounds ?: return
+    ScreenMarks.emit(ScreenMark.Touch(snapshot.displayId, bounds.centerX(), bounds.centerY(), long))
+}
+
+/**
+ * 滚动是无障碍的滚动动作，没有手指的轨迹。在容器中间画一道和手指方向一样的短线：往后翻是手指往上推。
+ */
+internal fun markScroll(snapshot: UiSnapshot, nodeId: Int, forward: Boolean) {
+    val bounds = (snapshot.findById(nodeId) ?: snapshot.findRawById(nodeId))?.bounds ?: return
+    val low = bounds.top + (bounds.height() * (1 - ScrollMarkSpan) / 2).roundToInt()
+    val high = bounds.top + (bounds.height() * (1 + ScrollMarkSpan) / 2).roundToInt()
+    val (from, to) = if (forward) high to low else low to high
+    ScreenMarks.emit(ScreenMark.Slide(snapshot.displayId, bounds.centerX(), from, bounds.centerX(), to))
+}
+
+/** 滚动那道短线占容器高度的几成：太短看不出方向，太长像是滑了一整屏。 */
+private const val ScrollMarkSpan = 0.4f
 
 /** 按键的结果。 */
 internal sealed interface KeyOutcome {
@@ -133,6 +161,7 @@ class TapTool(private val session: DeviceSession) : AgentTool {
         return when (val result = outcome.result) {
             is ActionResult.Ok -> {
                 session.trace.recordNode(snapshot, nodeId) { FlowStep.Tap(it, snapshot.labelFor(nodeId)) }
+                markTouch(snapshot, nodeId)
                 settle()
                 if (outcome.byCoordinate) {
                     "OK [$nodeId]$label 不支持标准点击动作，已改用坐标点击。$PageChangedHint"
@@ -164,6 +193,7 @@ class LongPressTool(private val session: DeviceSession) : AgentTool {
         return when (val result = A11yActuator.longClick(snapshot, nodeId)) {
             is ActionResult.Ok -> {
                 session.trace.recordNode(snapshot, nodeId) { FlowStep.LongPress(it, snapshot.labelFor(nodeId)) }
+                markTouch(snapshot, nodeId, long = true)
                 settle()
                 "OK 长按了 [$nodeId]$label。$PageChangedHint"
             }
@@ -197,6 +227,7 @@ class InputTextTool(private val session: DeviceSession) : AgentTool {
             is ActionResult.Ok -> {
                 // 密码框里的也记，描述里藏起来，见 ActionTrace.recordNode。
                 session.trace.recordNode(snapshot, nodeId) { FlowStep.Input(it, text, snapshot.labelFor(nodeId)) }
+                markTouch(snapshot, nodeId)
                 settle()
                 "OK 已把内容写进 [$nodeId]$label。$PageChangedHint"
             }
@@ -228,6 +259,7 @@ class ScrollTool(private val session: DeviceSession) : AgentTool {
         return when (val result = A11yActuator.scroll(snapshot, nodeId, forward)) {
             is ActionResult.Ok -> {
                 session.trace.recordNode(snapshot, nodeId) { FlowStep.Scroll(it, forward, snapshot.labelFor(nodeId)) }
+                markScroll(snapshot, nodeId, forward)
                 settle()
                 "OK 把 [$nodeId]$label 往${if (forward) "后" else "前"}滚了一屏。$PageChangedHint"
             }
