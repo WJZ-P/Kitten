@@ -14,6 +14,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -34,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
+import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.backdrops.LayerBackdrop
 import com.kyant.backdrop.backdrops.layerBackdrop
 import me.wjz.kitten.ui.theme.KittenColors
@@ -117,12 +119,29 @@ import kotlin.math.sin
  *
  * 没用 AGSL 着色器画背景：全屏着色器每个像素都要算一遍，放在 3K 分辨率的屏幕上反而比
  * 几个渐变圆贵得多；光晕这种又大又软的东西，用渐变画已经足够好看。
+ *
+ * ## 预先糊好的一份（[frostedBackdrop]）
+ *
+ * 对话里的气泡、卡片背后只是把背景糊开一点（不折射），而且它们跟着列表滚：每块玻璃各糊各的话，
+ * 一滚动，屏幕上每块气泡每一帧都要把背后重新糊一遍（位置变了，背后那一块就变了），一屏五六块，
+ * RenderThread 光模糊就占满一帧——滚长对话卡，大头在这里。
+ *
+ * 所以再录一份**整屏糊好的背景**：背景每变一次（6fps）糊一次，存成纹理；气泡、卡片直接从里面
+ * 截自己背后那一块贴上去，自己不再模糊（见 [LocalFrostedBackdrop]）。滚动时每块玻璃只是贴一块图，
+ * 不管屏幕上有几块，模糊都只做一次。
+ *
+ * 糊的是同一份背景、同样的半径（[FrostedBlur]），看起来和各糊各的一样；边缘反倒更好——以前每块
+ * 气泡只糊自己背后那一块，边上取不到外面的像素，这里是整屏糊好再截，边上也是真的邻居。模糊按
+ * 1/[FrostedDownscale] 的宽高做（见 [downsampledBlur]），本来就是糊的，缩小了看不出来。
+ *
+ * @param frostedBackdrop 给对话里的气泡、卡片用的那份糊好的背景。不传就不录。
  */
 @Composable
 fun GlassBackground(
     backdrop: LayerBackdrop,
     modifier: Modifier = Modifier,
     animate: Boolean = true,
+    frostedBackdrop: LayerBackdrop? = null,
     content: @Composable BoxScope.() -> Unit,
 ) {
     val colors = KittenTheme.colors
@@ -142,6 +161,18 @@ fun GlassBackground(
         ) {
             // 雾作为子节点画在光晕和点阵之间，同样只按玻璃的节奏更新。
             BackgroundMist(time = { clock.glassTime })
+        }
+        // ①' 糊好的那份：从上面那份背景里糊出来，同样不上屏、只录。它读 backdrop，所以不能放进上面
+        // 那个被 backdrop 录的 Box 里（会成环，见类注释第一节），只能是它的兄弟。背景变了它跟着重糊
+        // （它画的是那份背景的图层，那边一变它就脏了），背景不动它就一直是缓存好的纹理。
+        if (frostedBackdrop != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .alpha(0f)
+                    .layerBackdrop(frostedBackdrop)
+                    .downsampledBlur(backdrop, FrostedBlur, downscale = FrostedDownscale),
+            )
         }
         // ② 屏幕上看到的那份，拆成四层：不动的底色、会动的光晕和雾、不动的点阵。
         //
@@ -411,3 +442,21 @@ private const val FrameSlack = 0.002f
 
 private val DotSpacing = 22.dp
 private val DotSize = 1.6.dp
+
+/**
+ * 预先糊好的背景（见 [GlassBackground] 的 frostedBackdrop）。对话里的气泡、卡片拿它当背后，自己不再
+ * 模糊；没有（预览、别的入口）时是 null，它们退回各自糊。
+ */
+val LocalFrostedBackdrop = staticCompositionLocalOf<Backdrop?> { null }
+
+/**
+ * 糊好的背景用多大的模糊半径。气泡、卡片以前各自糊的就是这么大：背景里的点阵是锐利的，糊开一点，
+ * 压在上面的字才不花；给大了背景就只剩一片颜色，看不出是透的。
+ */
+val FrostedBlur = 4.dp
+
+/**
+ * 糊好的背景按 1/它 的宽高做：像素只剩四分之一，存的纹理也小。背景本来就是糊开的光晕和点阵，缩小再
+ * 拉回来看不出差别；给大了点阵会糊成一片，和以前的样子差得多。
+ */
+private const val FrostedDownscale = 2f

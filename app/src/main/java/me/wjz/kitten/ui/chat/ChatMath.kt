@@ -439,9 +439,13 @@ internal fun rememberMathContent(
     val config = rememberMathConfig(fontSize, color)
     val measurer = rememberLatexMeasurer(config)
     val dark = isSystemInDarkTheme()
-    return formulas.mapNotNull { formula ->
-        measurer.inlineContent(formula, config, dark)?.let { mathId(formula) to it }
-    }.toMap()
+    // 记住量好的结果：每次重组都把每个公式重新解析、量一遍的话，流式时每冒一个字都要量一遍整条回复里的
+    // 公式。公式没变就不用再量。
+    return remember(formulas.toList(), measurer, config, dark) {
+        formulas.mapNotNull { formula ->
+            measurer.inlineContent(formula, config, dark)?.let { mathId(formula) to it }
+        }.toMap()
+    }
 }
 
 /**

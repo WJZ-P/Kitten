@@ -47,6 +47,7 @@ import me.wjz.kitten.ui.chat.ChatViewModel
 import me.wjz.kitten.ui.chat.SessionDrawer
 import me.wjz.kitten.ui.component.GlassBackground
 import me.wjz.kitten.ui.component.GlassOverlayHost
+import me.wjz.kitten.ui.component.LocalFrostedBackdrop
 import me.wjz.kitten.ui.component.LocalToast
 import me.wjz.kitten.ui.component.ToastHost
 import me.wjz.kitten.ui.component.ToastState
@@ -99,6 +100,8 @@ fun KittenApp(actions: SetupActions, openChatRequests: Flow<Unit>) {
     val scope = rememberCoroutineScope()
     val toast = remember { ToastState() }
     val backdrop = rememberLayerBackdrop()
+    // 预先糊好的背景，对话里的气泡、卡片直接贴它，滚动时不用每块各糊一遍。见 GlassBackground。
+    val frostedBackdrop = rememberLayerBackdrop()
     // 页面内容。底部栏浮在页面上面，要折射的是"背景 + 页面"，不只是背景。
     val pageBackdrop = rememberLayerBackdrop()
     val behindBarBackdrop = rememberCombinedBackdrop(backdrop, pageBackdrop)
@@ -171,9 +174,14 @@ fun KittenApp(actions: SetupActions, openChatRequests: Flow<Unit>) {
             // 设置页满屏都是玻璃卡片，背景几乎露不出来，动了也看不见；而玻璃越多，背景每推进
             // 一次要重算的就越多（实测设置页是对话页的一倍半）。所以只在对话页和任务页动。
             animate = currentTab != KittenTab.Settings,
+            frostedBackdrop = frostedBackdrop,
         ) {
-            // Toast 的入口包住整个界面和浮层：页面、模态窗、下拉菜单里都能弹。
-            CompositionLocalProvider(LocalToast provides toast) {
+            // Toast 的入口包住整个界面和浮层：页面、模态窗、下拉菜单里都能弹。糊好的背景同理，
+            // 对话页、任务页里的卡片都从这里拿。
+            CompositionLocalProvider(
+                LocalToast provides toast,
+                LocalFrostedBackdrop provides frostedBackdrop,
+            ) {
                 // 下拉菜单这类浮层画在这一层上，盖住整个界面（包括顶栏和底部栏）。它必须在
                 // GlassBackground 里面、和背景是兄弟，浮层的玻璃才折射得到背景。见 GlassOverlayHost。
                 GlassOverlayHost(modifier = Modifier.fillMaxSize()) {

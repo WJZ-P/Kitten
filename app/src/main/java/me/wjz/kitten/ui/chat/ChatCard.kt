@@ -20,17 +20,21 @@ import me.wjz.kitten.ui.theme.KittenColors
  * 渐隐的亮光，再垫一层软阴影，浮在页面上，像一张实在的卡片。不带尾巴：它不是谁说的一句话。
  *
  * 玻璃只模糊、不折射，和气泡一样（见 [ChatBubble]）：卡片在消息列表里跟着滚，折射每一帧都要重算。
+ * 模糊也和气泡一样用预先糊好的那份背景（[frosted]），自己不糊，滚动时只是贴一块图。
  *
+ * @param frosted 预先糊好的背景，调用方从 LocalFrostedBackdrop 取了传进来。是 null 时退回拿 [backdrop]
+ *   自己糊。
  * @param scale 卡片的缩放，按下时鼓起一点用。只在绘制阶段读，按的时候不重组。
  */
 internal fun Modifier.chatCardGlass(
     backdrop: Backdrop,
     colors: KittenColors,
+    frosted: Backdrop?,
     scale: () -> Float = { 1f },
 ): Modifier = drawBackdrop(
-    backdrop = backdrop,
+    backdrop = frosted ?: backdrop,
     shape = { ChatCardShape },
-    effects = { blur(BubbleBlur.toPx()) },
+    effects = { if (frosted == null) blur(BubbleBlur.toPx()) },
     highlight = { GlassRim },
     shadow = { ChatCardShadow },
     layerBlock = {

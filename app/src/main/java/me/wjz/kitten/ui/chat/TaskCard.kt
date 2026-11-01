@@ -58,6 +58,7 @@ import me.wjz.kitten.agent.describe
 import me.wjz.kitten.ui.component.GlassContentPadding
 import me.wjz.kitten.ui.component.GlassModal
 import me.wjz.kitten.ui.component.GlassRadius
+import me.wjz.kitten.ui.component.LocalFrostedBackdrop
 import me.wjz.kitten.ui.component.detectGlassPress
 import me.wjz.kitten.ui.component.rememberGlassPressState
 import me.wjz.kitten.ui.icon.AutoAwesome
@@ -162,7 +163,12 @@ internal fun TaskCard(
                 }
             }
             .pointerInput(press) { detectGlassPress(press) { currentOnOpen() } }
-            .chatCardGlass(backdrop, colors, scale = { lerp(1f, PressedScale, press.pressProgress) })
+            .chatCardGlass(
+                backdrop,
+                colors,
+                frosted = LocalFrostedBackdrop.current,
+                scale = { lerp(1f, PressedScale, press.pressProgress) },
+            )
             .padding(ChatCardPadding),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {

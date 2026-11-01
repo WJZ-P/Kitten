@@ -1,5 +1,6 @@
 package me.wjz.kitten.ui.chat
 
+import android.util.LruCache
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.VisibilityThreshold
 import androidx.compose.animation.core.spring
@@ -71,6 +72,7 @@ import com.mikepenz.markdown.model.MarkdownDimens
 import com.mikepenz.markdown.model.MarkdownPadding
 import com.mikepenz.markdown.model.MarkdownTypography
 import com.mikepenz.markdown.model.NoOpImageTransformerImpl
+import com.mikepenz.markdown.model.State
 import com.mikepenz.markdown.model.markdownAlertColors
 import com.mikepenz.markdown.model.markdownAnimations
 import com.mikepenz.markdown.model.markdownAnnotator
@@ -133,9 +135,9 @@ fun ChatMarkdown(
 ) {
     val animate = remember { streaming }
     val style = chatMarkdownStyle()
-    // 公式的写法先整理一遍（\( \) 换成 $，中文和公式之间垫窄空格），见 ChatMath。
-    val scan = remember(text) { scanMath(text) }
     if (animate) {
+        // 公式的写法先整理一遍（\( \) 换成 $，中文和公式之间垫窄空格），见 ChatMath。
+        val scan = remember(text) { scanMath(text) }
         StreamingMarkdown(
             scan = scan,
             live = streaming,
@@ -143,15 +145,20 @@ fun ChatMarkdown(
             modifier = modifier.fillMaxWidth().animateContentSize(HeightSpec),
         )
     } else {
-        StaticMarkdown(scan = scan, style = style, modifier = modifier.fillMaxWidth())
+        // 历史消息：整理、解析都做过一遍的话直接拿，见 ParsedMarkdown。
+        val parsed = remember(text) { ParsedMarkdown.of(text) }
+        StaticMarkdown(parsed = parsed, style = style, modifier = modifier.fillMaxWidth())
     }
 }
 
-/** 一整段直接排出来（历史消息）。解析是同步的：列表里滑出来的那一条马上就有高度，不会先空一下再撑开。 */
+/**
+ * 一整段直接排出来（历史消息）。解析是同步的：列表里滑出来的那一条马上就有高度，不会先空一下再撑开。
+ * 解析结果从缓存里拿（[ParsedMarkdown]），滑出去再滑回来不用再解析一遍。
+ */
 @Composable
-private fun StaticMarkdown(scan: MathScan, style: ChatMarkdownStyle, modifier: Modifier) {
-    val text = scan.text
-    val state = remember(text) { parseMarkdown(text) }
+private fun StaticMarkdown(parsed: ParsedMarkdown, style: ChatMarkdownStyle, modifier: Modifier) {
+    val text = parsed.scan.text
+    val state = parsed.state
     Markdown(
         state = state,
         colors = style.colors,
@@ -177,6 +184,60 @@ private fun StaticMarkdown(scan: MathScan, style: ChatMarkdownStyle, modifier: M
         },
     )
 }
+
+/**
+ * 一条历史回复整理、解析好的样子：公式整理过的原文（[scan]）和 Markdown 的语法树（[state]）。
+ *
+ * ## 为什么要缓存
+ *
+ * 列表滚动时，滑出屏幕的消息会被扔掉，滑回来重新组合。以前每次重新组合都要把整条回复再整理、再解析
+ * 一遍（长回复几毫秒到十几毫秒），都在主线程上，正好卡在滚动的那一帧里——对话越长、往回翻得越多越卡。
+ * 解析结果是不可变的（库的 State.Success，库自己也建议这样提前解析好交给它），按原文缓存起来，滑回来
+ * 直接拿。
+ *
+ * 打开一个会话时，ChatViewModel 还会在后台线程把它的回复先解析一遍（[prepare]），第一次滑到也不用在
+ * 主线程上解析。
+ */
+internal class ParsedMarkdown private constructor(val scan: MathScan, val state: State) {
+
+    companion object {
+        /** 按原文的字数算大小，见 [CacheChars]。LruCache 自己带锁，后台解析、主线程取都没问题。 */
+        private val cache = object : LruCache<String, ParsedMarkdown>(CacheChars) {
+            override fun sizeOf(key: String, value: ParsedMarkdown): Int = key.length.coerceAtLeast(1)
+        }
+
+        /** [text] 解析好的样子：缓存里有就直接给，没有就当场解析、存进去。 */
+        fun of(text: String): ParsedMarkdown = cache.get(text) ?: parse(text).also { cache.put(text, it) }
+
+        /**
+         * 把这几条先解析好，放进缓存。在后台线程上调。[texts] 按想先准备的排（新的在前）；已经在缓存
+         * 里的跳过，攒够 [PrepareChars] 个字就停：再多就要把刚准备好的挤出缓存了。
+         */
+        fun prepare(texts: List<String>) {
+            var prepared = 0
+            for (text in texts) {
+                if (prepared >= PrepareChars) return
+                if (cache.get(text) != null) continue
+                cache.put(text, parse(text))
+                prepared += text.length
+            }
+        }
+
+        private fun parse(text: String): ParsedMarkdown {
+            val scan = scanMath(text)
+            return ParsedMarkdown(scan, parseMarkdown(scan.text))
+        }
+    }
+}
+
+/**
+ * 解析结果最多缓存多少字的原文。语法树大约是原文的几十倍大，二十万字大概占十来 MB；一个长会话一百来条
+ * 回复、每条一两千字，装得下一整个会话。
+ */
+private const val CacheChars = 200_000
+
+/** 打开会话时最多先解析多少字：缓存的一半，留出地方给翻到的别的会话。 */
+private const val PrepareChars = CacheChars / 2
 
 /**
  * 一边收一边冒的回复，见 [ChatMarkdown] 的"流式"一节。
@@ -370,14 +431,18 @@ private fun RevealText(
 ) {
     val node = model.node
     val settings = annotatorSettings()
-    val styled = buildAnnotatedString {
-        pushStyle(style.toSpanStyle())
-        buildMarkdownAnnotatedString(
-            content = model.content,
-            node = contentChildType?.let { node.findChildOfType(it) } ?: node,
-            annotatorSettings = settings,
-        )
-        pop()
+    // 记住拼好的字：每次重组都把这一段的语法树走一遍、重新拼，流式时别的段落在冒字也会跟着白拼。settings
+    // 每次都是新建的、比不了相等，按它里面真正影响拼法的两样（链接、行内代码的样子）当 key。
+    val styled = remember(model.content, node, style, settings.linkTextSpanStyle, settings.codeSpanStyle) {
+        buildAnnotatedString {
+            pushStyle(style.toSpanStyle())
+            buildMarkdownAnnotatedString(
+                content = model.content,
+                node = contentChildType?.let { node.findChildOfType(it) } ?: node,
+                annotatorSettings = settings,
+            )
+            pop()
+        }
     }
     val reveal = LocalReveal.current
     val tint = KittenTheme.colors.accentStrong

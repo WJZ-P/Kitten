@@ -11,14 +11,11 @@ import androidx.compose.foundation.shape.CornerSize
 import androidx.compose.foundation.shape.ZeroCornerSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -27,20 +24,21 @@ import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathOperation
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
+import me.wjz.kitten.ui.component.FrostedBlur
 import me.wjz.kitten.ui.component.GlassRadius
 import me.wjz.kitten.ui.component.GlassRim
+import me.wjz.kitten.ui.component.LocalFrostedBackdrop
 import me.wjz.kitten.ui.component.detectGlassPress
 import me.wjz.kitten.ui.component.rememberGlassPressState
 import me.wjz.kitten.ui.theme.KittenTheme
@@ -70,6 +68,10 @@ enum class BubbleSide {
  * 背后只是模糊一下（[BubbleBlur]），不提饱和、不做边缘折射。气泡一屏好几块，滚动时每一帧
  * 都要跟着背景重算一遍；折射是逐像素跑的着色器，省掉它滚动才顺。边缘靠一圈边光和阴影分出来，
  * 这两样只在气泡尺寸变的时候重画，滚动时不用重算。
+ *
+ * 模糊也不自己做：有预先糊好的整屏背景（[LocalFrostedBackdrop]）就直接截自己背后那一块贴上，滚动时
+ * 只是贴图；各自糊的话，每块气泡每一帧都要重新糊一遍背后，长对话滚起来卡就卡在这里。没有那一份
+ * （预览）时才自己糊。
  *
  * - 不染色的：薄薄一层 glassTint。以前模型的回复用它，现在回复不套气泡了。
  * - 用户的消息（[tinted]）：天依蓝上浅下深、半透明，上半截一道渐隐的亮光，背后的光晕照样
@@ -102,9 +104,9 @@ fun ChatBubble(
     }
     val press = rememberGlassPressState()
     val currentOnLongPress by rememberUpdatedState(onLongPress)
-    // 气泡在窗口里的位置，把长按时手指的位置（气泡自己的坐标）换成窗口坐标。只在长按时读，
-    // 滚动时更新它不会引起重组。
-    var bounds by remember { mutableStateOf(Rect.Zero) }
+    // 气泡在窗口里的位置，把长按时手指的位置（气泡自己的坐标）换成窗口坐标。见 LayoutAnchor。
+    val anchor = remember { LayoutAnchor() }
+    val frosted = LocalFrostedBackdrop.current
     val lift by animateFloatAsState(
         targetValue = if (lifted) 1f else 0f,
         animationSpec = LiftSpec,
@@ -116,18 +118,18 @@ fun ChatBubble(
             .then(
                 if (onLongPress != null) {
                     Modifier
-                        .onGloballyPositioned { bounds = Rect(it.positionInWindow(), it.size.toSize()) }
+                        .onPlaced { anchor.coordinates = it }
                         .semantics {
                             // 读屏用户没法长按到某个点，菜单从气泡正中间弹出来。
                             onLongClick(label = "更多操作") {
-                                currentOnLongPress?.invoke(bounds.center)
+                                currentOnLongPress?.invoke(anchor.centerInWindow())
                                 true
                             }
                         }
                         .pointerInput(press) {
                             detectGlassPress(
                                 state = press,
-                                onLongPress = { currentOnLongPress?.invoke(bounds.topLeft + it) },
+                                onLongPress = { currentOnLongPress?.invoke(anchor.toWindow(it)) },
                                 onClick = {},
                             )
                         }
@@ -136,9 +138,10 @@ fun ChatBubble(
                 },
             )
             .drawBackdrop(
-                backdrop = backdrop,
+                backdrop = frosted ?: backdrop,
                 shape = { shape },
-                effects = { blur(BubbleBlur.toPx()) },
+                // 糊好的那份已经糊过了，这里只是截一块贴上。
+                effects = { if (frosted == null) blur(BubbleBlur.toPx()) },
                 highlight = { GlassRim },
                 layerBlock = {
                     val s = lerp(1f, PressedScale, max(press.pressProgress, lift))
@@ -289,8 +292,31 @@ private val BubbleRadius = GlassRadius.Large
 /**
  * 气泡背后的模糊。和输入栏一样：背景里那层点阵是锐利的，糊开一点，压在上面的字才不花。
  * 给大了背景就只剩一片颜色，看不出是透的。对话里的卡片（问答、任务）也用这一档模糊（底色不同，见 ChatCard 的 chatCardGlass）。
+ *
+ * 平时用的是预先糊好的那份（[LocalFrostedBackdrop]），半径在那边（[FrostedBlur]），两边是同一个数。
  */
-internal val BubbleBlur = 4.dp
+internal val BubbleBlur = FrostedBlur
+
+/**
+ * 记着一个组件的 [LayoutCoordinates]，长按时再换算成窗口坐标（菜单从手指那里长出来）。
+ *
+ * 不用 onGloballyPositioned 每次存一份窗口坐标：列表一滚，屏幕上每一条消息每一帧都会收到一次回调、
+ * 写一次状态，滚得越长越吃亏。LayoutCoordinates 是活的，长按那一刻问它要位置就是准的；也不是
+ * State，存它不会引起任何重组、重画。
+ */
+internal class LayoutAnchor {
+    var coordinates: LayoutCoordinates? = null
+
+    /** 组件里的一个点，换成窗口坐标。组件已经不在了就原样返回。 */
+    fun toWindow(local: Offset): Offset =
+        coordinates?.takeIf { it.isAttached }?.localToWindow(local) ?: local
+
+    /** 组件正中间的窗口坐标。 */
+    fun centerInWindow(): Offset {
+        val current = coordinates?.takeIf { it.isAttached } ?: return Offset.Zero
+        return current.localToWindow(Offset(current.size.width / 2f, current.size.height / 2f))
+    }
+}
 
 /** 尾巴往外伸多宽。 */
 private val TailWidth = 6.dp

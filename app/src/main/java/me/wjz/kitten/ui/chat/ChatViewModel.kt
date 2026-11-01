@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
@@ -190,6 +191,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update { it.copy(error = "这个会话已经不存在了") }
                 return@launch
             }
+            prepareReplies(session.messages)
             _uiState.update {
                 it.copy(
                     sessionId = session.id,
@@ -201,6 +203,18 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
         }
+    }
+
+    /**
+     * 在后台线程把这些消息里模型的回复先解析好（见 ParsedMarkdown）：往回翻时滑进来的回复直接拿现成的，
+     * 不用在滚动的那一帧里现解析。新的先来，打开会话时最先看到、最先往上翻到的是它们。
+     */
+    private fun prepareReplies(messages: List<ChatMessage>) {
+        val replies = messages.asReversed().mapNotNull { message ->
+            (message as? ChatMessage.Assistant)?.text?.takeIf { it.isNotBlank() }
+        }
+        if (replies.isEmpty()) return
+        viewModelScope.launch(Dispatchers.Default) { ParsedMarkdown.prepare(replies) }
     }
 
     fun deleteSession(id: String) {
@@ -385,6 +399,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         // 见 forHistory。正在跑的这一轮用的是 AgentRunner 自己那份全量的。
                         val stored = message.forHistory()
                         runLog += stored
+                        // 说完的这段回复先在后台解析好：它现在是流式那一份在画，滑出去再滑回来就换成历史消息的
+                        // 画法，到时候直接拿现成的。
+                        prepareReplies(listOf(stored))
                         repository.appendMessage(sessionId, stored)
                         _uiState.update {
                             if (it.sessionId != sessionId) {

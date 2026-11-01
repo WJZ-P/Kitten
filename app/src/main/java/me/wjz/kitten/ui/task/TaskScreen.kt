@@ -65,6 +65,7 @@ import me.wjz.kitten.ui.chat.chatCardGlass
 import me.wjz.kitten.ui.chat.markdownPreview
 import me.wjz.kitten.ui.chat.rememberShimmerProgress
 import me.wjz.kitten.ui.chat.shimmer
+import me.wjz.kitten.ui.component.LocalFrostedBackdrop
 import me.wjz.kitten.ui.component.detectGlassPress
 import me.wjz.kitten.ui.component.rememberGlassPressState
 import me.wjz.kitten.ui.settings.SettingsGroupLabel
@@ -196,7 +197,7 @@ private fun RunningTaskCard(task: AgentTask, backdrop: Backdrop, onOpen: () -> U
                 }
             }
             .pointerInput(press) { detectGlassPress(press) { currentOnOpen() } }
-            .chatCardGlass(backdrop, colors, scale = { lerp(1f, PressedScale, press.pressProgress) })
+            .chatCardGlass(backdrop, colors, frosted = LocalFrostedBackdrop.current, scale = { lerp(1f, PressedScale, press.pressProgress) })
             .padding(ChatCardPadding),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -227,7 +228,7 @@ private fun ReflectionCard(reflection: Reflection.Running, backdrop: Backdrop) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .chatCardGlass(backdrop, colors)
+            .chatCardGlass(backdrop, colors, frosted = LocalFrostedBackdrop.current)
             .padding(ChatCardPadding),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -347,7 +348,7 @@ private fun EmptyCard(text: String, backdrop: Backdrop) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .chatCardGlass(backdrop, colors)
+            .chatCardGlass(backdrop, colors, frosted = LocalFrostedBackdrop.current)
             .padding(ChatCardPadding),
     ) {
         Text(

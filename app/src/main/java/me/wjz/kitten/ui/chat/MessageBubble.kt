@@ -22,10 +22,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,11 +31,9 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -46,7 +42,6 @@ import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.llm.ImageAttachment
@@ -187,12 +182,12 @@ private fun BubbleImage(
     val currentOnOpen by rememberUpdatedState(onOpen)
     val currentOnLongPress by rememberUpdatedState(onLongPress)
     val press = rememberGlassPressState()
-    // 这一格在窗口里的位置，把长按时手指的位置换成窗口坐标。只在长按时读。
-    var bounds by remember { mutableStateOf(Rect.Zero) }
+    // 这一格在窗口里的位置，把长按时手指的位置换成窗口坐标。见 LayoutAnchor。
+    val anchor = remember { LayoutAnchor() }
 
     BoxWithConstraints(
         modifier = modifier
-            .onGloballyPositioned { bounds = Rect(it.positionInWindow(), it.size.toSize()) }
+            .onPlaced { anchor.coordinates = it }
             .semantics {
                 role = Role.Button
                 contentDescription = "图片"
@@ -202,7 +197,7 @@ private fun BubbleImage(
                 }
                 if (onLongPress != null) {
                     onLongClick(label = "更多操作") {
-                        currentOnLongPress?.invoke(bounds.center)
+                        currentOnLongPress?.invoke(anchor.centerInWindow())
                         true
                     }
                 }
@@ -210,7 +205,7 @@ private fun BubbleImage(
             .pointerInput(press) {
                 detectGlassPress(
                     state = press,
-                    onLongPress = { currentOnLongPress?.invoke(bounds.topLeft + it) },
+                    onLongPress = { currentOnLongPress?.invoke(anchor.toWindow(it)) },
                 ) { currentOnOpen(uri) }
             }
             // 还没解出来时先垫一块浅色。
@@ -277,8 +272,8 @@ private fun AssistantMessage(
     val colors = KittenTheme.colors
     val press = rememberGlassPressState()
     val currentOnLongPress by rememberUpdatedState(onLongPress)
-    // 这一条在窗口里的位置，把长按时手指的位置换成窗口坐标。只在长按时读，滚动时更新它不会引起重组。
-    var bounds by remember { mutableStateOf(Rect.Zero) }
+    // 这一条在窗口里的位置，把长按时手指的位置换成窗口坐标。见 LayoutAnchor。
+    val anchor = remember { LayoutAnchor() }
     val lift by animateFloatAsState(
         targetValue = if (lifted) 1f else 0f,
         animationSpec = ReplyLiftSpec,
@@ -291,18 +286,18 @@ private fun AssistantMessage(
             .then(
                 if (onLongPress != null) {
                     Modifier
-                        .onGloballyPositioned { bounds = Rect(it.positionInWindow(), it.size.toSize()) }
+                        .onPlaced { anchor.coordinates = it }
                         .semantics {
                             // 读屏用户没法长按到某个点，菜单从这一条的正中间弹出来。
                             onLongClick(label = "更多操作") {
-                                currentOnLongPress?.invoke(bounds.center)
+                                currentOnLongPress?.invoke(anchor.centerInWindow())
                                 true
                             }
                         }
                         .pointerInput(press) {
                             detectGlassPress(
                                 state = press,
-                                onLongPress = { currentOnLongPress?.invoke(bounds.topLeft + it) },
+                                onLongPress = { currentOnLongPress?.invoke(anchor.toWindow(it)) },
                                 onClick = {},
                             )
                         }

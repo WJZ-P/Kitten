@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -25,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -74,6 +76,7 @@ import me.wjz.kitten.ui.component.GlassMenuItem
 import me.wjz.kitten.ui.component.GlassRadius
 import me.wjz.kitten.ui.component.GlassSurface
 import me.wjz.kitten.ui.component.ImageViewer
+import me.wjz.kitten.ui.component.LocalFrostedBackdrop
 import me.wjz.kitten.ui.component.rememberGlassContextMenuState
 import me.wjz.kitten.ui.icon.ContactSupport
 import me.wjz.kitten.ui.icon.ContentCopy
@@ -107,6 +110,7 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * @param onStop 回复期间点了输入栏上的停止。
  * @param onOpenSkill 点了任务卡片下面"已学习到新知识！"那一行：去设置里看学到的那个技能（它的 id）。
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ChatScreen(
     state: ChatUiState,
@@ -133,7 +137,8 @@ fun ChatScreen(
     // 正在看的大图。输入栏的缩略图、气泡里的图片点了都在这里打开，见 ImageViewer。
     var viewingImage by remember { mutableStateOf<Uri?>(null) }
     // 换一个会话就是一张新列表：滚动位置从头来（倒着排，从头来就是在最底下）。
-    val listState = key(state.sessionId) { rememberLazyListState() }
+    // 屏幕外面前后各留一段（ChatCacheWindow）：快滑进来的消息提前排好，刚滑出去的先不扔。
+    val listState = key(state.sessionId) { rememberLazyListState(cacheWindow = ChatCacheWindow) }
     val awayThreshold = with(density) { AwayFromLatestThreshold.roundToPx() }
     val awayFromLatest by remember(listState) {
         derivedStateOf {
@@ -348,14 +353,20 @@ private fun MessageList(
     ) {
         // 倒着排，先写的在最底下。提问卡片要压在最下面，紧挨着输入框。
         if (pendingQuestion != null) {
-            item(key = QuestionKey) {
+            item(key = QuestionKey, contentType = QuestionKey) {
                 QuestionCard(question = pendingQuestion, onAnswer = onAnswerQuestion, backdrop = backdrop)
             }
         }
         if (showTyping) {
-            item(key = TypingKey) { TypingIndicator() }
+            item(key = TypingKey, contentType = TypingKey) { TypingIndicator() }
         }
-        items(count = shown.size, key = { shown[shown.lastIndex - it].key }) { reversedIndex ->
+        // contentType：同一种东西（用户气泡、回复、清单、卡片）滑出去腾出来的那一套节点，留给下一条同类的
+        // 接着用，不用每滑进来一条都从零搭。
+        items(
+            count = shown.size,
+            key = { shown[shown.lastIndex - it].key },
+            contentType = { shown[shown.lastIndex - it].contentType },
+        ) { reversedIndex ->
             // 倒着排，所以第 0 项是最后一项。
             when (val item = shown[shown.lastIndex - reversedIndex]) {
                 is ChatItem.Tools -> ToolCallList(calls = item.calls)
@@ -441,9 +452,16 @@ private sealed interface ChatItem {
     /** LazyColumn 的 key，见 MessageList 的类注释。 */
     val key: Any
 
+    /**
+     * 这一项是哪一种东西，LazyColumn 的 contentType：同一种的滑出去腾出来的节点留给同一种的接着用。
+     * 用户的气泡和模型的回复长得完全不一样，分开算。
+     */
+    val contentType: Any
+
     /** 一个气泡。[index] 是这条消息在 messages 里的位置，正在生成的那条是 messages.size。 */
     class Bubble(val index: Int, val message: ChatMessage) : ChatItem {
         override val key: Any get() = index
+        override val contentType: Any get() = if (message is ChatMessage.User) "user" else "reply"
     }
 
     /**
@@ -454,6 +472,7 @@ private sealed interface ChatItem {
      */
     class Tools(firstIndex: Int, firstCall: Int, val calls: List<ToolCallItem>) : ChatItem {
         override val key: Any = "tools-$firstIndex-$firstCall"
+        override val contentType: Any get() = "tools"
     }
 
     /**
@@ -462,6 +481,7 @@ private sealed interface ChatItem {
      */
     class Answered(index: Int, call: Int, val question: String, val answer: String?) : ChatItem {
         override val key: Any = "ask-$index-$call"
+        override val contentType: Any get() = "answered"
     }
 
     /**
@@ -472,6 +492,7 @@ private sealed interface ChatItem {
      */
     class Task(index: Int, call: Int, val task: TaskInfo, val reflection: Reflection?) : ChatItem {
         override val key: Any = "task-$index-$call"
+        override val contentType: Any get() = "task"
     }
 }
 
@@ -853,7 +874,7 @@ private fun AnsweredQuestionCard(
             .fillMaxWidth()
             // 读屏一口气读完"问题，回答"，不用一行行摸。
             .semantics(mergeDescendants = true) {}
-            .chatCardGlass(backdrop, colors)
+            .chatCardGlass(backdrop, colors, frosted = LocalFrostedBackdrop.current)
             .padding(ChatCardPadding),
         verticalArrangement = Arrangement.spacedBy(AnsweredCardGap),
     ) {
@@ -949,6 +970,19 @@ private const val AutoTaskMinSteps = 3
 /** "正在思考…"和提问卡片那两项的 key。气泡的 key 是序号（Int），清单的是 "tools-" 开头，都撞不上。 */
 private const val TypingKey = "typing"
 private const val QuestionKey = "question"
+
+/**
+ * 消息列表在屏幕外面前后各留多大一段（按屏幕高度算的倍数）。
+ *
+ * - 前面（往哪边滑，哪边就是前面）：快要滑进来的消息趁着每帧的空闲先组合、排好版，滑到眼前时现成的，
+ *   不用在那一帧里现做——一条长回复要解析、排版、量公式，现做就是一顿。
+ * - 后面：刚滑出去的先不扔，来回翻的时候直接拿回来用。
+ *
+ * 只是组合、测量好放着，不画（屏幕外的不上屏）。给大了白占内存，一屏足够跟上手指；QQ 这类列表也是
+ * 前后各缓存一截的做法。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+private val ChatCacheWindow = LazyLayoutCacheWindow(aheadFraction = 1f, behindFraction = 1f)
 
 /** 问题、分界线、回答三段之间空多少。 */
 private val AnsweredCardGap = 6.dp
