@@ -85,7 +85,7 @@ class ListAppsTool(private val context: Context) : AgentTool {
  */
 class LaunchAppTool(private val session: DeviceSession) : AgentTool {
 
-    override val name = "launch_app"
+    override val name = NAME
 
     override val description =
         "打开一个应用，之后的 read_screen 和所有操作都对着它。" +
@@ -107,5 +107,10 @@ class LaunchAppTool(private val session: DeviceSession) : AgentTool {
         // 拉起来了才记：流程一般从这一步开始，见 ActionTrace。
         if (!result.startsWith("ERROR")) session.trace.record(FlowStep.Launch(packageName), packageName)
         return result
+    }
+
+    companion object {
+        /** 界面要认出"这一轮开了后台应用"：一开就收进任务卡片，好直播副屏（见 ChatScreen 的 buildChatItems）。 */
+        const val NAME = "launch_app"
     }
 }

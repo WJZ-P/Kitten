@@ -70,6 +70,8 @@ import me.wjz.kitten.agent.Reflection
 import me.wjz.kitten.agent.SkillReflector
 import me.wjz.kitten.agent.isPhoneOperation
 import me.wjz.kitten.agent.tools.AskUserTool
+import me.wjz.kitten.agent.tools.LaunchAppTool
+import me.wjz.kitten.agent.tools.RunFlowTool
 import me.wjz.kitten.agent.tools.StartTaskTool
 import me.wjz.kitten.llm.ChatMessage
 import me.wjz.kitten.ui.component.GlassButton
@@ -755,7 +757,11 @@ private fun buildChatItems(
 
 /**
  * 哪几轮要自动开任务：一轮从用户的一句话开始到下一句为止，模型没调 start_task、而操作手机的调用
- * 满了 [AutoTaskMinSteps] 次。返回那句用户的话在 messages 里的序号。
+ * 满了 [AutoTaskMinSteps] 次，或者开了后台应用（launch_app、run_flow）。返回那句用户的话在 messages 里的序号。
+ *
+ * 开了后台应用不等满步数：副屏的直播缩略图挂在任务卡片上，开着副屏却还是一串工具清单的话，用户就看不到
+ * Kitten 在后台干什么（跑一个流程再读一眼屏幕，两步就办完了）。只在主屏上看一眼、点一下的不算，那些用户
+ * 本来就看得见。
  *
  * 模型自己开了任务的那一轮不用自动开，但也不碍事：任务已经开着，自动开的条件（还没有任务）不成立。
  */
@@ -771,7 +777,8 @@ private fun runsNeedingAutoTask(messages: List<ChatMessage>): Set<Int> {
             }
             is ChatMessage.Assistant -> {
                 steps += message.toolCalls.count { it.isPhoneOperation() }
-                if (run >= 0 && steps >= AutoTaskMinSteps) runs += run
+                val opensApp = message.toolCalls.any { it.name == LaunchAppTool.NAME || it.name == RunFlowTool.NAME }
+                if (run >= 0 && (steps >= AutoTaskMinSteps || opensApp)) runs += run
             }
             is ChatMessage.ToolResult -> Unit
         }
