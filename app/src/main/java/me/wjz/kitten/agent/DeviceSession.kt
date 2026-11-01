@@ -22,12 +22,17 @@ import java.util.UUID
  *
  * ## 副屏
  *
- * 有特权进程时，[launchApp] 会建一块副屏把应用拉上去：用户的主屏不受打扰，Agent 在后台
- * 自己操作。副屏的尺寸和密度跟着主屏走——密度不一致时部分应用（实测 QQ）会把它当成系统
- * 显示设置变了，直接杀掉自己的进程，连带用户主屏上那个 task 一起消失。
+ * [launchApp] 建一块副屏把应用拉上去：用户的主屏不受打扰，Agent 在后台自己操作。副屏的尺寸和
+ * 密度跟着主屏走——密度不一致时部分应用（实测 QQ）会把它当成系统显示设置变了，直接杀掉自己的
+ * 进程，连带用户主屏上那个 task 一起消失。
  *
- * 没有特权进程时退回主屏：用普通 Intent 拉起应用，照样能读能点，只是会打扰到用户。这条
- * 退路是必要的——不是每个用户都会去配 ADB。
+ * ## 主屏
+ *
+ * 主屏和副屏 Agent 都能操作：拉起应用之前 [displayId] 是主屏，读屏、点按对着的就是用户眼前的界面。
+ * 平常办事都先 launch_app 到副屏，只有用户要它操作眼前的界面时才直接动主屏（见 SystemPrompt）。
+ *
+ * launch_app 只往副屏上拉，不会"副屏拉不起来就退回主屏拉起"：增强模式（特权进程）是必开的，
+ * 断了就如实报错，让模型告诉用户去看看增强模式。
  *
  * ## 并发
  *
@@ -87,7 +92,7 @@ class DeviceSession(private val context: Context) {
             return "ERROR app_busy: $packageName 正在被另一个任务操作，同一个应用不能两个任务同时用。" +
                 "先去做用不到它的部分，过一会儿再来拉它。"
         }
-        val result = launchOnSomeDisplay(packageName)
+        val result = launchOnDisplay(packageName)
         if (currentPackage == packageName) {
             if (previous != null && previous != packageName) AppLeases.release(previous, this)
         } else if (packageName != previous) {
@@ -96,50 +101,42 @@ class DeviceSession(private val context: Context) {
         return result
     }
 
-    /** 真正去拉：副屏优先，不行退回主屏。拉起来了会把 [currentPackage] 换成它。 */
-    private fun launchOnSomeDisplay(packageName: String): String {
-        // 副屏是首选：不打扰用户。拿不到特权进程就退回主屏。
-        if (VirtualDisplayManager.isAvailable) {
-            val metrics = context.resources.displayMetrics
-            val target = if (ownedDisplayId != VirtualDisplayManager.INVALID_DISPLAY_ID) {
-                // 已经有副屏了就复用，别一个任务开一堆屏。
-                if (VirtualDisplayManager.launchApp(packageName, ownedDisplayId, NewInstance)) ownedDisplayId else null
-            } else {
-                VirtualDisplayManager.launchAppOnNewDisplay(
-                    packageName = packageName,
-                    width = metrics.widthPixels,
-                    height = metrics.heightPixels,
-                    // 必须和主屏一致，见类注释。
-                    densityDpi = metrics.densityDpi,
-                    forceNewInstance = NewInstance,
-                ).takeIf { it != VirtualDisplayManager.INVALID_DISPLAY_ID }
-                    ?.also { ownedDisplayId = it }
-            }
-            if (target != null) {
-                displayId = target
-                currentPackage = packageName
-                lastSnapshot = null
-                return "已在副屏（display=$target）拉起 $packageName，用户的主屏不受影响。" +
-                    "接下来用 read_screen 看看它长什么样。"
-            }
-            Log.w(TAG, "副屏拉起 $packageName 失败，退回主屏")
+    /** 真正去拉：拉到这一轮的副屏上，还没有就建一块。拉起来了会把 [currentPackage] 换成它。 */
+    private fun launchOnDisplay(packageName: String): String {
+        // 先在本地确认它装着、能启动：副屏那边拉不起来时分不清是包名错了还是别的原因，这里先把最常见的
+        // "包名猜错了"挑出来，模型才知道该回去 list_apps。
+        if (context.packageManager.getLaunchIntentForPackage(packageName) == null) {
+            return "ERROR app_not_found: 没有找到 $packageName，或者它没有可以启动的界面。先用 list_apps 确认包名。"
         }
-
-        val intent = context.packageManager.getLaunchIntentForPackage(packageName)
-            ?: return "ERROR app_not_found: 没有找到 $packageName，或者它没有可以启动的界面。" +
-                "先用 list_apps 确认包名。"
-        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        return runCatching {
-            context.startActivity(intent)
-            displayId = Display.DEFAULT_DISPLAY
-            currentPackage = packageName
-            lastSnapshot = null
-            "已在主屏拉起 $packageName（没有副屏可用，所以会显示在用户眼前）。" +
-                "接下来用 read_screen 看看它长什么样。"
-        }.getOrElse {
-            Log.w(TAG, "拉起 $packageName 失败", it)
-            "ERROR launch_failed: 拉起 $packageName 失败：${it.message}"
+        if (!VirtualDisplayManager.isAvailable) {
+            Log.w(TAG, "特权进程没就绪，拉不了 $packageName")
+            return PrivilegeLostError
         }
+        val metrics = context.resources.displayMetrics
+        val target = if (ownedDisplayId != VirtualDisplayManager.INVALID_DISPLAY_ID) {
+            // 已经有副屏了就复用，别一个任务开一堆屏。
+            if (VirtualDisplayManager.launchApp(packageName, ownedDisplayId, NewInstance)) ownedDisplayId else null
+        } else {
+            VirtualDisplayManager.launchAppOnNewDisplay(
+                packageName = packageName,
+                width = metrics.widthPixels,
+                height = metrics.heightPixels,
+                // 必须和主屏一致，见类注释。
+                densityDpi = metrics.densityDpi,
+                forceNewInstance = NewInstance,
+            ).takeIf { it != VirtualDisplayManager.INVALID_DISPLAY_ID }
+                ?.also { ownedDisplayId = it }
+        }
+        if (target == null) {
+            Log.w(TAG, "副屏拉起 $packageName 失败")
+            return "ERROR launch_failed: 没能在后台副屏上拉起 $packageName。可以再试一次；" +
+                "还是不行的话告诉用户，可能要去 设置 → 增强模式 看看。"
+        }
+        displayId = target
+        currentPackage = packageName
+        lastSnapshot = null
+        return "已在副屏（display=$target）拉起 $packageName，用户的主屏不受影响。" +
+            "接下来用 read_screen 看看它长什么样。"
     }
 
     /**
@@ -200,9 +197,10 @@ class DeviceSession(private val context: Context) {
          *
          * 例外：启动页是 singleTask / singleInstance 的应用，系统会无视 MULTIPLE_TASK，照样把已有的
          * task 搬过来（AOSP ActivityStarter 里 putIntoExistingTask 的判断），这个没法从外面改。
-         *
-         * 只管副屏。退回主屏时用的是普通 Intent，同一块屏上没必要开两个，复用已有的正合适。
          */
         const val NewInstance = true
+
+        const val PrivilegeLostError = "ERROR no_privilege: 增强模式现在没连上，开不了后台副屏，" +
+            "这件事暂时办不了。告诉用户去 设置 → 增强模式 看看，连上了再来。"
     }
 }

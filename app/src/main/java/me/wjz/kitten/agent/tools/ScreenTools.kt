@@ -75,8 +75,8 @@ class ReadScreenTool(private val session: DeviceSession) : AgentTool {
  *
  * ## 只截副屏
  *
- * 画面是从副屏的离屏缓冲里读的（见 VirtualDisplayHost.capture），要特权进程。Agent 绝大多数
- * 时候都在副屏上办事，所以这是常用的那个。
+ * 画面是从副屏的离屏缓冲里读的（见 VirtualDisplayHost.capture）。Agent 平常都在副屏上办事，所以
+ * 这是常用的那个。
  *
  * 主屏另有一个工具（[MainScreenshotTool]，走无障碍截图）。分成两个而不是让这一个自动判断，是
  * 因为截主屏是另一回事：截到的是用户眼前的画面，模型得清楚自己在看哪块屏、为什么要看。
@@ -90,14 +90,15 @@ class ScreenshotTool(private val session: DeviceSession) : VisualTool {
             "自绘的界面，或者要判断元素的实际排布时。" +
             "常规的找按钮、读文字用 read_screen 就够了，又快又省，不要每一步都截图。" +
             "注意：截图里看到的元素没有编号，要操作还是得靠 read_screen。" +
-            "应用开在主屏上时用 screenshot_main_screen。"
+            "还没用 launch_app 打开应用、正在操作用户主屏时，用 screenshot_main_screen。"
 
     override val parameters = noParams()
 
     override suspend fun executeVisual(args: JSONObject): ToolOutput {
-        if (!VirtualDisplayManager.isAvailable || session.displayId == Display.DEFAULT_DISPLAY) {
+        if (session.displayId == Display.DEFAULT_DISPLAY) {
             return ToolOutput(
-                "ERROR main_display: 现在没有副屏，应用开在用户的主屏上。要看画面用 screenshot_main_screen。",
+                "ERROR main_display: 你现在对着的是用户的主屏（还没用 launch_app 打开应用）。" +
+                    "要看主屏的画面用 screenshot_main_screen。",
             )
         }
         val bytes = VirtualDisplayManager.captureDisplay(session.displayId, MaxEdgePx, JpegQuality)
@@ -116,12 +117,13 @@ class ScreenshotTool(private val session: DeviceSession) : VisualTool {
 }
 
 /**
- * 截一张用户主屏的图给模型看，走无障碍截图（见 [A11yScreenshot]），不要特权进程。
+ * 截一张用户主屏的图给模型看，走无障碍截图（见 [A11yScreenshot]）。
  *
  * ## 什么时候用
  *
- * 少数情况：没有特权进程、应用只能开在主屏上；或者用户明确让 Agent 看看他屏幕上的东西。
- * 平常 Agent 在副屏办事，截图用 [ScreenshotTool]。
+ * 少数情况：用户要 Agent 直接操作他眼前的界面（还没 launch_app，读屏和动作都对着主屏，见
+ * DeviceSession）；或者用户明确让 Agent 看看他屏幕上的东西。平常 Agent 在副屏办事，截图用
+ * [ScreenshotTool]。
  *
  * 主屏上是用户眼前的画面，截到什么全看用户此刻开着什么——用户正在 Kitten 里跟它说话的话，
  * 截到的多半就是 Kitten 自己的聊天界面。这点写进描述里，免得模型截完一脸困惑。
@@ -134,8 +136,8 @@ class MainScreenshotTool(private val session: DeviceSession) : VisualTool {
     override val name = "screenshot_main_screen"
 
     override val description =
-        "截取用户主屏（用户眼前正在看的那块屏）的画面给你看。平常你在副屏上办事，截图用 screenshot；" +
-            "只在这两种情况用它：应用开在了主屏上（launch_app 说在主屏拉起的时候），" +
+        "截取用户主屏（用户眼前正在看的那块屏）的画面给你看。平常你在后台副屏上办事，截图用 screenshot；" +
+            "只在这两种情况用它：你正在操作用户的主屏（还没用 launch_app 打开应用的时候），" +
             "或者用户明确让你看他屏幕上的东西。不需要的时候不要截，截到的是用户的隐私画面。" +
             "注意：用户正在 Kitten 里跟你说话时，主屏上多半就是 Kitten 自己的聊天界面。" +
             "截图里的元素没有编号，要操作还是得靠 read_screen。"

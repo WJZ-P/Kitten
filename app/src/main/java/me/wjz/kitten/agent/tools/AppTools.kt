@@ -81,7 +81,7 @@ class ListAppsTool(private val context: Context) : AgentTool {
 }
 
 /**
- * 把应用拉起来。有特权进程时拉到副屏（不打扰用户），否则拉到主屏。详见 [DeviceSession.launchApp]。
+ * 把应用拉到这一轮的后台副屏上，不打扰用户。详见 [DeviceSession.launchApp]。
  */
 class LaunchAppTool(private val session: DeviceSession) : AgentTool {
 
@@ -89,7 +89,7 @@ class LaunchAppTool(private val session: DeviceSession) : AgentTool {
 
     override val description =
         "打开一个应用，之后的 read_screen 和所有操作都对着它。" +
-            "有副屏能力时会在后台的副屏里打开，用户的屏幕不受影响；没有时在用户眼前打开。" +
+            "它开在后台的副屏里，用户的屏幕不受影响。" +
             "包名要先用 list_apps 确认。注意有些应用（不少社交软件、短视频软件）同时只能开一个：" +
             "用户自己在主屏打开同一个应用时，副屏里的那个会被应用自己关掉。"
 

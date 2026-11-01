@@ -13,7 +13,7 @@ import me.wjz.kitten.privilege.ipc.IPrivilegeService
  *
  * | | [A11yActuator] | 本通道 |
  * |---|---|---|
- * | 作用对象 | 节点（也支持坐标） | 只有坐标 |
+ * | 作用对象 | 只有节点 | 只有坐标（还有按键） |
  * | 需要 | 无障碍服务 | **特权进程**（shell 身份） |
  * | 事件标记 | 带 `FLAG_IS_ACCESSIBILITY_EVENT`(0x800) | 不带 |
  * | 精确度 | 按节点操作不怕遮挡、不用算坐标 | 纯坐标，可能点到遮挡物 |
