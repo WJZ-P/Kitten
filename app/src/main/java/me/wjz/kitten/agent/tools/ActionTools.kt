@@ -10,9 +10,11 @@ import me.wjz.kitten.a11y.UiSnapshot
 import me.wjz.kitten.agent.AgentTool
 import me.wjz.kitten.agent.DeviceSession
 import me.wjz.kitten.agent.enumParam
+import me.wjz.kitten.agent.flow.labelFor
 import me.wjz.kitten.agent.intParam
 import me.wjz.kitten.agent.objectSchema
 import me.wjz.kitten.agent.stringParam
+import me.wjz.kitten.data.skills.FlowStep
 import org.json.JSONObject
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -24,11 +26,19 @@ import kotlin.time.Duration.Companion.milliseconds
  * 点下去之后界面要重新布局、可能还要等网络。动作一返回就紧接着 read_screen 的话，读到的
  * 多半还是旧页面，模型会以为"点了没反应"再点一次，于是点重了。等 [SettleMillis] 是个折中：
  * 够一般的页面切换完成，又不至于每步都明显变慢。页面真的还没加载完时，模型可以再调 wait。
+ *
+ * ## 操作记录
+ *
+ * 每个动作做成了，顺手往 [DeviceSession.trace] 里记一笔（节点编号当场换成选择器），一轮办完复盘时
+ * 整理成能直接重放的自动流程，见 [me.wjz.kitten.agent.flow.ActionTrace]。失败的不记。
+ *
+ * 点、按键、滑动的执行逻辑抽成了 [tapNode]、[pressKey]、[swipe]，流程回放（FlowRunner）用的是同一套，
+ * 两边点下去的方式一模一样。
  */
 private const val SettleMillis = 450L
 
-/** 界面响应需要时间，等一下再让模型去读，见上面的说明。 */
-private suspend fun settle() = delay(SettleMillis.milliseconds)
+/** 界面响应需要时间，等一下再让模型去读，见上面的说明。流程回放每一步之后也等这么久。 */
+internal suspend fun settle() = delay(SettleMillis.milliseconds)
 
 /** 动作做完统一这么回：提醒模型页面已经变了，旧的 node_id 不能再用。 */
 private const val PageChangedHint = "页面可能已经变化，下一步先 read_screen 拿最新的节点编号。"
@@ -47,12 +57,90 @@ private fun JSONObject.nodeId(): Int? {
 private fun UiSnapshot.labelOf(nodeId: Int): String =
     findById(nodeId)?.displayLabel?.let { " \"$it\"" } ?: ""
 
+/** 点一个节点的结果：点成了没有，是不是退回了坐标点击。 */
+internal class TapOutcome(val result: ActionResult, val byCoordinate: Boolean)
+
 /**
- * 点一个节点。
+ * 点一个节点：先走无障碍的 ACTION_CLICK（按节点，页面变了会明确失败而不是点歪）；控件不认这个
+ * 动作时（自绘控件很常见）退回按节点中心的坐标点击。两条通道的差别见 [InjectActuator] 的类注释。
  *
- * 先走无障碍的 ACTION_CLICK（按节点，页面变了会明确失败而不是点歪）；控件不认这个动作时
- * （自绘控件很常见）退回按节点中心的坐标点击。两条通道的差别见 [InjectActuator] 的类注释。
+ * 只有"控件不认这个动作"才换条路；节点失效、被禁用都原样返回，该如实告诉模型。
  */
+internal fun tapNode(snapshot: UiSnapshot, nodeId: Int): TapOutcome {
+    val result = A11yActuator.click(snapshot, nodeId)
+    if (result !is ActionResult.Failed || result.error !is ScreenError.ActionRejected) {
+        return TapOutcome(result, byCoordinate = false)
+    }
+    val bounds = (snapshot.findById(nodeId) ?: snapshot.findRawById(nodeId))?.bounds
+        ?: return TapOutcome(ActionResult.Failed(ScreenError.NodeGone(nodeId)), byCoordinate = false)
+    val byCoordinate = if (InjectActuator.isAvailable) {
+        InjectActuator.tap(snapshot.displayId, bounds.centerX(), bounds.centerY())
+    } else {
+        A11yActuator.tapAt(snapshot.displayId, bounds.exactCenterX(), bounds.exactCenterY())
+    }
+    return TapOutcome(byCoordinate, byCoordinate = true)
+}
+
+/** 按坐标滑一下：有特权进程走注入（副屏上也管用），没有就走无障碍手势。 */
+internal fun swipe(displayId: Int, fromX: Int, fromY: Int, toX: Int, toY: Int, durationMs: Int): ActionResult =
+    if (InjectActuator.isAvailable) {
+        InjectActuator.swipe(displayId, fromX, fromY, toX, toY, durationMs)
+    } else {
+        A11yActuator.swipeAt(
+            displayId,
+            fromX.toFloat(),
+            fromY.toFloat(),
+            toX.toFloat(),
+            toY.toFloat(),
+            durationMs.toLong(),
+        )
+    }
+
+/** 按键的结果。 */
+internal sealed interface KeyOutcome {
+    /** 按成了。[global] 是走的无障碍全局动作：只对用户当前看着的那块屏有效。 */
+    class Done(val global: Boolean) : KeyOutcome
+
+    /** 没按成，[message] 是给模型看的那句。 */
+    class Failed(val message: String) : KeyOutcome
+}
+
+/**
+ * 发一个按键：back、home、enter、delete。
+ *
+ * 副屏上**只有注入通道管用**：`performGlobalAction` 没有 displayId 参数，只作用于当前焦点
+ * 屏，副屏上的应用收不到（见 [InjectActuator.keyEvent]）。所以优先走注入，没有特权进程时
+ * 退回无障碍的全局动作，只有返回和 Home 有对应的全局动作。
+ */
+internal fun pressKey(displayId: Int, key: String): KeyOutcome {
+    val keyCode = when (key) {
+        "back" -> KeyEvent.KEYCODE_BACK
+        "home" -> KeyEvent.KEYCODE_HOME
+        "enter" -> KeyEvent.KEYCODE_ENTER
+        "delete" -> KeyEvent.KEYCODE_DEL
+        else -> return KeyOutcome.Failed("ERROR bad_args: 不认识的按键 \"$key\"，只能是 back / home / enter / delete。")
+    }
+    if (InjectActuator.isAvailable) {
+        return when (val result = InjectActuator.keyEvent(displayId, keyCode)) {
+            is ActionResult.Ok -> KeyOutcome.Done(global = false)
+            is ActionResult.Failed -> KeyOutcome.Failed(result.error.describe())
+        }
+    }
+    val result = when (key) {
+        "back" -> A11yActuator.back()
+        "home" -> A11yActuator.home()
+        else -> return KeyOutcome.Failed(
+            "ERROR key_unavailable: 没有特权进程时按不了 $key，" +
+                "只能用 back 和 home。回车一般可以改成点界面上的\"发送\"/\"搜索\"按钮。",
+        )
+    }
+    return when (result) {
+        is ActionResult.Ok -> KeyOutcome.Done(global = true)
+        is ActionResult.Failed -> KeyOutcome.Failed(result.error.describe())
+    }
+}
+
+/** 点一个节点，见 [tapNode]。 */
 class TapTool(private val session: DeviceSession) : AgentTool {
 
     override val name = "tap"
@@ -71,29 +159,18 @@ class TapTool(private val session: DeviceSession) : AgentTool {
         val nodeId = args.nodeId() ?: return "ERROR bad_args: 没有给 node_id。"
         val label = snapshot.labelOf(nodeId)
 
-        when (val result = A11yActuator.click(snapshot, nodeId)) {
+        val outcome = tapNode(snapshot, nodeId)
+        return when (val result = outcome.result) {
             is ActionResult.Ok -> {
+                session.trace.recordNode(snapshot, nodeId) { FlowStep.Tap(it, snapshot.labelFor(nodeId)) }
                 settle()
-                return "OK 点击了 [$nodeId]$label。$PageChangedHint"
-            }
-
-            is ActionResult.Failed -> {
-                // 只有"控件不认这个动作"才值得换条路；节点失效、被禁用都该如实告诉模型。
-                if (result.error !is ScreenError.ActionRejected) return result.error.describe()
-                val bounds = snapshot.findById(nodeId)?.bounds
-                    ?: return ScreenError.NodeGone(nodeId).describe()
-                val byCoordinate = if (InjectActuator.isAvailable) {
-                    InjectActuator.tap(snapshot.displayId, bounds.centerX(), bounds.centerY())
-                } else {
-                    A11yActuator.tapAt(snapshot.displayId, bounds.exactCenterX(), bounds.exactCenterY())
-                }
-                return if (byCoordinate.isOk) {
-                    settle()
+                if (outcome.byCoordinate) {
                     "OK [$nodeId]$label 不支持标准点击动作，已改用坐标点击。$PageChangedHint"
                 } else {
-                    (byCoordinate as ActionResult.Failed).error.describe()
+                    "OK 点击了 [$nodeId]$label。$PageChangedHint"
                 }
             }
+            is ActionResult.Failed -> result.error.describe()
         }
     }
 }
@@ -116,6 +193,7 @@ class LongPressTool(private val session: DeviceSession) : AgentTool {
         val label = snapshot.labelOf(nodeId)
         return when (val result = A11yActuator.longClick(snapshot, nodeId)) {
             is ActionResult.Ok -> {
+                session.trace.recordNode(snapshot, nodeId) { FlowStep.LongPress(it, snapshot.labelFor(nodeId)) }
                 settle()
                 "OK 长按了 [$nodeId]$label。$PageChangedHint"
             }
@@ -147,6 +225,8 @@ class InputTextTool(private val session: DeviceSession) : AgentTool {
         val label = snapshot.labelOf(nodeId)
         return when (val result = A11yActuator.setText(snapshot, nodeId, text)) {
             is ActionResult.Ok -> {
+                // 密码框里的也记，描述里藏起来，见 ActionTrace.recordNode。
+                session.trace.recordNode(snapshot, nodeId) { FlowStep.Input(it, text, snapshot.labelFor(nodeId)) }
                 settle()
                 "OK 已把内容写进 [$nodeId]$label。$PageChangedHint"
             }
@@ -177,6 +257,7 @@ class ScrollTool(private val session: DeviceSession) : AgentTool {
         val label = snapshot.labelOf(nodeId)
         return when (val result = A11yActuator.scroll(snapshot, nodeId, forward)) {
             is ActionResult.Ok -> {
+                session.trace.recordNode(snapshot, nodeId) { FlowStep.Scroll(it, forward, snapshot.labelFor(nodeId)) }
                 settle()
                 "OK 把 [$nodeId]$label 往${if (forward) "后" else "前"}滚了一屏。$PageChangedHint"
             }
@@ -214,21 +295,9 @@ class SwipeTool(private val session: DeviceSession) : AgentTool {
             return "ERROR bad_args: 四个坐标都要给，而且不能是负数。"
         }
         val duration = args.optInt("duration_ms", DefaultSwipeMillis).coerceAtLeast(MinSwipeMillis)
-        val displayId = session.displayId
-        val result = if (InjectActuator.isAvailable) {
-            InjectActuator.swipe(displayId, fromX, fromY, toX, toY, duration)
-        } else {
-            A11yActuator.swipeAt(
-                displayId,
-                fromX.toFloat(),
-                fromY.toFloat(),
-                toX.toFloat(),
-                toY.toFloat(),
-                duration.toLong(),
-            )
-        }
-        return when (result) {
+        return when (val result = swipe(session.displayId, fromX, fromY, toX, toY, duration)) {
             is ActionResult.Ok -> {
+                session.trace.record(FlowStep.Swipe(fromX, fromY, toX, toY, duration), session.lastSnapshot?.packageName)
                 settle()
                 "OK 从 ($fromX,$fromY) 滑到了 ($toX,$toY)。$PageChangedHint"
             }
@@ -242,13 +311,7 @@ class SwipeTool(private val session: DeviceSession) : AgentTool {
     }
 }
 
-/**
- * 发一个按键：返回、Home、回车、退格。
- *
- * 副屏上**只有注入通道管用**：`performGlobalAction` 没有 displayId 参数，只作用于当前焦点
- * 屏，副屏上的应用收不到（见 [InjectActuator.keyEvent]）。所以优先走注入，没有特权进程时
- * 退回无障碍的全局动作，并且说清楚它只对主屏有效。
- */
+/** 发一个按键：返回、Home、回车、退格，见 [pressKey]。 */
 class PressKeyTool(private val session: DeviceSession) : AgentTool {
 
     override val name = "press_key"
@@ -263,43 +326,23 @@ class PressKeyTool(private val session: DeviceSession) : AgentTool {
 
     override suspend fun execute(args: JSONObject): String {
         val key = args.optString("key").lowercase()
-        val keyCode = when (key) {
-            "back" -> KeyEvent.KEYCODE_BACK
-            "home" -> KeyEvent.KEYCODE_HOME
-            "enter" -> KeyEvent.KEYCODE_ENTER
-            "delete" -> KeyEvent.KEYCODE_DEL
-            else -> return "ERROR bad_args: 不认识的按键 \"$key\"，只能是 back / home / enter / delete。"
-        }
-
-        if (InjectActuator.isAvailable) {
-            return when (val result = InjectActuator.keyEvent(session.displayId, keyCode)) {
-                is ActionResult.Ok -> {
-                    settle()
+        return when (val outcome = pressKey(session.displayId, key)) {
+            is KeyOutcome.Failed -> outcome.message
+            is KeyOutcome.Done -> {
+                session.trace.record(FlowStep.Key(key), session.lastSnapshot?.packageName)
+                settle()
+                if (outcome.global) {
+                    "OK 按了 $key（走的无障碍全局动作，只对用户当前看着的那块屏有效）。$PageChangedHint"
+                } else {
                     "OK 按了 $key。$PageChangedHint"
                 }
-                is ActionResult.Failed -> result.error.describe()
             }
-        }
-
-        // 没有特权进程：只有返回和 Home 有对应的全局动作，而且只对当前焦点屏有效。
-        val result = when (key) {
-            "back" -> A11yActuator.back()
-            "home" -> A11yActuator.home()
-            else -> return "ERROR key_unavailable: 没有特权进程时按不了 $key，" +
-                "只能用 back 和 home。回车一般可以改成点界面上的\"发送\"/\"搜索\"按钮。"
-        }
-        return when (result) {
-            is ActionResult.Ok -> {
-                settle()
-                "OK 按了 $key（走的无障碍全局动作，只对用户当前看着的那块屏有效）。$PageChangedHint"
-            }
-            is ActionResult.Failed -> result.error.describe()
         }
     }
 }
 
 /** 单纯等一会儿，给页面加载、动画播放留时间。 */
-class WaitTool : AgentTool {
+class WaitTool(private val session: DeviceSession) : AgentTool {
 
     override val name = "wait"
 
@@ -314,6 +357,8 @@ class WaitTool : AgentTool {
     override suspend fun execute(args: JSONObject): String {
         val seconds = args.optInt("seconds", 1).coerceIn(1, MaxWaitSeconds)
         delay((seconds * 1000L).milliseconds)
+        // 记下来：重放时页面一样要等这么久才加载好。
+        session.trace.record(FlowStep.Wait(seconds), session.lastSnapshot?.packageName)
         return "OK 等了 $seconds 秒。"
     }
 

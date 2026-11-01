@@ -57,12 +57,19 @@ enum class SkillSource {
  * 投毒）。所以它在提示词里单独列、明说只是参考，规矩照旧（见 SystemPrompt、ReadSkillTool）；用户在
  * 编辑页里看过、点了保存，才转成 [SkillSource.User]。
  *
+ * ## 一个应用一个技能
+ *
+ * 复盘整理出来的技能按应用分（[app]）：在某个应用里办过的各种事，说明都写在同一个技能里，跑通过的
+ * 操作存成它的自动流程（[flows]）。下次在同一个应用里办了新的事，往这个技能里加，不另开一个。
+ *
  * @param id 内部用的编号，用户看不到。
  * @param name 名字，用户看得到，模型也按它来读（read_skill 的参数），所以不能重名。
  * @param whenToUse 什么时候用：模型靠它判断这件事该不该翻这本说明书。
  * @param instructions 具体怎么做：打开哪个应用、点哪里、选什么……
  * @param enabled 开着才交给模型。
  * @param source 谁写的，见上面。
+ * @param app 这个技能管哪个应用（包名）。用户手写的、不对应某个应用的是 null。
+ * @param flows 能直接跑的自动流程，见 [SkillFlow]。
  */
 data class UserSkill(
     val id: String,
@@ -71,7 +78,13 @@ data class UserSkill(
     val instructions: String,
     val enabled: Boolean = true,
     val source: SkillSource = SkillSource.User,
+    val app: String? = null,
+    val flows: List<SkillFlow> = emptyList(),
 ) {
+    /** 按名字找流程，不分大小写、不管首尾空格。 */
+    fun findFlow(name: String): SkillFlow? =
+        flows.firstOrNull { it.name == name } ?: flows.firstOrNull { it.name.trim().equals(name.trim(), ignoreCase = true) }
+
     val isLearned: Boolean get() = source == SkillSource.Learned
 
     companion object {

@@ -81,6 +81,19 @@ object SkillStore {
         writeUserSkills(context, userSkills(context).filterNot { it.id == id })
     }
 
+    /**
+     * 记一次流程跑得怎么样：跑完了、还是卡住了（见 RunFlowTool）。复盘时看得到哪个流程老卡住、该修了。
+     * 技能或流程这期间被删了就不记。
+     */
+    fun recordFlowRun(context: Context, skillId: String, flowName: String, succeeded: Boolean) = synchronized(this) {
+        val skills = userSkills(context)
+        val skill = skills.firstOrNull { it.id == skillId } ?: return@synchronized
+        val flow = skill.findFlow(flowName) ?: return@synchronized
+        val updated = flow.copy(runs = flow.runs + 1, failures = flow.failures + if (succeeded) 0 else 1)
+        val next = skill.copy(flows = skill.flows.map { if (it === flow) updated else it })
+        writeUserSkills(context, skills.map { if (it.id == skillId) next else it })
+    }
+
     /** 这一轮开着的技能，给对话用：每轮开始时读一次。 */
     fun enabled(context: Context): SkillSet = SkillSet(
         builtins = BuiltinSkill.entries.filterTo(mutableSetOf()) { isEnabled(context, it) },
@@ -101,6 +114,8 @@ object SkillStore {
         .put("body", skill.instructions)
         .put("on", skill.enabled)
         .put("src", if (skill.isLearned) SOURCE_LEARNED else SOURCE_USER)
+        .apply { skill.app?.let { put("app", it) } }
+        .apply { if (skill.flows.isNotEmpty()) put("flows", JSONArray().apply { skill.flows.forEach { put(it.toJson()) } }) }
 
     /** 解析不了、或者没有名字的那一条跳过。 */
     private fun decode(json: JSONObject?): UserSkill? {
@@ -115,6 +130,11 @@ object SkillStore {
             enabled = json.optBoolean("on", true),
             // 没存过来源的是加上这一项之前存的，那时只有用户自己写的。
             source = if (json.optString("src") == SOURCE_LEARNED) SkillSource.Learned else SkillSource.User,
+            app = json.optString("app").takeIf { it.isNotBlank() },
+            // 读不出来的流程跳过，不连累整个技能：说明照样能用，只是少了那个流程。
+            flows = json.optJSONArray("flows")?.let { array ->
+                (0 until array.length()).mapNotNull { SkillFlow.fromJson(array.optJSONObject(it)) }
+            }.orEmpty(),
         )
     }
 

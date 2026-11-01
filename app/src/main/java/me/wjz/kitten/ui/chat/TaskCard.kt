@@ -487,7 +487,8 @@ private fun LearnedRow(learned: Reflection.Learned, onOpenSkill: (skillId: Strin
             maxLines = 1,
         )
         Text(
-            text = "「${learned.skillName}」",
+            // 一次动了好几个技能（一件事跨了两个应用）：写第一个，后面说一声还有几个。点了打开第一个。
+            text = "「${learned.skillName}」" + if (learned.others > 0) " 等 ${learned.others + 1} 个技能" else "",
             style = MaterialTheme.typography.bodySmall,
             color = colors.textSecondary,
             maxLines = 1,

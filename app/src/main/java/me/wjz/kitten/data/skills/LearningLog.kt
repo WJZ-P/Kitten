@@ -30,8 +30,11 @@ object LearningLog {
      */
     private const val MAX_ENTRIES = 200
 
-    /** 学到了什么：技能的 id（点那一行打开它）和学到时的名字（那一行上写的）。 */
-    data class Entry(val skillId: String, val skillName: String)
+    /**
+     * 学到了什么：技能的 id（点那一行打开它）和学到时的名字（那一行上写的）。一次复盘动了好几个技能时，
+     * [others] 是除了它还有几个。
+     */
+    data class Entry(val skillId: String, val skillName: String, val others: Int = 0)
 
     /** 全部记录，anchor → 学到了什么。 */
     fun load(context: Context): Map<String, Entry> {
@@ -43,7 +46,7 @@ object LearningLog {
                     val json = array.optJSONObject(i) ?: continue
                     val anchor = json.optString("anchor").takeIf { it.isNotBlank() } ?: continue
                     val id = json.optString("id").takeIf { it.isNotBlank() } ?: continue
-                    put(anchor, Entry(skillId = id, skillName = json.optString("name")))
+                    put(anchor, Entry(skillId = id, skillName = json.optString("name"), others = json.optInt("more")))
                 }
             }
         }.getOrElse {
@@ -62,7 +65,8 @@ object LearningLog {
                 JSONObject()
                     .put("anchor", key)
                     .put("id", value.skillId)
-                    .put("name", value.skillName),
+                    .put("name", value.skillName)
+                    .put("more", value.others),
             )
         }
         prefs(context).edit { putString(KEY_ENTRIES, array.toString()) }

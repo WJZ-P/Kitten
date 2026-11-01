@@ -9,6 +9,7 @@ import me.wjz.kitten.agent.tools.LearnSkillTool
 import me.wjz.kitten.agent.tools.RECALL_MEMORY
 import me.wjz.kitten.agent.tools.ReadSkillTool
 import me.wjz.kitten.agent.tools.SAVE_MEMORY
+import me.wjz.kitten.agent.tools.SaveFlowTool
 import me.wjz.kitten.agent.tools.SaveSkillTool
 import me.wjz.kitten.agent.tools.StartTaskTool
 import me.wjz.kitten.llm.ToolCall
@@ -116,12 +117,18 @@ fun ToolCall.describe(): String {
         "learn_skill" -> args.optString("name").trim().takeIf { it.isNotEmpty() }
             ?.let { "记下技能「${it.take(MaxQuotedChars)}」" }
             ?: "记下一个技能"
+        "run_flow" -> args.optString("flow").trim().takeIf { it.isNotEmpty() }
+            ?.let { "跑流程「${it.take(MaxQuotedChars)}」" }
+            ?: "跑一个流程"
+        "save_flow" -> args.optString("name").trim().takeIf { it.isNotEmpty() }
+            ?.let { "存下流程「${it.take(MaxQuotedChars)}」" }
+            ?: "存下一个流程"
         else -> name
     }
 }
 
 /**
- * 这次调用是不是在操作手机（读屏、点按、输入、打开应用……）。查记忆、提问、开任务、读写技能不算。
+ * 这次调用是不是在操作手机（读屏、点按、输入、打开应用、跑流程……）。查记忆、提问、开任务、读写技能不算。
  *
  * 一件事算不算"在办事"都按它数：对话里满几步自动收进任务卡片（ChatScreen 的 buildChatItems）、
  * 任务页上要不要显示成正在办的任务（[AgentTaskHandle]）、办完要不要复盘（[SkillReflector]）。
@@ -137,6 +144,7 @@ private val NotPhoneOperations = setOf(
     ReadSkillTool.NAME,
     SaveSkillTool.NAME,
     LearnSkillTool.NAME,
+    SaveFlowTool.NAME,
 )
 
 /** 说明里引用用户输入的内容时最多带几个字，再长就省略：一行放不下，也没必要全写出来。 */

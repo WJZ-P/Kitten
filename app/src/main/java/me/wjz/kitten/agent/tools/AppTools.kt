@@ -9,6 +9,7 @@ import me.wjz.kitten.agent.AgentTool
 import me.wjz.kitten.agent.DeviceSession
 import me.wjz.kitten.agent.objectSchema
 import me.wjz.kitten.agent.stringParam
+import me.wjz.kitten.data.skills.FlowStep
 import org.json.JSONObject
 
 /**
@@ -102,6 +103,9 @@ class LaunchAppTool(private val session: DeviceSession) : AgentTool {
         if (packageName.isEmpty()) {
             return "ERROR bad_args: 没有给 package_name。先用 list_apps 查到包名再调。"
         }
-        return session.launchApp(packageName)
+        val result = session.launchApp(packageName)
+        // 拉起来了才记：流程一般从这一步开始，见 ActionTrace。
+        if (!result.startsWith("ERROR")) session.trace.record(FlowStep.Launch(packageName), packageName)
+        return result
     }
 }

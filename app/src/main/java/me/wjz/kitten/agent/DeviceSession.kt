@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.util.Log
 import android.view.Display
 import me.wjz.kitten.a11y.UiSnapshot
+import me.wjz.kitten.agent.flow.ActionTrace
 import me.wjz.kitten.llm.ImageAttachment
 import me.wjz.kitten.privilege.VirtualDisplayManager
 import java.io.File
@@ -57,6 +58,12 @@ class DeviceSession(private val context: Context) {
      * （见 [me.wjz.kitten.a11y.ScreenError.NodeGone]）。
      */
     var lastSnapshot: UiSnapshot? = null
+
+    /**
+     * 这一轮做过的操作，换成了能重放的样子（节点编号换成选择器）。动作工具每做成一步记一笔，一轮办完
+     * 交给复盘整理成自动流程，见 [ActionTrace]。[release] 不清它：复盘在收掉副屏之后才读。
+     */
+    val trace = ActionTrace()
 
     /** 自己建的副屏，结束时要收掉。没建过是 [VirtualDisplayManager.INVALID_DISPLAY_ID]。 */
     private var ownedDisplayId: Int = VirtualDisplayManager.INVALID_DISPLAY_ID

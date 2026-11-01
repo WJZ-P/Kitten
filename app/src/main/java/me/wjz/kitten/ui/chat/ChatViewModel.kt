@@ -38,6 +38,7 @@ import me.wjz.kitten.agent.tools.ReadScreenTool
 import me.wjz.kitten.agent.tools.ReadSkillTool
 import me.wjz.kitten.agent.tools.SaveSkillTool
 import me.wjz.kitten.agent.tools.RecallMemoryTool
+import me.wjz.kitten.agent.tools.RunFlowTool
 import me.wjz.kitten.agent.tools.SaveMemoryTool
 import me.wjz.kitten.agent.tools.ScreenshotTool
 import me.wjz.kitten.agent.tools.ScrollTool
@@ -430,8 +431,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
             // 正常办完了：够分量就在后台复盘，值得记的存成技能（自我进化）。被停掉、出错的不复盘，
             // 走不到这里或者 outcome 是 Failed。
+            // 操作记录（device.trace）一起交过去，复盘从里面挑跑通的一段存成自动流程。
             if (outcome is AgentResult.Done && BuiltinSkill.SelfLearning in skills) {
-                SkillReflector.onRunFinished(getApplication(), sessionId, runLog)
+                SkillReflector.onRunFinished(getApplication(), sessionId, runLog, device.trace.snapshot())
             }
 
             val repaired = repairedUrl
@@ -535,7 +537,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * 这一轮能用的工具：开着的技能各自带上自己那组（设置 → 技能里关掉的那组不给）。顺序就是给模型
-     * 看的顺序：操作手机、提问、记忆、开任务，然后是写技能、读技能。
+     * 看的顺序：操作手机（有带流程的技能时加上跑流程）、提问、记忆、开任务，然后是写技能、读技能。
      *
      * ## 技能全关了，历史里又有工具调用
      *
@@ -546,6 +548,10 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private fun toolsFor(skills: SkillSet, device: DeviceSession, history: List<ChatMessage>): List<AgentTool> =
         buildList {
             if (BuiltinSkill.Phone in skills) addAll(phoneTools(device))
+            // 跑流程也是在操作手机，跟着它走；一个流程都没有就不给，省得模型去调一个没东西可跑的工具。
+            if (BuiltinSkill.Phone in skills && skills.userSkills.any { it.flows.isNotEmpty() }) {
+                add(RunFlowTool(getApplication(), device, skills.userSkills))
+            }
             if (BuiltinSkill.Ask in skills) add(AskUserTool(asker))
             if (BuiltinSkill.Memory in skills) addAll(memoryTools())
             // 开任务跟着"操作手机"：卡片收的就是操作手机的步骤（见 BuiltinSkill.Phone）。
@@ -575,7 +581,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         PressKeyTool(device),
         ScreenshotTool(device),
         MainScreenshotTool(device),
-        WaitTool(),
+        WaitTool(device),
     )
 
     /** 记忆的三个工具。不依赖这一轮的屏幕，和操作手机的那些分开放。 */

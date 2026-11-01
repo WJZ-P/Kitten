@@ -4,6 +4,7 @@ import me.wjz.kitten.agent.AgentTool
 import me.wjz.kitten.agent.objectSchema
 import me.wjz.kitten.agent.stringParam
 import me.wjz.kitten.data.skills.UserSkill
+import me.wjz.kitten.data.skills.targetSelector
 import org.json.JSONObject
 
 /**
@@ -44,7 +45,30 @@ class ReadSkillTool(private val skills: List<UserSkill>) : AgentTool {
             ?: return "ERROR unknown_skill: 没有叫「$wanted」的技能。你会的技能有：" +
                 skills.joinToString("、") { "「${it.name}」" } + "。"
         val note = if (skill.isLearned) LEARNED_NOTE else ""
-        return "技能「${skill.name}」的说明：\n\n$note${skill.instructions.trim()}"
+        return buildString {
+            append("技能「${skill.name}」")
+            skill.app?.let { append("（应用 $it）") }
+            append("的说明：\n\n$note${skill.instructions.trim()}")
+            if (skill.flows.isNotEmpty()) append("\n\n").append(describeFlows(skill))
+        }
+    }
+
+    /**
+     * 技能里的自动流程：名字、参数、做什么，和每一步（带着定位用的选择器）。对话里的模型看了知道
+     * 流程跑完停在哪、卡住时自己怎么接着做；复盘的看了知道该怎么修。
+     */
+    private fun describeFlows(skill: UserSkill): String = buildString {
+        append("自动流程（可以用 run_flow 直接跑）：")
+        skill.flows.forEach { flow ->
+            append("\n\n「${flow.name}」")
+            if (flow.params.isNotEmpty()) append("，参数：${flow.params.joinToString("、")}")
+            if (flow.description.isNotBlank()) append("：${flow.description.trim()}")
+            if (flow.runs > 0) append("（跑过 ${flow.runs} 次，卡住过 ${flow.failures} 次）")
+            flow.steps.forEachIndexed { index, step ->
+                append("\n${index + 1}. ${step.describe()}")
+                step.targetSelector?.let { append("  $it") }
+            }
+        }
     }
 
     companion object {

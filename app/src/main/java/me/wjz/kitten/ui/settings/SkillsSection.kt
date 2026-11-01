@@ -1,31 +1,49 @@
 package me.wjz.kitten.ui.settings
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.kyant.backdrop.Backdrop
 import me.wjz.kitten.data.skills.BuiltinSkill
+import me.wjz.kitten.data.skills.SkillFlow
 import me.wjz.kitten.data.skills.UserSkill
+import me.wjz.kitten.data.skills.targetSelector
 import me.wjz.kitten.ui.component.GlassButton
 import me.wjz.kitten.ui.component.GlassButtonStyle
 import me.wjz.kitten.ui.component.GlassContentPadding
+import me.wjz.kitten.ui.component.GlassRadius
 import me.wjz.kitten.ui.component.GlassSection
 import me.wjz.kitten.ui.component.GlassSwitch
 import me.wjz.kitten.ui.component.GlassTextField
@@ -71,13 +89,17 @@ fun SkillsPage(
             userSkills.forEach { skill ->
                 key(skill.id) {
                     // Kitten 自己学的打头是小星星、说明前面标一句，一眼分得出哪些是它自己记的、还没看过。
-                    // 点进去看过、保存了，就算用户的了（见 SettingsScreen）。
-                    val whenToUse = skill.whenToUse.trim().ifEmpty { "还没写什么时候用" }
+                    // 点进去看过、保存了，就算用户的了（见 SettingsScreen）。带自动流程的写上有几个。
+                    val subtitle = listOfNotNull(
+                        "Kitten 自己学的".takeIf { skill.isLearned },
+                        "${skill.flows.size} 个流程".takeIf { skill.flows.isNotEmpty() },
+                        skill.whenToUse.trim().ifEmpty { "还没写什么时候用" },
+                    ).joinToString(" · ")
                     SettingsRow(
                         icon = if (skill.isLearned) KittenIcons.AutoAwesome else KittenIcons.Extension,
                         iconTint = if (skill.isLearned) colors.iconPink else colors.iconAmber,
                         title = skill.name,
-                        subtitle = if (skill.isLearned) "Kitten 自己学的 · $whenToUse" else whenToUse,
+                        subtitle = subtitle,
                         showChevron = false,
                         trailing = {
                             GlassSwitch(
@@ -197,6 +219,7 @@ fun SkillEditorPage(
                 minLines = InstructionsMinLines,
                 maxLines = InstructionsMaxLines,
             )
+            if (draft.flows.isNotEmpty()) FlowList(draft, onDraftChange)
             GlassButton(
                 text = "保 存",
                 onClick = onSave,
@@ -225,6 +248,111 @@ fun SkillEditorPage(
         }
     }
 }
+
+/**
+ * 技能里的自动流程（见 SkillFlow）：一个流程一块，写着它办什么、要什么参数、跑过几次，下面一步步
+ * 列出来，每步后面跟着定位用的选择器（小字）。
+ *
+ * 只能看、能删，不能改：步骤都是真点成功过的操作，手改选择器很容易改坏，坏了的流程交给复盘去修。
+ * 删是改草稿，点保存才算数，和改说明一样；删之前先点一下变成确认，和删技能一样。
+ */
+@Composable
+private fun FlowList(draft: UserSkill, onDraftChange: (UserSkill) -> Unit) {
+    val colors = KittenTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(FlowGap)) {
+        Text(
+            text = "自动流程",
+            style = MaterialTheme.typography.labelLarge,
+            color = colors.textSecondary,
+        )
+        Text(
+            text = "Kitten 跑通过的操作，下次直接照着点，又快又省～",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.textTertiary,
+        )
+        draft.flows.forEach { flow ->
+            key(flow.name) {
+                FlowBlock(flow = flow, onDelete = { onDraftChange(draft.copy(flows = draft.flows - flow)) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun FlowBlock(flow: SkillFlow, onDelete: () -> Unit) {
+    val colors = KittenTheme.colors
+    var confirming by remember(flow) { mutableStateOf(false) }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(FlowShape)
+            .background(colors.controlTint)
+            .padding(FlowPadding),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = flow.name,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = colors.textPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = "${flow.steps.size} 步",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.textTertiary,
+            )
+        }
+        if (flow.description.isNotBlank()) {
+            Text(text = flow.description, style = MaterialTheme.typography.bodySmall, color = colors.textSecondary)
+        }
+        flowMeta(flow)?.let {
+            Text(text = it, style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
+        }
+        flow.steps.forEachIndexed { index, step ->
+            Text(
+                text = buildAnnotatedString {
+                    append("${index + 1}. ${step.describe()}")
+                    step.targetSelector?.let { selector ->
+                        withStyle(SpanStyle(color = colors.textTertiary, fontSize = SelectorFontSize, fontFamily = FontFamily.Monospace)) {
+                            append("  $selector")
+                        }
+                    }
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.textPrimary,
+            )
+        }
+        Text(
+            text = if (confirming) "再点一次，删掉它" else "删掉这个流程",
+            style = MaterialTheme.typography.labelMedium,
+            color = if (confirming) colors.danger else colors.textSecondary,
+            modifier = Modifier
+                .align(Alignment.End)
+                .clip(RoundedCornerShape(GlassRadius.Small))
+                // 按下铺一层水波，松手才算数。
+                .clickable(
+                    interactionSource = null,
+                    indication = ripple(color = colors.accentStrong),
+                    role = Role.Button,
+                ) {
+                    if (confirming) onDelete() else confirming = true
+                }
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+    }
+}
+
+/** 流程的参数和跑过几次，一行小字。都没有就是 null。 */
+private fun flowMeta(flow: SkillFlow): String? = listOfNotNull(
+    flow.params.takeIf { it.isNotEmpty() }?.let { "参数：${it.joinToString("、")}" },
+    flow.runs.takeIf { it > 0 }?.let { runs ->
+        "跑过 $runs 次" + if (flow.failures > 0) "，卡住过 ${flow.failures} 次" else ""
+    },
+).takeIf { it.isNotEmpty() }?.joinToString(" · ")
 
 /** 默认技能在列表里叫什么。 */
 private val BuiltinSkill.title: String
@@ -267,6 +395,17 @@ private fun KittenColors.tintOf(skill: BuiltinSkill): Color = when (skill) {
 
 /** 页底那句小字往里缩多少：和分组名对齐。 */
 private val HintInset = 8.dp
+
+/**
+ * 编辑页里一个流程那一块：圆角、内边距、几块之间空多少。圆角取小一档，它是嵌在卡片里的东西；
+ * 底色是控件那层淡白（controlTint），不再叠一层玻璃。
+ */
+private val FlowShape = RoundedCornerShape(GlassRadius.Medium)
+private val FlowPadding = 12.dp
+private val FlowGap = 8.dp
+
+/** 步骤后面那串选择器的字号：比步骤小一号，看得清又不抢眼。 */
+private val SelectorFontSize = 11.sp
 
 /** "什么时候用"的输入框至少几行、最多长到几行：一两句话的事。 */
 private const val WhenToUseMinLines = 2
