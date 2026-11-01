@@ -11,4 +11,15 @@ data class MemoryEntry(
     val content: String,
     val createdAtMillis: Long,
     val updatedAtMillis: Long,
+    /**
+     * 最近一次"用到"它的时间：记下、改过、被 recall_memory 查到。放进系统提示词时按它排，最近用到的
+     * 先放，放不下的是最久没用的那些（见 [MemoryStore.forPrompt]）。
+     */
+    val lastUsedAtMillis: Long = updatedAtMillis,
 )
+
+/**
+ * 放进系统提示词的那几条记忆（[entries]，最近用到的在前），和放不下、没列进去的还有几条（[omitted]）。
+ * 见 [MemoryStore.forPrompt]。
+ */
+data class PromptMemories(val entries: List<MemoryEntry>, val omitted: Int)

@@ -128,7 +128,6 @@ object SkillStore {
             whenToUse = json.optString("when"),
             instructions = json.optString("body"),
             enabled = json.optBoolean("on", true),
-            // 没存过来源的是加上这一项之前存的，那时只有用户自己写的。
             source = if (json.optString("src") == SOURCE_LEARNED) SkillSource.Learned else SkillSource.User,
             app = json.optString("app").takeIf { it.isNotBlank() },
             // 读不出来的流程跳过，不连累整个技能：说明照样能用，只是少了那个流程。

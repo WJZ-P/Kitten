@@ -11,9 +11,11 @@ import org.json.JSONObject
 /*
  * 记忆的三个工具：查、记（含改）、忘。
  *
- * 读记忆完全靠模型自己调 recall_memory，系统提示词里不放记忆内容：什么时候该查，写在工具描述和
- * 操作手册里（见 SystemPrompt）。好处是不查的时候一个 token 都不花，记忆增删也不会让系统提示词
- * 变、让缓存失效；代价是模型偶尔会忘了先查，真成了问题再在系统提示词里加一行提醒。
+ * 读记忆有两条路：
+ * - 系统提示词最后直接列着一部分（「你记得的事」，见 SystemPrompt）：记忆不多时全在里面，模型不用想起
+ *   来去查就看得到；多了就按最近用到的挑，放不下的最久没用的那些靠这里查。每个会话开始时定一次，同一
+ *   个会话里不变，前缀缓存才不会失效（见 ChatViewModel 的 memoriesFor）。
+ * - recall_memory：提示词里没列全时，模型按关键词查。查到的算"用到了"，下个会话优先进提示词。
  *
  * ## 谁能让 Kitten 记
  *
@@ -46,8 +48,9 @@ class RecallMemoryTool(private val store: MemoryStore) : AgentTool {
 
     override val description =
         "翻一翻你记下的、关于用户的事：偏好、忌口、称呼、常用地址、账号信息之类，换了对话也还在。" +
-            "要替用户做选择之前（买东西、点外卖、订票、帮他回消息），先用它查一下有没有相关的偏好；" +
-            "用户说「还记得吗」「上次那个」「我之前说过」时也查。" +
+            "系统提示词最后「你记得的事」里列着的直接用，不用再查；那里写着还有没列出来的时候，" +
+            "要替用户做选择之前（买东西、点外卖、订票、帮他回消息）先用它查一下有没有相关的偏好，" +
+            "用户说「还记得吗」「上次那个」「我之前说过」而列着的里面又没有时也查。" +
             "query 写几个关键词、用空格隔开，内容里包含任意一个就会被找到；关键词宁可多写几个近义的" +
             "（比如「吃 口味 忌口 过敏」）。留空则列出最近记下的。"
 
@@ -65,6 +68,9 @@ class RecallMemoryTool(private val store: MemoryStore) : AgentTool {
         if (total == 0) return "还没有记下任何关于用户的事。"
 
         val found = if (keywords.isEmpty()) store.recent(MAX_RECALLED) else store.search(keywords, MAX_RECALLED)
+        // 按关键词查到的才算"用到了"：下一个会话的系统提示词里优先放它们（见 MemoryStore.forPrompt）。
+        // 留空列出来的那一串只是翻了翻，算进去的话这几十条就一直霸着位置。
+        if (keywords.isNotEmpty()) store.markUsed(found.map { it.id })
         if (found.isEmpty()) {
             return "没有找到和「${keywords.joinToString(" ")}」相关的记忆（一共记了 $total 条）。" +
                 "可以换几个近义的关键词再查，或者留空 query 看看都记了什么。"

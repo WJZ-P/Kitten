@@ -51,6 +51,7 @@ import me.wjz.kitten.agent.tools.WaitTool
 import me.wjz.kitten.agent.withInterruptedResults
 import me.wjz.kitten.data.attachment.AttachmentStore
 import me.wjz.kitten.data.memory.MemoryStore
+import me.wjz.kitten.data.memory.PromptMemories
 import me.wjz.kitten.data.session.SessionRepository
 import me.wjz.kitten.data.session.sqlite.SqliteSessionRepository
 import me.wjz.kitten.data.skills.BuiltinSkill
@@ -89,6 +90,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** 关于用户的记忆。和设置页共用一个实例，模型刚记下的那边马上看得到，见 [MemoryStore]。 */
     private val memoryStore = MemoryStore.get(application)
+
+    /** 每个会话放进系统提示词的那份记忆，会话 id → 那一份，见 [memoriesFor]。 */
+    private val sessionMemories = HashMap<String, PromptMemories>()
 
     /** 正在等的那个回答。Agent 调 ask_user 时挂上，用户答了或者任务被取消时清掉。 */
     private var pendingAnswer: CancellableContinuation<String>? = null
@@ -217,7 +221,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.Default) { ParsedMarkdown.prepare(replies) }
     }
 
+    /**
+     * 这个会话放进系统提示词的那份记忆：会话里第一次用到时从本子里挑一次（最多 [SystemPrompt.MEMORY_CHARS]
+     * 个字，最近用到的先放，见 MemoryStore.forPrompt），之后每一轮都用这一份。
+     *
+     * 只在会话开头定一次是为了缓存：系统提示词一变，前缀缓存就失效，整段对话要按原价重新算。会话里刚记下、
+     * 改掉的那几条，模型自己在对话里做的，它知道；用户在设置页里改的，下一个会话才进提示词。
+     *
+     * 只记在内存里：App 重开以后再翻回这个会话，第一轮重新挑一次——隔了这么久，服务商那边的缓存本来也过期了。
+     */
+    private suspend fun memoriesFor(sessionId: String): PromptMemories =
+        sessionMemories.getOrPut(sessionId) { memoryStore.forPrompt(SystemPrompt.MEMORY_CHARS) }
+
     fun deleteSession(id: String) {
+        sessionMemories.remove(id)
         viewModelScope.launch {
             repository.delete(id)
             // 删掉的正好是当前打开的，就退回空白状态。
@@ -353,7 +370,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
             var config = LlmConfigStore.load(getApplication())
             // 这一轮开始时读一次，整轮用同一份：中途变了会让 thinking 块失效，见 SystemPrompt。
-            val systemPrompt = SystemPrompt.load(getApplication(), skills)
+            // 记忆那一截是这个会话开始时定下的，会话里每一轮都一样，见 memoriesFor。
+            val memories = if (BuiltinSkill.Memory in skills) memoriesFor(sessionId) else null
+            val systemPrompt = SystemPrompt.load(getApplication(), skills, memories)
             var repairedUrl: String? = null
             var firstCall = true
 

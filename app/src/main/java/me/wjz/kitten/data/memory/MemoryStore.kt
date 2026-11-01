@@ -32,7 +32,13 @@ import kotlinx.coroutines.withContext
  * ## 存的是明文
  *
  * 用户要求密码、卡号也照记，以方便为主。数据在 App 自己的沙箱里，别的应用读不到。另一面要心里
- * 有数：模型查记忆时，查到的内容会随请求发给模型服务商。
+ * 有数：记忆会随请求发给模型服务商——放进系统提示词的那些（[forPrompt]）每次请求都带着，没放进去的
+ * 在模型查到时带上。
+ *
+ * ## 最近用到
+ *
+ * 每条记着最近一次被用到的时间（记下、改过、被 recall_memory 查到，[markUsed]）。系统提示词里只放得下
+ * 一部分时，按它挑最近用到的那些，最久没用的让出位置——一个 LRU。
  *
  * 记忆内容不打日志，和用户消息一个规矩。
  */
@@ -75,6 +81,37 @@ class MemoryStore private constructor(context: Context) {
         query(selection, args, limit)
     }
 
+    /**
+     * 放进系统提示词的那几条：按最近用到排，从最近的开始放，放到下一条会超过 [budgetChars] 个字就停，
+     * 剩下的（最久没用的那些）不放，见 [PromptMemories]。
+     *
+     * 严格按先后截断，不跳过长的去塞后面短的：塞进去的就该是"最近用到的那一批"，挑着塞的话，一条很久
+     * 没用的短记忆反倒占着位置。
+     */
+    suspend fun forPrompt(budgetChars: Int): PromptMemories = withContext(Dispatchers.IO) {
+        val all = helper.readableDatabase.query(
+            TABLE, null, null, null, null, null,
+            "$COL_LAST_USED_AT DESC, $COL_ID DESC",
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.toEntry()) } }
+        var used = 0
+        val taken = all.takeWhile { entry ->
+            (used + entry.content.length <= budgetChars).also { fits -> if (fits) used += entry.content.length }
+        }
+        PromptMemories(entries = taken, omitted = all.size - taken.size)
+    }
+
+    /**
+     * 这几条刚被用到了（recall_memory 查到了它们），记下时间。不发变更信号：设置页的列表不显示这个，
+     * 每查一次就让它重读一遍没有意义。
+     */
+    suspend fun markUsed(ids: Collection<Long>) = withContext(Dispatchers.IO) {
+        if (ids.isEmpty()) return@withContext
+        helper.writableDatabase.execSQL(
+            "UPDATE $TABLE SET $COL_LAST_USED_AT = ? WHERE $COL_ID IN (${ids.joinToString(",") { "?" }})",
+            arrayOf<Any>(System.currentTimeMillis()) + ids.map { it as Any },
+        )
+    }
+
     /** 记下一条，返回记下的这条；已经满了（[MAX_ENTRIES]）返回 null。 */
     suspend fun add(content: String): MemoryEntry? = withContext(Dispatchers.IO) {
         if (countBlocking() >= MAX_ENTRIES) return@withContext null
@@ -86,6 +123,8 @@ class MemoryStore private constructor(context: Context) {
                 put(COL_CONTENT, content)
                 put(COL_CREATED_AT, now)
                 put(COL_UPDATED_AT, now)
+                // 刚记下的算刚用到：下一个会话的提示词里先放它。
+                put(COL_LAST_USED_AT, now)
             },
         )
         if (id == -1L) {
@@ -99,11 +138,14 @@ class MemoryStore private constructor(context: Context) {
     /** 把 [id] 那条改成 [content]，返回改之前的那条；没有这条返回 null。 */
     suspend fun update(id: Long, content: String): MemoryEntry? = withContext(Dispatchers.IO) {
         val old = findBlocking(id) ?: return@withContext null
+        val now = System.currentTimeMillis()
         helper.writableDatabase.update(
             TABLE,
             ContentValues().apply {
                 put(COL_CONTENT, content)
-                put(COL_UPDATED_AT, System.currentTimeMillis())
+                put(COL_UPDATED_AT, now)
+                // 改过的也算刚用到。
+                put(COL_LAST_USED_AT, now)
             },
             "$COL_ID = ?",
             arrayOf(id.toString()),
@@ -156,6 +198,7 @@ class MemoryStore private constructor(context: Context) {
         content = getString(getColumnIndexOrThrow(COL_CONTENT)).orEmpty(),
         createdAtMillis = getLong(getColumnIndexOrThrow(COL_CREATED_AT)),
         updatedAtMillis = getLong(getColumnIndexOrThrow(COL_UPDATED_AT)),
+        lastUsedAtMillis = getLong(getColumnIndexOrThrow(COL_LAST_USED_AT)),
     )
 
     /** LIKE 里 % 和 _ 是通配符，关键词里本来就带的话要转义，不然"100%"会匹配到一切。 */
@@ -176,29 +219,34 @@ class MemoryStore private constructor(context: Context) {
                     $COL_ID INTEGER PRIMARY KEY AUTOINCREMENT,
                     $COL_CONTENT TEXT NOT NULL,
                     $COL_CREATED_AT INTEGER NOT NULL,
-                    $COL_UPDATED_AT INTEGER NOT NULL
+                    $COL_UPDATED_AT INTEGER NOT NULL,
+                    $COL_LAST_USED_AT INTEGER NOT NULL
                 )
                 """.trimIndent(),
             )
         }
 
         /**
-         * 现在只有 v1。以后改表结构**要写真正的迁移**，不能学 kitten.db 整库重建：
-         * 记忆是用户攒下来的，丢了就没了。
+         * 还没上线，表结构说改就改，不写迁移：版本号加一，整张表重建，手机上测试时记的那些清掉。
+         * 上线以后再改表结构，就得写真正的迁移了——那时记忆是用户攒下来的，丢了就没了。
          */
-        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            db.execSQL("DROP TABLE IF EXISTS $TABLE")
+            onCreate(db)
+        }
     }
 
     companion object {
         private const val TAG = "KittenMemory"
         private const val DATABASE_NAME = "kitten_memory.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 2
 
         private const val TABLE = "memories"
         private const val COL_ID = "id"
         private const val COL_CONTENT = "content"
         private const val COL_CREATED_AT = "created_at"
         private const val COL_UPDATED_AT = "updated_at"
+        private const val COL_LAST_USED_AT = "last_used_at"
 
         /**
          * 一条记忆最多多少字。地址、卡号、一句偏好都远远用不到；再长多半是把一大段东西整个塞了

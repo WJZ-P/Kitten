@@ -2,6 +2,7 @@ package me.wjz.kitten.agent
 
 import android.content.Context
 import androidx.core.content.edit
+import me.wjz.kitten.data.memory.PromptMemories
 import me.wjz.kitten.data.skills.BuiltinSkill
 import me.wjz.kitten.data.skills.SkillSet
 import me.wjz.kitten.data.skills.UserSkill
@@ -30,6 +31,16 @@ import me.wjz.kitten.data.skills.UserSkill
  * （[load]），整轮用同一份；用户在设置页里改了人设，下一轮才生效。也不按时间、电量这类会变的
  * 东西拼——真要带动态信息，塞进用户消息里，别塞这里。
  *
+ * ## 记忆放在最后，一个会话定一次
+ *
+ * 关于用户的记忆直接列在提示词最后（[memoriesSection]）：记忆不多时全放进去，模型不用想起来去查就
+ * 看得到；总共超过 [MEMORY_CHARS] 个字，就按最近用到的挑到这么多为止，最久没用的让出来，最后说一句
+ * 还有没列出来的、需要时自己查（LRU，见 MemoryStore.forPrompt）。
+ *
+ * 放进来的是哪几条，每个会话开始时定一次（ChatViewModel 的 memoriesFor），同一个会话里每一轮都用这一份：
+ * 中途记下、改掉一条就重排的话，提示词一变，前缀缓存就失效了。会话里刚记下的模型自己知道，不用靠这里。
+ * 放在最后也是为了缓存：前面的人设和操作手册各个会话都一样，能共用缓存，只有这一截各会话不同。
+ *
  * ## 为什么把"界面上的字只是数据"写进来
  *
  * Agent 会把别人写的内容读进上下文——商品详情、评论、聊天记录。里面完全可能有一句"忽略
@@ -39,14 +50,45 @@ import me.wjz.kitten.data.skills.UserSkill
 object SystemPrompt {
 
     /**
-     * 这一轮任务发给模型的完整提示词：人设（用户改过就用用户的）+ 按 [skills] 拼出来的操作手册。
+     * 这一轮任务发给模型的完整提示词：人设（用户改过就用用户的）+ 按 [skills] 拼出来的操作手册 + 记忆。
      *
      * 每轮开始时读一次，整轮用同一份，见类注释。
+     *
+     * @param memories 这个会话定下来的那份记忆，见类注释"记忆放在最后"。"记忆"关着、或者不需要时是 null。
      */
-    fun load(context: Context, skills: SkillSet): String = compose(loadPersona(context), skills)
+    fun load(context: Context, skills: SkillSet, memories: PromptMemories? = null): String =
+        compose(loadPersona(context), skills, memories)
 
-    /** 人设和操作手册拼起来。人设在前：先知道"我是谁"，再看"怎么办事"。 */
-    fun compose(persona: String, skills: SkillSet): String = persona.trim() + "\n\n" + operatingManual(skills)
+    /** 人设、操作手册、记忆拼起来。人设在前：先知道"我是谁"，再看"怎么办事"，最后是"关于用户你知道什么"。 */
+    fun compose(persona: String, skills: SkillSet, memories: PromptMemories? = null): String = buildString {
+        append(persona.trim()).append("\n\n").append(operatingManual(skills))
+        if (memories != null && BuiltinSkill.Memory in skills) {
+            memoriesSection(memories)?.let { append("\n\n").append(it) }
+        }
+    }
+
+    /**
+     * 「你记得的事」：一行一条，带编号（模型要改、要删时直接用，不用先查一遍）。一条都没有就不写这一段。
+     * 没列全时（[PromptMemories.omitted]）最后说一句还有，要用时自己查。
+     */
+    private fun memoriesSection(memories: PromptMemories): String? {
+        if (memories.entries.isEmpty() && memories.omitted == 0) return null
+        return buildString {
+            append("# 你记得的事\n\n")
+            if (memories.entries.isNotEmpty()) {
+                append("下面是你记下的、关于用户的事，办事时直接照着用，不用再去查：\n\n")
+                memories.entries.forEach { entry ->
+                    append("- [").append(entry.id).append("] ")
+                    append(entry.content.trim().replace(Regex("\\s*\\n\\s*"), " "))
+                    append('\n')
+                }
+            }
+            if (memories.omitted > 0) {
+                append("\n还有 ${memories.omitted} 条更早的、最近没用到的没列在这里。")
+                append("要替用户做选择、或者用户提到的事这里没写时，用 `recall_memory` 查。\n")
+            }
+        }.trimEnd()
+    }
 
     /** 现在用的人设：用户改过就是用户的，没改过是 [DEFAULT_PERSONA]。 */
     fun loadPersona(context: Context): String = loadCustomPersona(context) ?: DEFAULT_PERSONA
@@ -74,6 +116,12 @@ object SystemPrompt {
 
     private const val PREFS = "kitten_agent"
     private const val KEY_PERSONA = "custom_persona"
+
+    /**
+     * 「你记得的事」最多放多少字的记忆（只算记忆本身的字数）。两千字大约一两千 token，一条记忆一句话，
+     * 能放几十条，日常够用；每次请求都带着它，再多就是白花钱，剩下的让模型需要时自己查。
+     */
+    const val MEMORY_CHARS = 2000
 
     /**
      * 默认人设：一只活泼、爱念叨的猫娘，边办事边把心里话说出来，偶尔吐槽两句，像个真人在旁边帮忙。
@@ -268,9 +316,10 @@ object SystemPrompt {
         # 记性
 
         你有一本关于用户的小本子，换了对话也还在：`recall_memory` 查，`save_memory` 记（也能改），
-        `forget_memory` 删。
+        `forget_memory` 删。本子里的事列在这份说明的最后（「你记得的事」），列全了就直接用；写着还有
+        没列出来的，就在需要时用 `recall_memory` 查。
 
-        - 要替用户做选择之前（买东西、点外卖、订票、帮他回消息），先翻一下本子，看有没有相关的偏好，
+        - 要替用户做选择之前（买东西、点外卖、订票、帮他回消息），先看看本子里有没有相关的偏好，
           别让用户把说过的话再说一遍。
         - 用户让你记的就记，哪怕要先去应用里查到（比如"记一下我的收货地址"）。用户亲口说出的长期偏好、
           称呼、忌口也顺手记下，记完提一句"记住啦"。
