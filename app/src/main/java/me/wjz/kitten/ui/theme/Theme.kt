@@ -5,7 +5,13 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 
 /**
  * Material 组件（弹窗、Snackbar、调试卡片）的配色，和 [LightKittenColors] 取自同一张色板。
@@ -47,7 +53,14 @@ private val LightMaterialColors = lightColorScheme(
  */
 @Composable
 fun KittenTheme(content: @Composable () -> Unit) {
-    CompositionLocalProvider(LocalKittenColors provides LightKittenColors) {
+    val context = LocalContext.current
+    val fontScale by remember(context) { FontScale.state(context) }.collectAsState()
+    val density = LocalDensity.current
+    CompositionLocalProvider(
+        LocalKittenColors provides LightKittenColors,
+        // 用户在设置里调的字号（见 FontScale），乘在系统字号上：只放大字，布局尺寸不变。
+        LocalDensity provides Density(density.density, density.fontScale * fontScale),
+    ) {
         MaterialTheme(colorScheme = LightMaterialColors, content = content)
     }
 }

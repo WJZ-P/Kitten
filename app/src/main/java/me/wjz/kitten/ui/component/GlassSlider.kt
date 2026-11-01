@@ -64,6 +64,9 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *
  * @param steps 中间的吸附档位数，和 Material Slider 的含义一致：0 表示连续，
  *   比如 0..1 配 `steps = 3` 就是 0 / 0.25 / 0.5 / 0.75 / 1 五档。
+ * @param onPreview 拖动中手指底下是哪个值（按 [steps] 吸附过的），给要"边拖边看效果"的地方用（比如
+ *   字号的示例文字）。只是预览，真正生效还是抬手时的 [onValueChange]；被滚动接管、退回原值时也会报一次
+ *   原值，预览跟着退回去。
  */
 @Composable
 fun GlassSlider(
@@ -74,9 +77,11 @@ fun GlassSlider(
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
     steps: Int = 0,
     accentColor: Color = KittenTheme.colors.accent,
+    onPreview: ((Float) -> Unit)? = null,
 ) {
     val trackColor = KittenTheme.colors.trackOff
     val currentOnValueChange by rememberUpdatedState(onValueChange)
+    val currentOnPreview by rememberUpdatedState(onPreview)
     val currentValue by rememberUpdatedState(value)
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
     val scope = rememberCoroutineScope()
@@ -112,17 +117,27 @@ fun GlassSlider(
             visibilityThreshold = 0.001f,
             initialScale = 1f,
             pressedScale = 1.5f,
-            onDragStarted = { size, position -> updateValue(fractionAt(position.x, size.width)) },
-            onDrag = { size, position, _ -> updateValue(fractionAt(position.x, size.width)) },
+            onDragStarted = { size, position ->
+                val f = fractionAt(position.x, size.width)
+                updateValue(f)
+                currentOnPreview?.invoke(fromFraction(snap(f)))
+            },
+            onDrag = { size, position, _ ->
+                val f = fractionAt(position.x, size.width)
+                updateValue(f)
+                currentOnPreview?.invoke(fromFraction(snap(f)))
+            },
             onDragStopped = { upPosition ->
                 if (upPosition == null) {
                     // 外层滚动接管了：退回原值。
                     updateValue(committed)
+                    currentOnPreview?.invoke(fromFraction(committed))
                 } else {
                     val snapped = snap(targetValue)
                     updateValue(snapped)
                     committed = snapped
                     val newValue = fromFraction(snapped)
+                    currentOnPreview?.invoke(newValue)
                     if (newValue != currentValue) currentOnValueChange(newValue)
                 }
             },

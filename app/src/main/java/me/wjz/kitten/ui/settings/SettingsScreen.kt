@@ -82,10 +82,12 @@ import me.wjz.kitten.ui.component.GlassSwitch
 import me.wjz.kitten.ui.component.LocalToast
 import me.wjz.kitten.ui.component.ToastTone
 import me.wjz.kitten.ui.icon.Extension
+import me.wjz.kitten.ui.icon.FormatSize
 import me.wjz.kitten.ui.icon.KittenIcons
 import me.wjz.kitten.ui.setup.DebugCard
 import me.wjz.kitten.ui.setup.PrivilegeSection
 import me.wjz.kitten.ui.setup.SetupActions
+import me.wjz.kitten.ui.theme.FontScale
 import me.wjz.kitten.ui.theme.KittenTheme
 import kotlin.math.roundToInt
 
@@ -102,6 +104,7 @@ private enum class SettingsPage(val title: String) {
     /** 改一个自己教的技能，从"技能"点进来。新教一个时标题换成"教一个新技能"，见 [SettingsScreen]。 */
     SkillEditor("编辑技能"),
     Privilege("增强模式"),
+    FontSize("字号"),
     Developer("开发者调试");
 
     /** 返回到哪一页。首页没有上一级。 */
@@ -141,7 +144,7 @@ private val PageSaver = Saver<SettingsPage, String>(
  * 首页是一串分组列表（模型 / 个性、记忆与技能 / 权限与能力 / 其他），一行一个入口，右边写着现在的状态
  * （用的哪家模型、记了几件事、权限开没开）。具体内容点进去才看到：
  *
- * - 每一项都是一页（服务商、Token 看板、人设、记忆、技能、增强模式、开发者调试），从右边滑进来，
+ * - 每一项都是一页（服务商、Token 看板、人设、记忆、技能、增强模式、字号、开发者调试），从右边滑进来，
  *   左上角返回，系统返回手势也能回去。
  * - 编辑某一家服务商、改某个自己教的技能，是从"模型服务商""技能"再点进去的第三层，返回回到列表。
  * - 改人设、编辑服务商、改技能改的是一份草稿：点保存才写回、回到上一级；不保存直接返回就丢掉。
@@ -205,6 +208,7 @@ fun SettingsScreen(
     val memoryStore = remember(context) { MemoryStore.get(context) }
     val memories by remember(memoryStore) { memoryStore.observe() }.collectAsState(initial = emptyList())
     val privilegeState by PrivilegeManager.state.collectAsState()
+    val fontScale by remember(context) { FontScale.state(context) }.collectAsState()
     val allTimeTokens = rememberAllTimeTokens()
     val scope = rememberCoroutineScope()
     val toast = LocalToast.current
@@ -300,6 +304,7 @@ fun SettingsScreen(
                         skillsTotal = builtinSkills.size + userSkills.size,
                         status = status,
                         privilegeState = privilegeState,
+                        fontScale = fontScale,
                         onOpen = { page = it },
                         onEditPersona = {
                             // 进来时拷一份当前在用的：没改过就是默认人设，用户看得到原本写了什么再改。
@@ -430,6 +435,11 @@ fun SettingsScreen(
                         backdrop = backdrop,
                     )
                     SettingsPage.Privilege -> PrivilegeSection(backdrop = backdrop, onStartPairing = actions::startPairing)
+                    SettingsPage.FontSize -> FontSizePage(
+                        scale = fontScale,
+                        onScaleChange = { FontScale.set(context, it) },
+                        backdrop = backdrop,
+                    )
                     SettingsPage.Developer -> {
                         // 临时：看玻璃组件的手感，定下来之后换成真的设置项。
                         ComponentPreviewSection(backdrop = backdrop)
@@ -461,6 +471,7 @@ private fun SettingsRoot(
     skillsTotal: Int,
     status: PermissionStatus,
     privilegeState: PrivilegeState,
+    fontScale: Float,
     onOpen: (SettingsPage) -> Unit,
     onEditPersona: () -> Unit,
     actions: SetupActions,
@@ -555,6 +566,19 @@ private fun SettingsRoot(
                 subtitle = privilegeState.summary(),
                 subtitleColor = if (privilegeState is PrivilegeState.Error) colors.warning else colors.textSecondary,
                 onClick = { onOpen(SettingsPage.Privilege) },
+            )
+        }
+    }
+
+    Column {
+        SettingsGroupLabel("显示")
+        SettingsGroup(backdrop = backdrop) {
+            SettingsRow(
+                icon = KittenIcons.FormatSize,
+                iconTint = colors.iconBlue,
+                title = "字号",
+                subtitle = FontScale.describe(fontScale),
+                onClick = { onOpen(SettingsPage.FontSize) },
             )
         }
     }
