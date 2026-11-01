@@ -141,6 +141,12 @@ data class KittenColors(
     /** 光雾：白玻璃上用天依蓝的雾，天依蓝的填色上用白雾。 */
     val glowOnGlass: GlowColors,
     val glowOnAccent: GlowColors,
+
+    /**
+     * 全屏直播上那条操作区的底色：浅天依蓝，实心的。底下是一直在动的直播画面，半透明的话字会跟着画面花；
+     * 纯白又像一块没上色的补丁，和整个 App 的天依蓝不搭。
+     */
+    val livePanel: Color,
 )
 
 /**
@@ -215,6 +221,8 @@ val LightKittenColors = KittenColors(
 
     glowOnGlass = GlowColors(tint = Tianyi400, core = Tianyi450),
     glowOnAccent = GlowColors(tint = Color.White, core = Color.White),
+
+    livePanel = Tianyi150,
 )
 
 internal val LocalKittenColors = staticCompositionLocalOf { LightKittenColors }
