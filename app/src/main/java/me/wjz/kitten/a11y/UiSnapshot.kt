@@ -131,6 +131,18 @@ data class UiSnapshot(
      * 该重抓"的可靠信号，比我们自己猜强。
      */
     internal val handles: Map<Int, AccessibilityNodeInfo> = emptyMap(),
+
+    /**
+     * 裁剪之前的完整节点树（[CaptureScope.ALL] 那一档的窗口）。
+     *
+     * 选择器（[me.wjz.kitten.a11y.selector.Selector]）在它上面找节点，不在 [windows] 上找：裁过的树
+     * 砍掉了包装层、把文本聚合成了 label，父子关系和原来对不上；而选择器要在下一次抓屏时照样找得到，
+     * 只有原样的树前后两次是一致的。和 [GKD](https://gkd.li/guide/selector) 一样，按原始节点树来。
+     *
+     * 抓取时就是 [windows]；[filter] 用 copy 换掉 [windows]，这里原样带过去。节点编号两边一致，
+     * 模型点的那个 id 在这里照样找得到。
+     */
+    val rawWindows: List<UiWindow> = windows,
 ) {
     /** 用户正在交互的那个应用窗口，通常就是上层想要的"当前页面"。 */
     val activeWindow: UiWindow?
@@ -150,6 +162,16 @@ data class UiSnapshot(
         windows.forEach { window -> window.roots.forEach { r -> r.findById(id)?.let { return it } } }
         return null
     }
+
+    /** 在裁剪之前的完整树（[rawWindows]）里按 id 找节点。被裁掉的包装层、纯文字节点也找得到。 */
+    fun findRawById(id: Int): UiNode? {
+        rawWindows.forEach { window -> window.roots.forEach { r -> r.findById(id)?.let { return it } } }
+        return null
+    }
+
+    /** 完整树的全部顶层节点，按窗口从上到下。选择器从这里找起。 */
+    val rawRoots: List<UiNode>
+        get() = rawWindows.flatMap { it.roots }
 
     /**
      * 按 [UiNode.id] 取回可操作的活节点，动作层用它 `performAction`。
