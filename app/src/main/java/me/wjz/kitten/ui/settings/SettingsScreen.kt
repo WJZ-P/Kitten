@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.launch
+import me.wjz.kitten.BuildConfig
 import me.wjz.kitten.data.memory.MemoryStore
 import me.wjz.kitten.data.persona.Persona
 import me.wjz.kitten.data.persona.PersonaStore
@@ -467,7 +468,8 @@ fun SettingsScreen(
 }
 
 /**
- * 设置首页：四组入口。每一行右边的说明就是那一项现在的样子，不用点进去也知道配好没有。
+ * 设置首页：四组入口，release 包里没有「其他」那一组（只有开发者调试）。每一行右边的说明就是那一项现在的样子，
+ * 不用点进去也知道配好没有。
  *
  * @param personaName 正在用的人设叫什么。
  * @param onOpen 进哪一个二级页。
@@ -561,16 +563,20 @@ private fun SettingsRoot(
         }
     }
 
-    Column {
-        SettingsGroupLabel("其他")
-        SettingsGroup(backdrop = backdrop) {
-            SettingsRow(
-                icon = Icons.Filled.Build,
-                iconTint = colors.iconGray,
-                title = "开发者调试",
-                subtitle = "组件预览、副屏、Toast",
-                onClick = { onOpen(SettingsPage.Developer) },
-            )
+    // 开发者调试只给 debug 包：里面是调组件、验副屏的临时工具，用户点进去只会一头雾水。这一组只有它一行，
+    // 连分组一起不画。
+    if (BuildConfig.DEBUG) {
+        Column {
+            SettingsGroupLabel("其他")
+            SettingsGroup(backdrop = backdrop) {
+                SettingsRow(
+                    icon = Icons.Filled.Build,
+                    iconTint = colors.iconGray,
+                    title = "开发者调试",
+                    subtitle = "组件预览、副屏、Toast",
+                    onClick = { onOpen(SettingsPage.Developer) },
+                )
+            }
         }
     }
 }

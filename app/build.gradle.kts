@@ -52,6 +52,8 @@ android {
 
     buildFeatures {
         compose = true
+        // 要 BuildConfig.DEBUG：release 包里不显示「开发者调试」（见 SettingsScreen 的 SettingsRoot）。
+        buildConfig = true
     }
 }
 
