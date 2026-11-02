@@ -1,10 +1,6 @@
 <div align="center">
 
-<a href="https://github.com/WJZ-P/Kitten">
-  <img src="markdown/icon.svg" alt="Kitten" width="150" height="150" />
-</a>
-
-# Kitten
+<img src="markdown/banner.webp" alt="Kitten：你还能有 Kitten 聪明？！" width="100%" />
 
 **住在你手机里的人性化助手：说一句话，她替你打开 App、一步步点完、看完、办完。默认提供猫娘、鲸鱼娘(超级大肥鱼！)人设，也可以自定义任何你想要的人设！**
 
@@ -45,6 +41,14 @@ https://github.com/user-attachments/assets/1a5e03f8-8d3e-4475-b203-955b925b2105
 
 <sub>打开 QQ 的置顶群，先瞄一眼大家刚聊到哪儿，再接着话题聊几句</sub>
 
+### 界面长这样
+
+| 对话 | Token 看板 | 技能 |
+|:---:|:---:|:---:|
+| <img src="markdown/screenshot-chat.webp" alt="对话：一句话让她去微信的文件传输助手发「你好」" width="260" /> | <img src="markdown/screenshot-tokens.webp" alt="Token 看板：每天用了多少、按模型分" width="260" /> | <img src="markdown/screenshot-skills.webp" alt="技能：她自己学会的微信技能，和默认的几项本事" width="260" /> |
+
+<sub>回复上面能展开看她想了什么；办完的事她会自己复盘，学到的存进技能，下次直接照着来</sub>
+
 ## 为什么是 Kitten
 
 |                       |                                                                                                                                                  |
@@ -59,9 +63,9 @@ https://github.com/user-attachments/assets/1a5e03f8-8d3e-4475-b203-955b925b2105
 
 ## 三步上手
 
-1. **装上**：暂时还没有发布安装包，先按下面的[自己编译](#自己编译)装到手机上。
-2. **接上模型**：设置 › 模型服务商，选一个预设填上 Key（DeepSeek、通义千问、智谱 GLM、Moonshot、OpenAI、Anthropic、本地 Ollama），或者自己填任意 OpenAI 兼容 / Anthropic 格式的地址。
-3. **打开增强模式**：设置 › 增强模式，按提示打开「无线调试 › 使用配对码配对设备」，在 Kitten 弹出的通知里填上配对码。**配一次就好，全程在手机上完成，不用电脑。**
+1. **装上**：去 [Releases](https://github.com/WJZ-P/Kitten/releases) 下载最新的 `Kitten-v版本号-release.apk` 装上。现在还是测试版，遇到问题欢迎[提 issue](https://github.com/WJZ-P/Kitten/issues)。
+2. **配对增强模式**：第一次打开 Kitten，对话页会显示配对引导：点中间的大圆，照着大圆下面的步骤打开「无线调试 › 使用配对码配对设备」，在 Kitten 弹出的通知里填上配对码。**只需要配一次，全程在手机上完成，不用电脑。**
+3. **接上模型**：设置 › 模型服务商，选一个预设填上 Key（DeepSeek、通义千问、智谱 GLM、Moonshot、OpenAI、Anthropic、本地 Ollama），或者自己填任意 OpenAI 兼容 / Anthropic 格式的地址。
 
 然后对她说说看：
 
@@ -104,7 +108,7 @@ https://github.com/user-attachments/assets/1a5e03f8-8d3e-4475-b203-955b925b2105
 <details>
 <summary><b>常见问题</b></summary>
 
-**无线调试自己关掉了？** 重启手机、换了 Wi-Fi，系统都会把它关掉。重启之后 Kitten 会自己把它打开、连回去；换了 Wi-Fi 的话，在系统设置里把无线调试重新打开，回到 Kitten 就会自己连上，不用重新配对。实在连不上，回到设置 › 增强模式重新配对。
+**无线调试自己关掉了？** 重启手机、换了 Wi-Fi，系统都会把它关掉。重启之后 Kitten 会自己把它打开、连回去；换了 Wi-Fi 的话，在系统设置里把无线调试重新打开，回到 Kitten 就会自己连上，不用重新配对。实在连不上，对话页会重新出现配对引导，点中间的大圆重新配对就好。
 
 **有些页面她读不到、截不到？** 付款、输密码这类页面禁止截图，这时她会告诉你卡在哪，那一步请你自己来。
 
