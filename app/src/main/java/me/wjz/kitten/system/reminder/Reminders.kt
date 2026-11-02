@@ -5,7 +5,16 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import me.wjz.kitten.MainActivity
+import me.wjz.kitten.data.session.Sessions
+import me.wjz.kitten.llm.ChatMessage
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
  * 排、取消 Kitten 自己的提醒。到点由 [ReminderReceiver] 接住，交给 [ReminderRingService] 一直响。
@@ -24,10 +33,48 @@ import me.wjz.kitten.MainActivity
  *
  * 系统里排好的闹钟重启就没了，所以每条提醒自己也存一份（[ReminderStore]），开机时照着重排
  * （[rescheduleAll]，在 BootCompletedReceiver 里调）。关机期间错过的，开机后马上补响：晚响总比不响好。
+ *
+ * ## 响了也写进对话
+ *
+ * 只弹一个通知的话，通知一划掉就什么都没留下。所以响的时候还往排它的那段对话里写一条（[announce]）：回头翻
+ * 对话看得到它提醒过什么，接着聊"刚才那个笑话再讲一个"模型也知道上下文。
  */
 object Reminders {
 
     private const val TAG = "KittenReminder"
+
+    /** 写对话用：响铃的服务随时会停（用户一点"知道了"），写到一半不能跟着它被取消。 */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * 把响了的这条写进排它的那段对话（[Reminder.sessionId]），作为 Kitten 说的一句话。那段对话已经删了、或者
+     * 不知道是哪段，就另开一段，标题是提醒的标题。
+     *
+     * 写的是固定的一句，不现找模型来说：到点时可能没网、模型可能没配好，提醒本身不能因为这个落空。
+     */
+    fun announce(context: Context, reminder: Reminder) {
+        val app = context.applicationContext
+        scope.launch {
+            runCatching {
+                val sessions = Sessions.get(app)
+                val sessionId = reminder.sessionId?.takeIf { sessions.load(it) != null }
+                    ?: sessions.create("提醒：${reminder.title}").id
+                sessions.appendMessage(sessionId, ChatMessage.Assistant(text = announcement(reminder)))
+            }.onFailure {
+                // 只记出了什么错，不记提醒的内容：那是用户的事。
+                Log.w(TAG, "提醒写不进对话", it)
+            }
+        }
+    }
+
+    /** "⏰ 22:06 到点啦：**程序员笑话**"，有内容的话下面接着完整内容。 */
+    private fun announcement(reminder: Reminder): String = buildString {
+        val time = Instant.ofEpochMilli(reminder.triggerAtMillis).atZone(ZoneId.systemDefault())
+        append("⏰ ").append(time.format(ClockFormat)).append(" 到点啦：**").append(reminder.title).append("**")
+        if (reminder.note.isNotBlank()) append("\n\n").append(reminder.note)
+    }
+
+    private val ClockFormat = DateTimeFormatter.ofPattern("HH:mm")
 
     /** 排一条提醒，存下来。返回失败的原因，成功是 null。 */
     fun schedule(context: Context, reminder: Reminder): String? {

@@ -38,7 +38,6 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -56,7 +55,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
-import kotlinx.coroutines.delay
 import me.wjz.kitten.agent.AgentTask
 import me.wjz.kitten.agent.AgentTaskHandle
 import me.wjz.kitten.agent.Reflection
@@ -71,23 +69,12 @@ import me.wjz.kitten.ui.chat.chatCardGlass
 import me.wjz.kitten.ui.chat.markdownPreview
 import me.wjz.kitten.ui.chat.rememberShimmerProgress
 import me.wjz.kitten.ui.chat.shimmer
-import me.wjz.kitten.ui.component.GlassContentPadding
-import me.wjz.kitten.ui.component.GlassDivider
 import me.wjz.kitten.ui.component.LocalFrostedBackdrop
 import me.wjz.kitten.ui.component.detectGlassPress
 import me.wjz.kitten.ui.component.rememberGlassPressState
-import me.wjz.kitten.ui.icon.Alarm
-import me.wjz.kitten.ui.icon.Delete
-import me.wjz.kitten.ui.icon.KittenIcons
-import me.wjz.kitten.ui.settings.RowAction
 import me.wjz.kitten.ui.settings.SettingsGroupLabel
 import me.wjz.kitten.ui.settings.SettingsPageHeader
 import me.wjz.kitten.ui.theme.KittenTheme
-import java.time.Instant
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
-import java.util.Locale
 
 /**
  * 任务页：Kitten 正在办、和以后定点要办的事。
@@ -105,8 +92,9 @@ import java.util.Locale
  *
  * ## 定时任务（下面）
  *
- * 现在列的是 Kitten 排着的提醒（[ReminderStore]，"系统能力"里的 reminder 排的）：什么事、几点响、还有多久，
- * 每条能取消。以后让 Kitten 每天定点去做的事（签到、打卡……）也放这里。一条都没有时放一张空卡片。
+ * 现在列的是 Kitten 排着的提醒（[ReminderStore]，"系统能力"里的 reminder 排的）：一条一张卡片，几点响、什么事、
+ * 还有多久，点开看详情、能取消（见 [ReminderList]）。以后让 Kitten 每天定点去做的事（签到、打卡……）也放这里。
+ * 一条都没有时放一张空卡片。
  *
  * ## 玻璃
  *
@@ -197,102 +185,14 @@ private fun TaskList(
             if (reminders.isEmpty()) {
                 EmptyCard(text = "还没有定时任务～跟 Kitten 说一句「明早八点提醒我开会」试试", backdrop = backdrop)
             } else {
-                ReminderCard(reminders = reminders, onCancel = onCancelReminder, backdrop = backdrop)
+                ReminderList(
+                    reminders = reminders,
+                    animating = LocalAnimating.current,
+                    onCancel = onCancelReminder,
+                    backdrop = backdrop,
+                )
             }
         }
-    }
-}
-
-/**
- * 排着的提醒：一张卡片里一条一行，闹钟图标、要提醒的事、几点响和还有多久，右边一个取消。响过的、取消的
- * 从 [ReminderStore] 里拿掉，这里跟着少一行，下面的行缓缓挪上来。
- *
- * "还有多久"每分钟走一次，对齐到整分；页面切走了就不走（见 [LocalAnimating]），切回来立刻按现在重算。
- */
-@Composable
-private fun ReminderCard(reminders: List<Reminder>, onCancel: (Reminder) -> Unit, backdrop: Backdrop) {
-    val colors = KittenTheme.colors
-    val animating = LocalAnimating.current
-    val now by produceState(System.currentTimeMillis(), animating) {
-        value = System.currentTimeMillis()
-        while (animating) {
-            delay(MinuteMillis - value % MinuteMillis)
-            value = System.currentTimeMillis()
-        }
-    }
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .chatCardGlass(backdrop, colors, frosted = LocalFrostedBackdrop.current)
-            .animateContentSize()
-            .padding(vertical = ReminderListPadding),
-    ) {
-        reminders.forEachIndexed { index, reminder ->
-            key(reminder.id) {
-                if (index > 0) GlassDivider(modifier = Modifier.padding(start = ReminderIconSize + ReminderIconGap))
-                ReminderRow(reminder = reminder, now = now, onCancel = { onCancel(reminder) })
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReminderRow(reminder: Reminder, now: Long, onCancel: () -> Unit) {
-    val colors = KittenTheme.colors
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = GlassContentPadding, end = ReminderEndPadding, top = ReminderRowPadding, bottom = ReminderRowPadding),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(ReminderIconGap),
-    ) {
-        Icon(
-            imageVector = KittenIcons.Alarm,
-            contentDescription = null,
-            tint = colors.iconTeal,
-            modifier = Modifier.size(ReminderIconSize),
-        )
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = reminder.title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = colors.textPrimary,
-                maxLines = ReminderTitleMaxLines,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = remember(reminder.triggerAtMillis, now) { reminderWhen(reminder.triggerAtMillis, now) },
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.textSecondary,
-                maxLines = 1,
-            )
-        }
-        RowAction(icon = KittenIcons.Delete, label = "取消提醒", tint = colors.danger, onClick = onCancel)
-    }
-}
-
-/** "今天 15:00 · 2 小时 5 分后"：近三天说今天、明天、后天，再远写日期和星期。 */
-private fun reminderWhen(at: Long, now: Long): String {
-    val zone = ZoneId.systemDefault()
-    val time = Instant.ofEpochMilli(at).atZone(zone)
-    val today = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
-    val day = when (ChronoUnit.DAYS.between(today, time.toLocalDate())) {
-        0L -> "今天"
-        1L -> "明天"
-        2L -> "后天"
-        else -> time.format(ReminderDateFormat)
-    }
-    return "$day ${time.format(ReminderClockFormat)} · ${countdown(at - now)}"
-}
-
-/** 还有多久。往上取整到分钟：还差 30 秒时说"马上就响"，不说"0 分钟后"。 */
-private fun countdown(millis: Long): String {
-    val minutes = (millis + MinuteMillis - 1) / MinuteMillis
-    return when {
-        minutes <= 1 -> "马上就响"
-        minutes < 60 -> "$minutes 分钟后"
-        minutes < 24 * 60 -> "${minutes / 60} 小时" + (if (minutes % 60 > 0) " ${minutes % 60} 分" else "") + "后"
-        else -> "${minutes / (24 * 60)} 天后"
     }
 }
 
@@ -508,20 +408,3 @@ private val DotSize = 8.dp
 private const val DotMinScale = 0.6f
 private const val DotMinAlpha = 0.4f
 private const val BreathMillis = 900
-
-/**
- * 提醒那张卡片：卡片上下留白、每行上下留白、图标多大、图标和字之间空多少、右边留白、标题最多几行。
- *
- * 图标、间距和设置页的行（SettingsRow）一样大，两页版式一致。右边留白比左边小：取消按钮的触摸区本来就比
- * 图标大一圈，自带了空。标题两行：一句提醒偶尔长一点，一行截断了看不出是哪件事。
- */
-private val ReminderListPadding = 4.dp
-private val ReminderRowPadding = 8.dp
-private val ReminderIconSize = 22.dp
-private val ReminderIconGap = 14.dp
-private val ReminderEndPadding = 8.dp
-private const val ReminderTitleMaxLines = 2
-
-private const val MinuteMillis = 60_000L
-private val ReminderClockFormat = DateTimeFormatter.ofPattern("HH:mm")
-private val ReminderDateFormat = DateTimeFormatter.ofPattern("M月d日 EEE", Locale.CHINA)

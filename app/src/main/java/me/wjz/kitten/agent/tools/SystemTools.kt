@@ -49,9 +49,9 @@ const val DEVICE_STATUS = "device_status"
 const val APP_USAGE = "app_usage"
 
 /** 「系统能力」的全部工具，见 ChatViewModel 的 toolsFor。 */
-fun systemTools(context: Context): List<AgentTool> = listOf(
+fun systemTools(context: Context, sessionId: String?): List<AgentTool> = listOf(
     SetAlarmTool(context),
-    ReminderTool(context),
+    ReminderTool(context, sessionId),
     CalendarTool(context),
     DeviceStatusTool(context),
     AppUsageTool(context),
@@ -109,21 +109,29 @@ class SetAlarmTool(private val context: Context) : AgentTool {
     }
 }
 
-/** Kitten 自己的提醒：到点一直响，见 [Reminders]。 */
-class ReminderTool(private val context: Context) : AgentTool {
+/**
+ * Kitten 自己的提醒：到点一直响，也往排它的这段对话（[sessionId]）里写一条，见 [Reminders]。
+ *
+ * @param sessionId 这一轮在哪个会话里办。
+ */
+class ReminderTool(private val context: Context, private val sessionId: String?) : AgentTool {
 
     override val name = REMINDER
 
     override val description =
-        "排一个提醒：到点 Kitten 自己一直响，直到用户点掉，通知上写着要提醒的事。" +
+        "排一个提醒：到点 Kitten 自己一直响，直到用户点掉，通知上写着标题和内容。" +
             "用户说「X 点提醒我……」「半小时后叫我……」时用。排好的提醒列在 Kitten 的任务页里。" +
-            "action=add 时给 title，再给 at（具体时间）或者 in_minutes（多少分钟后）二选一；" +
+            "action=add 时给 title（简短的标题）和 note（到点要说的完整内容，没什么好补充的可以不给），" +
+            "再给 at（具体时间）或者 in_minutes（多少分钟后）二选一；" +
             "action=list 列出还没响的；action=cancel 按 list 里的编号取消。" +
             "at 要写具体日期，不知道今天几号的话先调 device_status。"
 
     override val parameters = objectSchema(
         "action" to enumParam("add 排提醒，list 列出还没响的，cancel 取消一个", listOf("add", "list", "cancel")),
-        "title" to stringParam("要提醒的事，一句话，比如「交周报」「给妈妈打电话」。"),
+        "title" to stringParam(
+            "提醒的标题，$MAX_TITLE_LENGTH 个字以内，一眼看出是什么事，比如「交周报」「给妈妈打电话」「讲个程序员笑话」。",
+        ),
+        "note" to stringParam("到点要说的完整内容，比如具体要带什么、笑话的全文。标题已经说清楚了就不用给。"),
         "at" to stringParam("什么时候提醒，本地时间 yyyy-MM-dd HH:mm，比如 2026-11-01 15:00。"),
         "in_minutes" to intParam("多少分钟后提醒，和 at 二选一。"),
         "id" to stringParam("要取消的那条的编号，list 结果里方括号中的那串。"),
@@ -138,8 +146,14 @@ class ReminderTool(private val context: Context) : AgentTool {
     }
 
     private fun add(args: JSONObject): String {
-        val title = args.optString("title").trim()
+        var title = args.optString("title").trim()
+        var note = args.optString("note").trim()
         if (title.isEmpty()) return "ERROR bad_args: 没有给 title，要提醒什么事。"
+        if (title.length > MAX_TITLE_LENGTH) {
+            // 模型把整句话塞进了标题：完整的挪进内容，标题截一段，任务页的卡片上才放得下。
+            note = if (note.isEmpty()) title else "$title\n$note"
+            title = title.take(MAX_TITLE_LENGTH - 1) + "…"
+        }
         if (!SystemPermissions.canScheduleExactAlarms(context)) return SystemPermissions.hint("闹钟和提醒")
         if (!SystemPermissions.canNotify(context)) return SystemPermissions.hint("通知")
         val now = System.currentTimeMillis()
@@ -150,7 +164,7 @@ class ReminderTool(private val context: Context) : AgentTool {
             else -> return "ERROR bad_args: at 和 in_minutes 至少给一个。"
         }
         if (triggerAt <= now) return "ERROR in_past: ${formatMillis(triggerAt)} 已经过了，换一个以后的时间。"
-        val reminder = Reminder.create(title, triggerAt)
+        val reminder = Reminder.create(title, note, triggerAt, sessionId)
         Reminders.schedule(context, reminder)?.let { return "ERROR schedule_failed: $it" }
         return "OK 已排好：${formatMillis(triggerAt)}（${durationText(Duration.ofMillis(triggerAt - now))}后）提醒「$title」，" +
             "到点会一直响，用户点掉才停。编号 [${shortId(reminder.id)}]。"
@@ -177,6 +191,9 @@ class ReminderTool(private val context: Context) : AgentTool {
 
     companion object {
         private const val SHORT_ID_LENGTH = 6
+
+        /** 标题最多几个字：任务页卡片上一行放得下，通知的标题也不会被截。 */
+        private const val MAX_TITLE_LENGTH = 16
     }
 }
 

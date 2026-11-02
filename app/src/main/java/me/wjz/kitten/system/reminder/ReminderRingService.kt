@@ -89,7 +89,7 @@ class ReminderRingService : Service() {
                     if (ringing == null) {
                         startForeground(
                             RING_NOTIFICATION_ID,
-                            buildRinging(Reminder(id.orEmpty(), "", 0)),
+                            buildRinging(Reminder(id.orEmpty(), "", "", 0)),
                             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK,
                         )
                         finish()
@@ -112,7 +112,9 @@ class ReminderRingService : Service() {
     private fun startRinging(reminder: Reminder) {
         // 已经在响另一条：那条算响过了（留一条安静的通知），换成这条。
         ringing?.let { previous -> notifications.notify(missedNotificationId(previous.id), buildMissed(previous)) }
-        ringing = reminder
+        // 第一次响时写进对话；"稍后再响"排的那一次带着 announced，不再写一遍。
+        if (!reminder.announced) Reminders.announce(this, reminder)
+        ringing = reminder.copy(announced = true)
         // 响了就从"还没响的"里拿掉：任务页上不再列它；要再提醒时重新排、重新存。
         ReminderStore.remove(this, reminder.id)
 
@@ -180,12 +182,18 @@ class ReminderRingService : Service() {
         super.onDestroy()
     }
 
+    /** 标题是提醒的标题，正文是完整内容（没有就只有标题），顶上那行小字写着是 Kitten 在提醒。 */
     private fun buildRinging(reminder: Reminder): Notification =
         Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_agent_notification)
-            .setContentTitle(getString(R.string.reminder_title))
-            .setContentText(reminder.title)
-            .setStyle(Notification.BigTextStyle().bigText(reminder.title))
+            .setSubText(getString(R.string.reminder_title))
+            .setContentTitle(reminder.title)
+            .apply {
+                if (reminder.note.isNotBlank()) {
+                    setContentText(reminder.note)
+                    setStyle(Notification.BigTextStyle().bigText(reminder.note))
+                }
+            }
             .setCategory(Notification.CATEGORY_ALARM)
             .setOngoing(true)
             // 点通知本身就是"知道了"：一直响的东西，点哪儿都该能让它停。

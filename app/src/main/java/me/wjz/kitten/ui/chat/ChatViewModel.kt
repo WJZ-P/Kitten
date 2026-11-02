@@ -55,7 +55,7 @@ import me.wjz.kitten.data.attachment.AttachmentStore
 import me.wjz.kitten.data.memory.MemoryStore
 import me.wjz.kitten.data.memory.PromptMemories
 import me.wjz.kitten.data.session.SessionRepository
-import me.wjz.kitten.data.session.sqlite.SqliteSessionRepository
+import me.wjz.kitten.data.session.Sessions
 import me.wjz.kitten.data.skills.BuiltinSkill
 import me.wjz.kitten.data.skills.SkillSet
 import me.wjz.kitten.data.skills.SkillStore
@@ -79,15 +79,15 @@ import kotlin.coroutines.resume
  *
  * ## 依赖的获取方式
  *
- * 现在是直接 new 出 [SqliteSessionRepository]。等依赖多起来（Agent 执行器、工具注册表）
- * 该换成依赖注入，但现在只有一个依赖，引 Hilt 不划算。
+ * 会话库用进程里共用的那一个（[Sessions]）：提醒响了也会往会话里写，同一个实例，这边才收得到变化。等依赖
+ * 多起来（Agent 执行器、工具注册表）该换成依赖注入，但现在引 Hilt 不划算。
  *
  * 注意它只认 [SessionRepository] 接口——底层是手写 SQLite 还是将来的 Room，
  * 这里不知道也不关心。
  */
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val repository: SessionRepository = SqliteSessionRepository(application)
+    private val repository: SessionRepository = Sessions.get(application)
     private val attachmentStore = AttachmentStore(application)
 
     /** 关于用户的记忆。和设置页共用一个实例，模型刚记下的那边马上看得到，见 [MemoryStore]。 */
@@ -118,12 +118,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** 侧边栏列表跟着库走，任何地方改了会话这里都会自动更新。 */
+    /** 侧边栏列表跟着库走，任何地方改了会话这里都会自动更新。打开着的那个会话被别处写了，也跟着重读。 */
     private fun observeSessions() {
         viewModelScope.launch {
             repository.observeSessions().collect { sessions ->
                 _uiState.update { it.copy(sessions = sessions) }
+                syncOpenSession()
             }
+        }
+    }
+
+    /**
+     * 别处往打开着的会话里写了消息（提醒响了，见 Reminders.announce）：库里的条数和界面上对不上，就照着库重读。
+     *
+     * 不能放着不管：删消息是按它在界面上的位置删库里的那一条（见 SessionRepository.deleteMessages），界面上少一条，
+     * 删的就是错的那条；下一轮发给模型的历史也会少它。
+     *
+     * 有一轮在跑时不动：这一轮自己也在一条条往里写，条数本来就在变。看的是 AgentTaskHandle 而不是 isResponding：
+     * 发出去的那句话先落库、再标"回复中"，中间那一下这里要是照着库重读了，那句话会出现两遍。办完那一下再对一次
+     * （见 [send]）。
+     */
+    private fun syncOpenSession() {
+        val state = _uiState.value
+        val id = state.sessionId ?: return
+        if (state.isResponding || AgentTaskHandle.task.value != null) return
+        val stored = state.sessions.firstOrNull { it.id == id }?.messageCount ?: return
+        if (stored == state.messages.size) return
+        viewModelScope.launch {
+            val session = repository.load(id) ?: return@launch
+            // 读的这一会儿用户可能换了会话、又发了一句：那就不是这次要对的了。
+            val now = _uiState.value
+            if (now.sessionId != id || now.isResponding || AgentTaskHandle.task.value != null) return@launch
+            prepareReplies(session.messages.drop(now.messages.size))
+            _uiState.update { it.copy(messages = session.messages, title = session.title) }
         }
     }
 
@@ -393,7 +420,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             val skills = SkillStore.enabled(getApplication())
             // 这一轮的工具和现场。用完要 release，副屏得收掉。
             val device = DeviceSession(getApplication(), onScreen = AgentTaskHandle::showScreen)
-            val registry = ToolRegistry(toolsFor(skills, device, history))
+            val registry = ToolRegistry(toolsFor(skills, device, history, sessionId))
 
             var config = LlmConfigStore.load(getApplication())
             // 这一轮开始时读一次，整轮用同一份：中途变了会让 thinking 块失效，见 SystemPrompt。
@@ -570,6 +597,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     pendingQuestion = null,
                 )
             }
+            // 这一轮跑着的时候别处可能往这个会话里写过（提醒响了），这会儿对一下，见 syncOpenSession。
+            syncOpenSession()
         }
     }
 
@@ -639,8 +668,15 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      * 一个工具都不给的话，请求里就不带工具定义；可这段对话之前调过工具，历史里留着调用和结果。
      * Anthropic 的接口要求带着工具调用的请求必须定义工具，不然直接报错，别家可能也一样。这时候垫一个
      * read_skill（没有技能可读，调了也只是说一声），请求才发得出去。
+     *
+     * @param sessionId 这一轮在哪个会话里办：排的提醒记着它，到点了写回这个会话（见 ReminderTool）。
      */
-    private fun toolsFor(skills: SkillSet, device: DeviceSession, history: List<ChatMessage>): List<AgentTool> =
+    private fun toolsFor(
+        skills: SkillSet,
+        device: DeviceSession,
+        history: List<ChatMessage>,
+        sessionId: String,
+    ): List<AgentTool> =
         buildList {
             if (BuiltinSkill.Phone in skills) addAll(phoneTools(device))
             // 跑流程也是在操作手机，跟着它走；一个流程都没有就不给，省得模型去调一个没东西可跑的工具。
@@ -649,7 +685,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             }
             if (BuiltinSkill.Ask in skills) add(AskUserTool(asker))
             if (BuiltinSkill.Memory in skills) addAll(memoryTools())
-            if (BuiltinSkill.System in skills) addAll(systemTools(getApplication()))
+            if (BuiltinSkill.System in skills) addAll(systemTools(getApplication(), sessionId))
             // 开任务跟着"操作手机"：卡片收的就是操作手机的步骤（见 BuiltinSkill.Phone）。
             if (BuiltinSkill.Phone in skills) add(StartTaskTool())
             if (BuiltinSkill.SkillWriting in skills) add(SaveSkillTool(getApplication()))

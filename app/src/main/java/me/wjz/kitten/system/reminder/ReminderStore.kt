@@ -14,16 +14,24 @@ import java.util.UUID
  * Kitten 自己的一条提醒：到点了一直响，直到用户点掉（见 [ReminderRingService]）。
  *
  * @param id 内部编号，排闹钟、取消都按它。
- * @param title 要提醒的那句话，响的时候通知上写的就是它。
+ * @param title 一个简短的标题（"交周报""讲个笑话"）：任务页卡片上、响的时候通知的标题写的都是它。
+ * @param note 到点要说的完整内容，可以是空的。任务页点开详情、响的时候通知的正文里写的是它。
  * @param triggerAtMillis 什么时候响（UTC 毫秒）。
+ * @param sessionId 在哪段对话里排的。到点了往那段对话里写一条（见 [Reminders.announce]）；那段对话删了、或者
+ *   不知道是哪段，就另开一段。
+ * @param announced 已经写进对话了：稍后再响的那一次不再写一遍。
  */
 data class Reminder(
     val id: String,
     val title: String,
+    val note: String,
     val triggerAtMillis: Long,
+    val sessionId: String? = null,
+    val announced: Boolean = false,
 ) {
     companion object {
-        fun create(title: String, triggerAtMillis: Long) = Reminder(UUID.randomUUID().toString(), title, triggerAtMillis)
+        fun create(title: String, note: String, triggerAtMillis: Long, sessionId: String?) =
+            Reminder(UUID.randomUUID().toString(), title, note, triggerAtMillis, sessionId)
     }
 }
 
@@ -64,7 +72,15 @@ object ReminderStore {
         val sorted = reminders.sortedBy { it.triggerAtMillis }
         val array = JSONArray()
         sorted.forEach {
-            array.put(JSONObject().put("id", it.id).put("title", it.title).put("at", it.triggerAtMillis))
+            array.put(
+                JSONObject()
+                    .put("id", it.id)
+                    .put("title", it.title)
+                    .put("note", it.note)
+                    .put("at", it.triggerAtMillis)
+                    .put("session", it.sessionId ?: JSONObject.NULL)
+                    .put("announced", it.announced),
+            )
         }
         prefs(context).edit { putString(KEY, array.toString()) }
         state.value = sorted
@@ -77,7 +93,14 @@ object ReminderStore {
             (0 until array.length()).mapNotNull { index ->
                 val json = array.optJSONObject(index) ?: return@mapNotNull null
                 val id = json.optString("id").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                Reminder(id, json.optString("title"), json.optLong("at"))
+                Reminder(
+                    id = id,
+                    title = json.optString("title"),
+                    note = json.optString("note"),
+                    triggerAtMillis = json.optLong("at"),
+                    sessionId = json.optString("session").takeIf { it.isNotBlank() && !json.isNull("session") },
+                    announced = json.optBoolean("announced"),
+                )
             }.sortedBy { it.triggerAtMillis }
         }.getOrElse {
             Log.w(TAG, "提醒读不出来，当作没有", it)
