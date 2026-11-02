@@ -4,7 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.os.Bundle
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
-import me.wjz.kitten.service.KittenAccessibilityService
+import com.dianming.phoneapp.MyAccessibilityService
 
 /**
  * 动作层的无障碍通道：**按节点操作**（[click]、[setText]、[scroll] 等），走 `performAction`。
@@ -29,7 +29,7 @@ object A11yActuator {
     private const val TAG = "KittenA11yAct"
 
     private val service: AccessibilityService?
-        get() = KittenAccessibilityService.peek()
+        get() = MyAccessibilityService.peek()
 
     // ---- 按节点操作 ----
 

@@ -117,7 +117,7 @@
         </activity>
 
         <service
-            android:name=".service.KittenAccessibilityService"
+            android:name="com.dianming.phoneapp.MyAccessibilityService"
             android:exported="true"
             android:label="@string/accessibility_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"

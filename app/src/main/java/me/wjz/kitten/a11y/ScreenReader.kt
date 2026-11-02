@@ -7,7 +7,7 @@ import android.util.Log
 import android.view.Display
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
-import me.wjz.kitten.service.KittenAccessibilityService
+import com.dianming.phoneapp.MyAccessibilityService
 import androidx.core.util.size
 
 /**
@@ -82,7 +82,7 @@ object ScreenReader {
 
     /** 无障碍服务没连上时为 null——没开启、或刚被系统重启。 */
     private val service: AccessibilityService?
-        get() = KittenAccessibilityService.peek()
+        get() = MyAccessibilityService.peek()
 
     val isAvailable: Boolean
         get() = service != null

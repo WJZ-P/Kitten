@@ -4,7 +4,7 @@ import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.view.accessibility.AccessibilityManager
 import androidx.core.app.NotificationManagerCompat
-import me.wjz.kitten.service.KittenAccessibilityService
+import com.dianming.phoneapp.MyAccessibilityService
 
 data class PermissionStatus(
     val accessibilityEnabled: Boolean,
@@ -18,7 +18,7 @@ data class PermissionStatus(
                 .any { info ->
                     val service = info.resolveInfo.serviceInfo
                     service.packageName == context.packageName &&
-                        service.name == KittenAccessibilityService::class.java.name
+                        service.name == MyAccessibilityService::class.java.name
                 }
             val notificationListenerEnabled = NotificationManagerCompat
                 .getEnabledListenerPackages(context)

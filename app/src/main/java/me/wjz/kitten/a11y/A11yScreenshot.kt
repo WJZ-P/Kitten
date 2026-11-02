@@ -6,7 +6,7 @@ import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import me.wjz.kitten.service.KittenAccessibilityService
+import com.dianming.phoneapp.MyAccessibilityService
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executor
 import kotlin.coroutines.resume
@@ -51,7 +51,7 @@ object A11yScreenshot {
      * 截 [displayId] 这块屏，长边缩到 [maxEdge]、按 [quality] 压成 JPEG。
      */
     suspend fun capture(displayId: Int, maxEdge: Int, quality: Int): Shot {
-        val service = KittenAccessibilityService.peek()
+        val service = MyAccessibilityService.peek()
             ?: return Shot.Failed(ScreenError.ServiceUnavailable.describe())
 
         val raw = try {

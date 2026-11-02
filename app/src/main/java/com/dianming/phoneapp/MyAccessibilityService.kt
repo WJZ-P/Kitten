@@ -1,4 +1,4 @@
-package me.wjz.kitten.service
+package com.dianming.phoneapp
 
 import android.accessibilityservice.AccessibilityService
 import android.content.Intent
@@ -12,7 +12,7 @@ import android.view.accessibility.AccessibilityEvent
  * 真正抓节点树的逻辑在 `me.wjz.kitten.a11y.ScreenReader` 里——那是个无状态的
  * util，不塞进服务，免得这个类随功能增长膨胀成什么都往里放的垃圾桶。
  */
-class KittenAccessibilityService : AccessibilityService() {
+class MyAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -68,9 +68,9 @@ class KittenAccessibilityService : AccessibilityService() {
          * 引用在 onUnbind/onDestroy 里必定被清空，活得不会比服务本身更久。
          */
         @Volatile
-        private var instance: KittenAccessibilityService? = null
+        private var instance: MyAccessibilityService? = null
 
         /** 取当前服务实例；没开启无障碍、或服务正在重启时为 null。 */
-        fun peek(): KittenAccessibilityService? = instance
+        fun peek(): MyAccessibilityService? = instance
     }
 }

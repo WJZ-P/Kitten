@@ -6,7 +6,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.util.Log
-import me.wjz.kitten.service.KittenAccessibilityService
+import com.dianming.phoneapp.MyAccessibilityService
 import me.wjz.kitten.service.KittenNotificationListener
 
 /**
@@ -82,7 +82,7 @@ object SelfConfigurator {
      * 两个设置项缺一不可：服务要出现在列表里，总开关也要是开的。
      */
     fun enableAccessibilityService(context: Context): ItemState {
-        val component = ComponentName(context, KittenAccessibilityService::class.java)
+        val component = ComponentName(context, MyAccessibilityService::class.java)
         val state = addToColonList(
             context,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES,
