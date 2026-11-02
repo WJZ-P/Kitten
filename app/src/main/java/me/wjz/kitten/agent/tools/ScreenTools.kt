@@ -7,6 +7,7 @@ import me.wjz.kitten.a11y.A11yScreenshot
 import me.wjz.kitten.a11y.CaptureResult
 import me.wjz.kitten.a11y.CaptureScope
 import me.wjz.kitten.a11y.ScreenReader
+import me.wjz.kitten.a11y.ScreenTexts
 import me.wjz.kitten.agent.AgentTool
 import me.wjz.kitten.agent.DeviceSession
 import me.wjz.kitten.agent.ToolOutput
@@ -25,6 +26,11 @@ import org.json.JSONObject
  * 抓一次"，也不要照着过时的坐标点歪（见 [me.wjz.kitten.a11y.ScreenError.NodeGone]）。
  *
  * 抓取是一串跨进程调用，几十到几百毫秒，必须在工作线程上跑（见 [ScreenReader]）。
+ *
+ * ## 树读不全时从画面上认字
+ *
+ * 自绘的界面、图片里的字、读不到内容的网页，节点树里没有。判出树不够用时（见 TreeQuality），截一帧认字，
+ * 把树里没有的那些带着编号补在结果末尾（见 [ScreenTexts]），tap 照样能点。树够用的页面不截图、不认字。
  */
 class ReadScreenTool(private val session: DeviceSession) : AgentTool {
 
@@ -35,7 +41,8 @@ class ReadScreenTool(private val session: DeviceSession) : AgentTool {
             "编号就是后续 tap / input_text / scroll 要用的 node_id。" +
             "每次操作之前都要先调它拿到最新编号——点过一下、滚过一屏之后页面就变了，旧编号会失效。" +
             "默认只返回能操作的元素（interactive），要读页面上的正文、价格、订单详情这类纯展示" +
-            "文字时传 scope=visible。"
+            "文字时传 scope=visible。" +
+            "节点树读不全的页面，结果末尾会补一段从画面上认出的字，也带编号，能 tap / long_press。"
 
     override val parameters = objectSchema(
         "scope" to enumParam(
@@ -60,8 +67,11 @@ class ReadScreenTool(private val session: DeviceSession) : AgentTool {
             // 及时发现的办法，不然抓回来的是别的应用的界面，模型会照着它瞎推理。
             expectedPackage = session.currentPackage,
         )
-        (result as? CaptureResult.Ok)?.let { session.lastSnapshot = it.snapshot }
-        result.toModelText()
+        val snapshot = (result as? CaptureResult.Ok)?.snapshot ?: return@withContext result.toModelText()
+        // 树读不全就从画面上认字补上，够用的话原样回来，见 ScreenTexts。
+        val supplemented = ScreenTexts.supplement(snapshot) { session.captureFrame(OcrMaxEdgePx, OcrJpegQuality) }
+        session.lastSnapshot = supplemented
+        supplemented.toCompactString()
     }
 }
 
@@ -172,3 +182,16 @@ private const val MaxEdgePx = 1280
 
 /** JPEG 质量。界面是大色块加文字，这个档位几乎看不出压缩痕迹。 */
 private const val JpegQuality = 75
+
+/**
+ * 认字用的画面长边缩到多少像素。比给模型看的 [MaxEdgePx] 大：认中文要每个字二十几个像素高才稳，正文字号
+ * 在 2700 来像素高的屏上大约三十几像素，缩到 2000 还剩二十五六；再小，小字号的说明文字就开始认错。
+ */
+private const val OcrMaxEdgePx = 2000
+
+/**
+ * 认字用的画面 JPEG 质量。副屏的画面要压成 JPEG 才传得过来，压得狠了字边上的毛刺会被认成笔画，所以起点给
+ * 得高。图片多的页面压出来超过特权进程那边的大小上限（512KB）时，那边会自己一档档往下降（最低 40），没实测
+ * 过降到底认字会差多少。主屏的截图在本进程里，不受这个上限管。
+ */
+private const val OcrJpegQuality = 90

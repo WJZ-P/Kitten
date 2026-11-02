@@ -143,6 +143,14 @@ data class UiSnapshot(
      * 模型点的那个 id 在这里照样找得到。
      */
     val rawWindows: List<UiWindow> = windows,
+
+    /**
+     * 节点树读不全时，从画面上认出来、树里没有的字（见 [ScreenTexts]）。树够用时是 null。
+     *
+     * 抓取时没有，read_screen 判出树不够用、认完字之后 copy 进来。每行带一个和节点同一套的编号，tap、
+     * long_press 认它（按位置点），见 [screenTextLine]。
+     */
+    val screenText: ScreenText? = null,
 ) {
     /** 用户正在交互的那个应用窗口，通常就是上层想要的"当前页面"。 */
     val activeWindow: UiWindow?
@@ -183,6 +191,9 @@ data class UiSnapshot(
      * 裁掉、因而没出现在模型眼前的那些。
      */
     fun handleOf(id: Int): AccessibilityNodeInfo? = handles[id]
+
+    /** 按编号找画面上认出的那行字（见 [screenText]）。不是它的编号返回 null。 */
+    fun screenTextLine(id: Int): ScreenTextLine? = screenText?.lines?.firstOrNull { it.id == id }
 
     /**
      * 喂给模型的紧凑表示。配 [CaptureScope.INTERACTIVE] 用。
@@ -248,6 +259,7 @@ data class UiSnapshot(
                 }
             }
         }
+        screenText?.let { appendScreenText(it) }
     }
 
     /**
@@ -308,6 +320,28 @@ data class UiSnapshot(
             } }
         }
     }
+}
+
+/**
+ * 紧凑输出末尾那段补上的屏上文字（见 [UiSnapshot.screenText]）。和节点一样一行一个 `[编号] "字"`，不带标志：
+ * 它们不是控件，开头那行说清楚能拿它们做什么、不能做什么。
+ *
+ * 一行也没补上（树里一个字都没有、画面上也没认出来）时只有一行说明，让模型知道该等一等或者换个办法。
+ */
+private fun StringBuilder.appendScreenText(text: ScreenText) {
+    if (text.lines.isEmpty()) {
+        appendLine(
+            "--- 这页${text.reason}，从画面上也没认出字（${text.failure ?: "原因不明"}）。" +
+                "可能还在加载，wait 一下再读；也可能是防截屏的页面 ---",
+        )
+        return
+    }
+    appendLine(
+        "--- 画面上认出的字：这页${text.reason}，下面是从画面里认出来、节点树里没有的字。" +
+            "编号能 tap / long_press（点在字的中间），不能输入、滚动；偶尔会认错字 ---",
+    )
+    text.lines.forEach { line -> appendLine("[${line.id}] \"${line.text.compactOneLine()}\"") }
+    if (text.omitted > 0) appendLine("（还有 ${text.omitted} 行没列出）")
 }
 
 /**

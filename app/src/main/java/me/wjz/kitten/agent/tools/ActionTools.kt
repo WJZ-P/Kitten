@@ -6,6 +6,7 @@ import me.wjz.kitten.a11y.A11yActuator
 import me.wjz.kitten.a11y.ActionResult
 import me.wjz.kitten.a11y.InjectActuator
 import me.wjz.kitten.a11y.ScreenError
+import me.wjz.kitten.a11y.ScreenTextLine
 import me.wjz.kitten.a11y.UiSnapshot
 import me.wjz.kitten.agent.AgentTool
 import me.wjz.kitten.agent.DeviceSession
@@ -59,6 +60,31 @@ private fun JSONObject.nodeId(): Int? {
 /** 节点在快照里的说明文字，写进回执里让模型确认点对了没有。 */
 private fun UiSnapshot.labelOf(nodeId: Int): String =
     findById(nodeId)?.displayLabel?.let { " \"$it\"" } ?: ""
+
+/**
+ * 点（或长按）画面上认出的一行字（见 [UiSnapshot.screenText]）：它没有节点，按坐标点它的中间，走特权进程的
+ * 注入，和节点的坐标点击一样。
+ *
+ * 不进操作记录：没有节点，写不出选择器（见 [me.wjz.kitten.agent.flow.ActionTrace]）。
+ */
+private suspend fun pressScreenText(snapshot: UiSnapshot, line: ScreenTextLine, long: Boolean): String {
+    val x = line.bounds.centerX()
+    val y = line.bounds.centerY()
+    val result = if (long) InjectActuator.longPress(snapshot.displayId, x, y) else InjectActuator.tap(snapshot.displayId, x, y)
+    return when (result) {
+        is ActionResult.Ok -> {
+            ScreenMarks.emit(ScreenMark.Touch(snapshot.displayId, x, y, long))
+            settle()
+            "OK ${if (long) "长按" else "点击"}了画面上的 [${line.id}] \"${line.text}\"（按位置点的）。$PageChangedHint"
+        }
+        is ActionResult.Failed -> result.error.describe()
+    }
+}
+
+/** 拿画面上认出的字去输入、滚动：它不是控件。 */
+private fun notAControl(line: ScreenTextLine): String =
+    "ERROR not_a_control: [${line.id}] 是从画面上认出的字，不是控件，只能 tap 或 long_press。" +
+        "输入、滚动要用节点树里控件的编号。"
 
 /** 点一个节点的结果：点成了没有，是不是退回了坐标点击。 */
 internal class TapOutcome(val result: ActionResult, val byCoordinate: Boolean)
@@ -144,7 +170,7 @@ class TapTool(private val session: DeviceSession) : AgentTool {
     override val name = "tap"
 
     override val description =
-        "点击一个界面元素。node_id 来自最近一次 read_screen。" +
+        "点击一个界面元素。node_id 来自最近一次 read_screen，画面上认出的字的编号也行（按位置点它的中间）。" +
             "控件不支持标准点击动作时会自动改用坐标点击，不需要你处理。"
 
     override val parameters = objectSchema(
@@ -155,6 +181,7 @@ class TapTool(private val session: DeviceSession) : AgentTool {
     override suspend fun execute(args: JSONObject): String {
         val snapshot = session.lastSnapshot ?: return NoSnapshotError
         val nodeId = args.nodeId() ?: return "ERROR bad_args: 没有给 node_id。"
+        snapshot.screenTextLine(nodeId)?.let { return pressScreenText(snapshot, it, long = false) }
         val label = snapshot.labelOf(nodeId)
 
         val outcome = tapNode(snapshot, nodeId)
@@ -179,7 +206,8 @@ class LongPressTool(private val session: DeviceSession) : AgentTool {
 
     override val name = "long_press"
 
-    override val description = "长按一个界面元素，常用来呼出上下文菜单。node_id 来自最近一次 read_screen。"
+    override val description =
+        "长按一个界面元素，常用来呼出上下文菜单。node_id 来自最近一次 read_screen，画面上认出的字的编号也行。"
 
     override val parameters = objectSchema(
         "node_id" to intParam("要长按的元素编号"),
@@ -189,6 +217,7 @@ class LongPressTool(private val session: DeviceSession) : AgentTool {
     override suspend fun execute(args: JSONObject): String {
         val snapshot = session.lastSnapshot ?: return NoSnapshotError
         val nodeId = args.nodeId() ?: return "ERROR bad_args: 没有给 node_id。"
+        snapshot.screenTextLine(nodeId)?.let { return pressScreenText(snapshot, it, long = true) }
         val label = snapshot.labelOf(nodeId)
         return when (val result = A11yActuator.longClick(snapshot, nodeId)) {
             is ActionResult.Ok -> {
@@ -220,6 +249,7 @@ class InputTextTool(private val session: DeviceSession) : AgentTool {
     override suspend fun execute(args: JSONObject): String {
         val snapshot = session.lastSnapshot ?: return NoSnapshotError
         val nodeId = args.nodeId() ?: return "ERROR bad_args: 没有给 node_id。"
+        snapshot.screenTextLine(nodeId)?.let { return notAControl(it) }
         if (!args.has("text")) return "ERROR bad_args: 没有给 text。"
         val text = args.optString("text")
         val label = snapshot.labelOf(nodeId)
@@ -254,6 +284,7 @@ class ScrollTool(private val session: DeviceSession) : AgentTool {
     override suspend fun execute(args: JSONObject): String {
         val snapshot = session.lastSnapshot ?: return NoSnapshotError
         val nodeId = args.nodeId() ?: return "ERROR bad_args: 没有给 node_id。"
+        snapshot.screenTextLine(nodeId)?.let { return notAControl(it) }
         val forward = args.optString("direction").lowercase() != "backward"
         val label = snapshot.labelOf(nodeId)
         return when (val result = A11yActuator.scroll(snapshot, nodeId, forward)) {

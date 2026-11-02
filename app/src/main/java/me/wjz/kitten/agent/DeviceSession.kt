@@ -4,7 +4,12 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.util.Log
 import android.view.Display
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import me.wjz.kitten.a11y.A11yScreenshot
+import me.wjz.kitten.a11y.ScreenFrame
 import me.wjz.kitten.a11y.UiSnapshot
+import me.wjz.kitten.a11y.scaledToMaxEdge
 import me.wjz.kitten.agent.flow.ActionTrace
 import me.wjz.kitten.llm.ImageAttachment
 import me.wjz.kitten.privilege.VirtualDisplayManager
@@ -79,6 +84,9 @@ class DeviceSession(
     /** 自己建的副屏，结束时要收掉。没建过是 [VirtualDisplayManager.INVALID_DISPLAY_ID]。 */
     private var ownedDisplayId: Int = VirtualDisplayManager.INVALID_DISPLAY_ID
 
+    /** 自己建的副屏有多宽（像素），建的时候定的。截下来的画面缩过，换回屏幕坐标要用它，见 [captureFrame]。 */
+    private var ownedWidth: Int = 0
+
     /** 这一轮拉起过的应用，[release] 时写进日志，方便排查。 */
     var currentPackage: String? = null
         private set
@@ -133,6 +141,7 @@ class DeviceSession(
             ).takeIf { it != VirtualDisplayManager.INVALID_DISPLAY_ID }
                 ?.also {
                     ownedDisplayId = it
+                    ownedWidth = metrics.widthPixels
                     onScreen(AgentScreen(it, metrics.widthPixels, metrics.heightPixels))
                 }
         }
@@ -176,6 +185,32 @@ class DeviceSession(
         ImageAttachment(path = file.absolutePath, width = bounds.outWidth, height = bounds.outHeight)
     }.onFailure { Log.w(TAG, "截图存不下", it) }.getOrNull()
 
+    /**
+     * 截一帧现在这块屏的画面给认字用（见 ScreenTexts），长边不超过 [maxEdge]。截不到返回 null。
+     *
+     * 两块屏换算坐标的办法不一样：
+     * - 副屏：特权进程那边按 [maxEdge] 缩好、压成 JPEG 再传过来（一次跨进程调用传不了太大的图）。副屏多宽是
+     *   建的时候自己定的，拿它除以画面的宽就是缩了多少。
+     * - 主屏：无障碍截图在本进程里，原样不缩地拿回来，看清原来多大，再自己缩。主屏有多大不用另外去查（系统
+     *   设置里改过分辨率的话，查到的物理分辨率和画面对不上）。
+     */
+    suspend fun captureFrame(maxEdge: Int, quality: Int): ScreenFrame? = withContext(Dispatchers.IO) {
+        if (displayId != Display.DEFAULT_DISPLAY) {
+            val width = ownedWidth.takeIf { displayId == ownedDisplayId && it > 0 } ?: return@withContext null
+            val bytes = VirtualDisplayManager.captureDisplay(displayId, maxEdge, quality) ?: return@withContext null
+            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return@withContext null
+            return@withContext ScreenFrame(bitmap, width.toFloat() / bitmap.width)
+        }
+        // 不缩：长边给到最大，A11yScreenshot 就原样压成 JPEG。
+        val shot = A11yScreenshot.capture(Display.DEFAULT_DISPLAY, Int.MAX_VALUE, quality) as? A11yScreenshot.Shot.Ok
+            ?: return@withContext null
+        val full = BitmapFactory.decodeByteArray(shot.jpeg, 0, shot.jpeg.size) ?: return@withContext null
+        val fullWidth = full.width
+        val scaled = full.scaledToMaxEdge(maxEdge)
+        if (scaled !== full) full.recycle()
+        ScreenFrame(scaled, fullWidth.toFloat() / scaled.width)
+    }
+
     /** 一轮任务结束，收掉自己建的副屏和这一轮的截图，放掉占着的应用。 */
     fun release() {
         // 截图只在这一轮里有用，历史里不留（见 ChatViewModel 的 forHistory）。
@@ -187,6 +222,7 @@ class DeviceSession(
             onScreen(null)
             VirtualDisplayManager.releaseDisplay(ownedDisplayId)
             ownedDisplayId = VirtualDisplayManager.INVALID_DISPLAY_ID
+            ownedWidth = 0
         }
         displayId = Display.DEFAULT_DISPLAY
         lastSnapshot = null

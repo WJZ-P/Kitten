@@ -26,6 +26,13 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
+
+        // 原生库只带 arm64。Android 13 起的手机几乎都是 arm64，带上 32 位 arm、x86 那几份只是白白撑大包：
+        // ML Kit 的识别模型每种架构约 4MB，conscrypt 也各带一份。代价是极少数只跑 32 位的入门机（部分 Android Go
+        // 机型）装不上；x86_64 的模拟器要靠系统镜像自带的 arm 转译（Android 11 起的镜像有）才跑得了。
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildTypes {
@@ -89,5 +96,10 @@ dependencies {
     // 解析各五百多 KB，字体六百多 KB）。只在 ui/chat/ChatMath.kt 里用。
     implementation(libs.latex.renderer)
     implementation(libs.latex.fonts.katex)
+    // 节点树读不全时从画面上认字（a11y/ScreenOcr）。中文识别器也认数字，纯英文认得怎么样没验证过，要补的话再加
+    // 拉丁文那个（com.google.mlkit:text-recognition）。识别在本机做，画面不出手机；但按 ML Kit 的数据披露，它会
+    // 往谷歌报设备型号、包名、耗时、图片尺寸这类统计。模型打包在 APK 里：每种 CPU 架构约 4MB，上面 abiFilters
+    // 只留了 arm64。它是闭源的，开源分发时要说明（F-Droid 这类只收全开源的商店不会收）。
+    implementation(libs.mlkit.text.recognition.chinese)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

@@ -23,6 +23,9 @@ highlights = "1.1.0"
 # 公式（LaTeX）排版（huarangmeng/latex，MIT）。不带后缀的是按 Kotlin 2.3 / Compose Multiplatform 1.10 编译的
 # 那一版（-kt2.1.0 后缀的是给老 Kotlin 用的）。几个模块的版本要一致。
 latex = "1.6.3"
+# 屏幕上的字（OCR）：ML Kit 的中文识别，模型打包进 APK 的那一版（不是走谷歌服务现下载的 play-services-mlkit-*），
+# 国行手机没有谷歌服务也该能用。闭源二进制，见 app/build.gradle.kts 里的说明。
+mlkitTextRecognitionChinese = "16.0.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -51,6 +54,7 @@ markdown-renderer-m3 = { group = "com.mikepenz", name = "multiplatform-markdown-
 highlights = { group = "dev.snipme", name = "highlights-jvm", version.ref = "highlights" }
 latex-renderer = { group = "io.github.huarangmeng", name = "latex-renderer", version.ref = "latex" }
 latex-fonts-katex = { group = "io.github.huarangmeng", name = "latex-fonts-katex", version.ref = "latex" }
+mlkit-text-recognition-chinese = { group = "com.google.mlkit", name = "text-recognition-chinese", version.ref = "mlkitTextRecognitionChinese" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
