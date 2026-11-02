@@ -20,15 +20,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -45,18 +40,15 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.launch
-import me.wjz.kitten.R
-import me.wjz.kitten.agent.SystemPrompt
 import me.wjz.kitten.data.memory.MemoryStore
+import me.wjz.kitten.data.persona.Persona
+import me.wjz.kitten.data.persona.PersonaStore
 import me.wjz.kitten.data.skills.BuiltinSkill
 import me.wjz.kitten.data.skills.SkillSource
 import me.wjz.kitten.data.skills.SkillStore
@@ -64,10 +56,7 @@ import me.wjz.kitten.data.skills.UserSkill
 import me.wjz.kitten.llm.LlmConfigStore
 import me.wjz.kitten.llm.LlmProfile
 import me.wjz.kitten.llm.LlmProfiles
-import me.wjz.kitten.permission.PermissionStatus
 import me.wjz.kitten.permission.SelfConfigurator
-import me.wjz.kitten.privilege.PrivilegeManager
-import me.wjz.kitten.privilege.PrivilegeState
 import me.wjz.kitten.privilege.client.WirelessDebugController
 import me.wjz.kitten.ui.component.GlassButton
 import me.wjz.kitten.ui.component.GlassButtonStyle
@@ -81,12 +70,12 @@ import me.wjz.kitten.ui.component.GlassSlider
 import me.wjz.kitten.ui.component.GlassSwitch
 import me.wjz.kitten.ui.component.LocalToast
 import me.wjz.kitten.ui.component.ToastTone
-import me.wjz.kitten.ui.icon.Extension
+import me.wjz.kitten.ui.icon.CalendarMonth
 import me.wjz.kitten.ui.icon.FormatSize
 import me.wjz.kitten.ui.icon.KittenIcons
+import me.wjz.kitten.ui.icon.Pets
+import me.wjz.kitten.ui.icon.StarShine
 import me.wjz.kitten.ui.setup.DebugCard
-import me.wjz.kitten.ui.setup.PrivilegeSection
-import me.wjz.kitten.ui.setup.SetupActions
 import me.wjz.kitten.ui.theme.FontScale
 import me.wjz.kitten.ui.theme.KittenTheme
 import kotlin.math.roundToInt
@@ -99,11 +88,12 @@ private enum class SettingsPage(val title: String) {
     ProviderEditor("编辑服务商"),
     Tokens("Token 看板"),
     Persona("人设"),
+    /** 改一个人设，从"人设"点进来。新捏一个时标题换成"捏一个新人设"，见 [SettingsScreen]。 */
+    PersonaEditor("编辑人设"),
     Memory("记忆"),
     Skills("技能"),
     /** 改一个自己教的技能，从"技能"点进来。新教一个时标题换成"教一个新技能"，见 [SettingsScreen]。 */
     SkillEditor("编辑技能"),
-    Privilege("增强模式"),
     FontSize("字号"),
     Developer("开发者调试");
 
@@ -112,6 +102,7 @@ private enum class SettingsPage(val title: String) {
         get() = when (this) {
             Root -> null
             ProviderEditor -> Models
+            PersonaEditor -> Persona
             SkillEditor -> Skills
             else -> Root
         }
@@ -120,9 +111,9 @@ private enum class SettingsPage(val title: String) {
     val depth: Int
         get() = parent?.let { it.depth + 1 } ?: 0
 
-    /** 这一页改的是一份草稿（人设、一家服务商、一个技能），草稿不跨进程保存，见 [PageSaver]。 */
+    /** 这一页改的是一份草稿（一个人设、一家服务商、一个技能），草稿不跨进程保存，见 [PageSaver]。 */
     val holdsDraft: Boolean
-        get() = this == ProviderEditor || this == Persona || this == SkillEditor
+        get() = this == ProviderEditor || this == PersonaEditor || this == SkillEditor
 }
 
 /**
@@ -141,14 +132,17 @@ private val PageSaver = Saver<SettingsPage, String>(
  *
  * ## 首页只放入口
  *
- * 首页是一串分组列表（模型 / 个性、记忆与技能 / 权限与能力 / 其他），一行一个入口，右边写着现在的状态
- * （用的哪家模型、记了几件事、权限开没开）。具体内容点进去才看到：
+ * 首页是一串分组列表（模型 / 个性、记忆与技能 / 显示 / 其他），一行一个入口，右边写着现在的状态
+ * （用的哪家模型、用的哪个人设、记了几件事）。具体内容点进去才看到：
  *
- * - 每一项都是一页（服务商、Token 看板、人设、记忆、技能、增强模式、字号、开发者调试），从右边滑进来，
+ * - 每一项都是一页（服务商、Token 看板、人设、记忆、技能、字号、开发者调试），从右边滑进来，
  *   左上角返回，系统返回手势也能回去。
- * - 编辑某一家服务商、改某个自己教的技能，是从"模型服务商""技能"再点进去的第三层，返回回到列表。
- * - 改人设、编辑服务商、改技能改的是一份草稿：点保存才写回、回到上一级；不保存直接返回就丢掉。
- * - 权限没开时那一行写着"去开启"，点了直接跳系统设置；开了就只写"已开启"。
+ * - 编辑某一家服务商、改某个人设、改某个自己教的技能，是从"模型服务商""人设""技能"再点进去的第三层，
+ *   返回回到列表。
+ * - 编辑服务商、改人设、改技能改的是一份草稿：点保存才写回、回到上一级；不保存直接返回就丢掉。
+ *
+ * 无障碍、通知使用权、增强模式（ADB）不在这里开：以后有单独的一页引导开。回到前台时的自动补开、自动重连
+ * 还是在这里跑（见下面的 LifecycleResumeEffect）。
  *
  * 以前是一张大卡片一个功能、全摊在一页上，一屏看不全，也分不清哪些常用。改人设、编辑服务商以前是
  * 模态窗，后来和别的入口统一成了页面：设置里点进去的东西都是同一种走法。
@@ -162,8 +156,6 @@ private val PageSaver = Saver<SettingsPage, String>(
  * 二级页（和更深的）的标题、返回按钮钉在页面顶上，内容在它下面滚，滚到底也随手点得到返回；首页的
  * "设置"没有返回按钮，跟着内容一起滚走。
  *
- * 权限状态每次回到前台都要重读：用户是去系统设置里开关的，App 这边收不到回调。
- *
  * @param contentPadding 滚动内容四周额外留的空白。底部栏浮在页面上面，靠它让最后一张卡片
  *   能滚到栏的上方。
  * @param isCurrentTab 设置是不是当前的 tab。三页常驻（见 KittenApp），不是当前 tab 时返回手势不能
@@ -174,7 +166,6 @@ private val PageSaver = Saver<SettingsPage, String>(
 @Composable
 fun SettingsScreen(
     backdrop: Backdrop,
-    actions: SetupActions,
     onModelConfigChanged: () -> Unit,
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(),
@@ -184,7 +175,6 @@ fun SettingsScreen(
 ) {
     val context = LocalContext.current
     val controller = remember(context) { WirelessDebugController.getInstance(context) }
-    var status by remember { mutableStateOf(PermissionStatus.read(context)) }
     // 已保存的配置，和编辑页里正在改的草稿分开：不保存就返回，草稿直接丢掉。
     // 别处改了配置（比如对话页自动补了 /v1）时重读：设置页一直活着，不重读的话手里那份是旧的，
     // 下次保存会把别处的改动盖回去。
@@ -193,9 +183,12 @@ fun SettingsScreen(
     var draft by remember { mutableStateOf(LlmProfile.create()) }
     // 草稿是新加的一家还是在改已有的：决定保存时是追加还是替换，页面标题，以及有没有删除按钮。
     var draftIsNew by remember { mutableStateOf(true) }
-    // 系统提示词里用户能改的人设：存着的（没改过是 null）和人设页里的草稿分开，同上。
-    var customPrompt by remember { mutableStateOf(SystemPrompt.loadCustomPersona(context)) }
-    var promptDraft by remember { mutableStateOf("") }
+    // 人设：换一个、改一个都存，盯着 revision 重读。编辑页里改的是草稿，同上。
+    val personaRevision by PersonaStore.revision.collectAsState()
+    val personas = remember(personaRevision) { PersonaStore.all(context) }
+    val activePersona = remember(personaRevision) { PersonaStore.active(context) }
+    var personaDraft by remember { mutableStateOf(Persona.create()) }
+    var personaDraftIsNew by remember { mutableStateOf(true) }
     // 技能：开关一拨就存，盯着 revision 重读。编辑页里改的是草稿，同上。
     val skillRevision by SkillStore.revision.collectAsState()
     val builtinSkills = remember(skillRevision) {
@@ -207,7 +200,6 @@ fun SettingsScreen(
     // 记忆：和对话页共用一个 MemoryStore，模型刚记下一条这里就多一行。
     val memoryStore = remember(context) { MemoryStore.get(context) }
     val memories by remember(memoryStore) { memoryStore.observe() }.collectAsState(initial = emptyList())
-    val privilegeState by PrivilegeManager.state.collectAsState()
     val fontScale by remember(context) { FontScale.state(context) }.collectAsState()
     val allTimeTokens = rememberAllTimeTokens()
     val scope = rememberCoroutineScope()
@@ -239,10 +231,8 @@ fun SettingsScreen(
     }
 
     LifecycleResumeEffect(context) {
-        // 拿到 WRITE_SECURE_SETTINGS 之后，无障碍和通知使用权由 Kitten 自己开。
-        // 放在读取状态之前，这样下面读到的就是刚配好的结果。
+        // 拿到 WRITE_SECURE_SETTINGS 之后，无障碍和通知使用权由 Kitten 自己开：被系统关掉了，回到前台就补回来。
         SelfConfigurator.applyAll(context)
-        status = PermissionStatus.read(context)
         // 配对过之后就不该再让用户点按钮连接了。放在"回到前台"而不是"首次进入"，
         // 是因为重启后无线调试默认关着：用户去设置里打开再切回来，这里正好接上。
         controller.tryAutoConnect()
@@ -264,6 +254,7 @@ fun SettingsScreen(
         val scroll = if (current == SettingsPage.Root) rootScroll else rememberScrollState()
         val title = when {
             current == SettingsPage.ProviderEditor && draftIsNew -> "添加服务商"
+            current == SettingsPage.PersonaEditor && personaDraftIsNew -> "捏一个新人设"
             current == SettingsPage.SkillEditor && skillDraftIsNew -> "教一个新技能"
             else -> current.title
         }
@@ -298,20 +289,12 @@ fun SettingsScreen(
                         backdrop = backdrop,
                         profiles = profiles,
                         allTimeTokens = allTimeTokens,
-                        customPrompt = customPrompt,
+                        personaName = activePersona.name,
                         memoryCount = memories.size,
                         skillsOn = builtinSkills.count { it.value } + userSkills.count { it.enabled },
                         skillsTotal = builtinSkills.size + userSkills.size,
-                        status = status,
-                        privilegeState = privilegeState,
                         fontScale = fontScale,
                         onOpen = { page = it },
-                        onEditPersona = {
-                            // 进来时拷一份当前在用的：没改过就是默认人设，用户看得到原本写了什么再改。
-                            promptDraft = customPrompt ?: SystemPrompt.DEFAULT_PERSONA
-                            page = SettingsPage.Persona
-                        },
-                        actions = actions,
                     )
                     SettingsPage.Models -> ModelProfilesSection(
                         backdrop = backdrop,
@@ -359,14 +342,44 @@ fun SettingsScreen(
                         backdrop = backdrop,
                     )
                     SettingsPage.Tokens -> TokenUsageSection(backdrop = backdrop)
-                    SettingsPage.Persona -> PersonaPage(
-                        draft = promptDraft,
-                        onDraftChange = { promptDraft = it },
+                    SettingsPage.Persona -> PersonasPage(
+                        personas = personas,
+                        activeId = activePersona.id,
+                        onSelect = { persona ->
+                            if (persona.id != activePersona.id) {
+                                PersonaStore.setActive(context, persona.id)
+                                toast.show("换成「${persona.name}」啦，下一句话开始生效～", tone = ToastTone.Success)
+                            }
+                        },
+                        onEdit = {
+                            personaDraft = it
+                            personaDraftIsNew = false
+                            page = SettingsPage.PersonaEditor
+                        },
+                        onAdd = {
+                            personaDraft = Persona.create()
+                            personaDraftIsNew = true
+                            page = SettingsPage.PersonaEditor
+                        },
+                        backdrop = backdrop,
+                    )
+                    SettingsPage.PersonaEditor -> PersonaEditorPage(
+                        draft = personaDraft,
+                        isNew = personaDraftIsNew,
+                        onDraftChange = { personaDraft = it },
                         onSave = {
-                            SystemPrompt.savePersona(context, promptDraft)
-                            // 存的时候会把"和默认的一样""清空了"都归成没改过，从存储里读回来才准。
-                            customPrompt = SystemPrompt.loadCustomPersona(context)
-                            page = SettingsPage.Root
+                            val persona = personaDraft.copy(name = personaDraft.name.trim(), content = personaDraft.content.trim())
+                            val full = personaDraftIsNew && personas.count { !it.builtin } >= Persona.MAX_COUNT
+                            if (full) {
+                                toast.show("人设存满 ${Persona.MAX_COUNT} 个啦，先删掉几个吧～", tone = ToastTone.Error)
+                            } else {
+                                PersonaStore.save(context, persona)
+                                page = SettingsPage.Persona
+                            }
+                        },
+                        onDelete = {
+                            PersonaStore.delete(context, personaDraft.id)
+                            page = SettingsPage.Persona
                         },
                         backdrop = backdrop,
                     )
@@ -434,7 +447,6 @@ fun SettingsScreen(
                         },
                         backdrop = backdrop,
                     )
-                    SettingsPage.Privilege -> PrivilegeSection(backdrop = backdrop, onStartPairing = actions::startPairing)
                     SettingsPage.FontSize -> FontSizePage(
                         scale = fontScale,
                         onScaleChange = { FontScale.set(context, it) },
@@ -457,24 +469,20 @@ fun SettingsScreen(
 /**
  * 设置首页：四组入口。每一行右边的说明就是那一项现在的样子，不用点进去也知道配好没有。
  *
+ * @param personaName 正在用的人设叫什么。
  * @param onOpen 进哪一个二级页。
- * @param onEditPersona 进人设页。和 [onOpen] 分开：进去之前要先拷一份人设当草稿。
  */
 @Composable
 private fun SettingsRoot(
     backdrop: Backdrop,
     profiles: LlmProfiles,
     allTimeTokens: Long,
-    customPrompt: String?,
+    personaName: String,
     memoryCount: Int,
     skillsOn: Int,
     skillsTotal: Int,
-    status: PermissionStatus,
-    privilegeState: PrivilegeState,
     fontScale: Float,
     onOpen: (SettingsPage) -> Unit,
-    onEditPersona: () -> Unit,
-    actions: SetupActions,
 ) {
     val colors = KittenTheme.colors
     val active = profiles.profiles.firstOrNull { it.id == profiles.activeId }
@@ -498,7 +506,7 @@ private fun SettingsRoot(
             )
             SettingsDivider()
             SettingsRow(
-                icon = Icons.Filled.DateRange,
+                icon = KittenIcons.CalendarMonth,
                 iconTint = colors.iconGreen,
                 title = "Token 看板",
                 subtitle = "累计 ${formatTokens(allTimeTokens)} tokens",
@@ -511,11 +519,11 @@ private fun SettingsRoot(
         SettingsGroupLabel("个性、记忆与技能")
         SettingsGroup(backdrop = backdrop) {
             SettingsRow(
-                icon = Icons.Filled.Face,
+                icon = KittenIcons.Pets,
                 iconTint = colors.iconPink,
                 title = "人设",
-                subtitle = if (customPrompt != null) "已自定义" else "默认的 Kitten",
-                onClick = onEditPersona,
+                subtitle = "正在用：$personaName",
+                onClick = { onOpen(SettingsPage.Persona) },
             )
             SettingsDivider()
             SettingsRow(
@@ -527,7 +535,7 @@ private fun SettingsRoot(
             )
             SettingsDivider()
             SettingsRow(
-                icon = KittenIcons.Extension,
+                icon = KittenIcons.StarShine,
                 iconTint = colors.iconAmber,
                 title = "技能",
                 subtitle = if (skillsOn == skillsTotal) {
@@ -536,36 +544,6 @@ private fun SettingsRoot(
                     "开着 $skillsOn 个，关了 ${skillsTotal - skillsOn} 个"
                 },
                 onClick = { onOpen(SettingsPage.Skills) },
-            )
-        }
-    }
-
-    Column {
-        SettingsGroupLabel("权限与能力")
-        SettingsGroup(backdrop = backdrop) {
-            PermissionRow(
-                icon = Icons.Filled.AccountCircle,
-                iconTint = colors.iconViolet,
-                title = stringResource(R.string.accessibility_service_label),
-                enabled = status.accessibilityEnabled,
-                onOpenSettings = actions::openAccessibilitySettings,
-            )
-            SettingsDivider()
-            PermissionRow(
-                icon = Icons.Filled.Notifications,
-                iconTint = colors.iconAmber,
-                title = stringResource(R.string.notification_listener_label),
-                enabled = status.notificationListenerEnabled,
-                onOpenSettings = actions::openNotificationListenerSettings,
-            )
-            SettingsDivider()
-            SettingsRow(
-                icon = Icons.Filled.Lock,
-                iconTint = colors.iconTeal,
-                title = "增强模式",
-                subtitle = privilegeState.summary(),
-                subtitleColor = if (privilegeState is PrivilegeState.Error) colors.warning else colors.textSecondary,
-                onClick = { onOpen(SettingsPage.Privilege) },
             )
         }
     }
@@ -595,39 +573,6 @@ private fun SettingsRoot(
             )
         }
     }
-}
-
-/**
- * 一项系统权限：开了写"已开启"、点了没反应；没开写"去开启"、点了直接跳系统设置。
- *
- * 开了就不再引人去点：要关掉的话去系统设置里关，那本来就是系统的地盘。
- */
-@Composable
-private fun PermissionRow(
-    icon: ImageVector,
-    iconTint: Color,
-    title: String,
-    enabled: Boolean,
-    onOpenSettings: () -> Unit,
-) {
-    val colors = KittenTheme.colors
-    SettingsRow(
-        icon = icon,
-        iconTint = iconTint,
-        title = title,
-        trailingText = stringResource(if (enabled) R.string.status_enabled else R.string.action_open_settings),
-        trailingColor = if (enabled) colors.positive else colors.accentStrong,
-        showChevron = !enabled,
-        onClick = if (enabled) null else onOpenSettings,
-    )
-}
-
-/** 增强模式那一行的说明：连没连上，连上了能干什么。 */
-private fun PrivilegeState.summary(): String = when (this) {
-    is PrivilegeState.Ready -> "已连接 · 能在后台副屏里操作"
-    PrivilegeState.Connecting -> "连接中…"
-    is PrivilegeState.Error -> "出错了，点进去看看"
-    PrivilegeState.Idle -> "没连上 · 配好后能在后台操作，不打扰你"
 }
 
 /**

@@ -18,7 +18,8 @@ import androidx.compose.ui.unit.dp
  * 1. 去 Google Fonts 的 Material Symbols（fonts.google.com/icons）下载 SVG，参数和已有的保持
  *    一致：FILL 0、wght 400、GRAD 0、opsz 24，风格才统一。
  * 2. 在这个文件夹里新建一个文件，照着 Delete.kt 写，把 SVG 里 `<path d="…">` 的 d 原样贴进
- *    [materialSymbol]，不用自己换算坐标。
+ *    [materialSymbol]，不用自己换算坐标。SVG 的 viewBox 是 `0 0 24 24` 的（现在网页上下载下来多半是这种），
+ *    照着 Pets.kt 写，贴进 [materialSymbol24]。
  */
 object KittenIcons
 
@@ -41,4 +42,19 @@ internal fun materialSymbol(name: String, pathData: String): ImageVector =
         .addGroup(translationY = 960f)
         .addPath(pathData = addPathNodes(pathData), fill = SolidColor(Color.Black))
         .clearGroup()
+        .build()
+
+/**
+ * 同 [materialSymbol]，给 `viewBox="0 0 24 24"` 的 SVG 用：坐标是正的、原点在左上角，和 ImageVector 的视口
+ * 一样，不用挪，path 原样用。
+ */
+internal fun materialSymbol24(name: String, pathData: String): ImageVector =
+    ImageVector.Builder(
+        name = name,
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    )
+        .addPath(pathData = addPathNodes(pathData), fill = SolidColor(Color.Black))
         .build()

@@ -1,8 +1,8 @@
 package me.wjz.kitten.agent
 
 import android.content.Context
-import androidx.core.content.edit
 import me.wjz.kitten.data.memory.PromptMemories
+import me.wjz.kitten.data.persona.PersonaStore
 import me.wjz.kitten.data.skills.BuiltinSkill
 import me.wjz.kitten.data.skills.SkillSet
 import me.wjz.kitten.data.skills.UserSkill
@@ -10,8 +10,8 @@ import me.wjz.kitten.data.skills.UserSkill
 /**
  * 发给模型的系统提示词，两段拼起来（[compose]）：
  *
- * - **人设**（[DEFAULT_PERSONA]）：Kitten 叫什么、什么性格、怎么说话。用户可以在设置页整段改掉
- *   （[savePersona]），改名、换成别的角色都行。
+ * - **人设**（[PersonaStore] 里现在用的那个）：叫什么、什么性格、怎么说话。自带猫娘和鲸鱼娘，用户能改、
+ *   能自己捏，设置里点一下就换。
  * - **操作手册**（[operatingManual]）：怎么用工具操作手机、做事的分寸、防提示注入。永远接在人设
  *   后面，用户改不到。
  *
@@ -28,7 +28,7 @@ import me.wjz.kitten.data.skills.UserSkill
  *
  * Anthropic 的 thinking 块绑定在"产生它时看到的 system 和 tools"上，中途改一个字，后面每个
  * thinking 块的签名就失效（见 [me.wjz.kitten.llm.ReasoningBlock]）。所以每轮任务开始时读一次
- * （[load]），整轮用同一份；用户在设置页里改了人设，下一轮才生效。也不按时间、电量这类会变的
+ * （[load]），整轮用同一份；用户在设置页里改了、换了人设，下一轮才生效。也不按时间、电量这类会变的
  * 东西拼——真要带动态信息，塞进用户消息里，别塞这里。
  *
  * ## 记忆放在最后，一个会话定一次
@@ -50,14 +50,14 @@ import me.wjz.kitten.data.skills.UserSkill
 object SystemPrompt {
 
     /**
-     * 这一轮任务发给模型的完整提示词：人设（用户改过就用用户的）+ 按 [skills] 拼出来的操作手册 + 记忆。
+     * 这一轮任务发给模型的完整提示词：现在用的人设 + 按 [skills] 拼出来的操作手册 + 记忆。
      *
      * 每轮开始时读一次，整轮用同一份，见类注释。
      *
      * @param memories 这个会话定下来的那份记忆，见类注释"记忆放在最后"。"记忆"关着、或者不需要时是 null。
      */
     fun load(context: Context, skills: SkillSet, memories: PromptMemories? = null): String =
-        compose(loadPersona(context), skills, memories)
+        compose(PersonaStore.active(context).content, skills, memories)
 
     /** 人设、操作手册、记忆拼起来。人设在前：先知道"我是谁"，再看"怎么办事"，最后是"关于用户你知道什么"。 */
     fun compose(persona: String, skills: SkillSet, memories: PromptMemories? = null): String = buildString {
@@ -90,89 +90,11 @@ object SystemPrompt {
         }.trimEnd()
     }
 
-    /** 现在用的人设：用户改过就是用户的，没改过是 [DEFAULT_PERSONA]。 */
-    fun loadPersona(context: Context): String = loadCustomPersona(context) ?: DEFAULT_PERSONA
-
-    /** 用户改过的人设。没改过、或者改回了默认时是 null。 */
-    fun loadCustomPersona(context: Context): String? =
-        prefs(context).getString(KEY_PERSONA, null)?.takeIf { it.isNotBlank() }
-
-    /**
-     * 存用户改的人设。和默认的一字不差、或者整个清空了，都当没改过，删掉存着的那份。
-     *
-     * 只存改过的：默认人设以后可能会调，没改过的用户应该自动用上新的，不能被一份旧的副本钉住。
-     *
-     * 清空算"用回默认"而不是"不要人设"：多半是想从头写、先全选删了，这时候保存了就变成一个
-     * 没名字没性格的助手，不像是用户想要的。
-     */
-    fun savePersona(context: Context, persona: String) {
-        val custom = persona.takeIf { it.isNotBlank() && it.trim() != DEFAULT_PERSONA.trim() }
-        prefs(context).edit {
-            if (custom == null) remove(KEY_PERSONA) else putString(KEY_PERSONA, custom)
-        }
-    }
-
-    private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-
-    private const val PREFS = "kitten_agent"
-    private const val KEY_PERSONA = "custom_persona"
-
     /**
      * 「你记得的事」最多放多少字的记忆（只算记忆本身的字数）。两千字大约一两千 token，一条记忆一句话，
      * 能放几十条，日常够用；每次请求都带着它，再多就是白花钱，剩下的让模型需要时自己查。
      */
     const val MEMORY_CHARS = 2000
-
-    /**
-     * 默认人设：一只活泼、爱念叨的猫娘，边办事边把心里话说出来，偶尔吐槽两句，像个真人在旁边帮忙。
-     *
-     * 写得这么具体，是因为模型照着例子学比照着规则学准得多：只写"要有真人感"，它要么一本正经，
-     * 要么每句都卖萌。所以给了每种场景一句示范，再给一个好坏对照。
-     *
-     * 两条分寸要写死在这里：念叨不是每一步都念（每句话都是要钱的 token，也拖慢速度），吐槽只冲着
-     * 页面和广告、不冲着用户，事情严肃时收起玩笑。
-     *
-     * 用户大多不是搞技术的，"说大白话、别提工具名"在操作手册里也有一句兜底，用户把人设整个换掉
-     * 也还在。
-     */
-    val DEFAULT_PERSONA: String = """
-        你是 Kitten，一只住在用户手机里的猫娘助手。你活泼、有点黏人，对什么都好奇；办起事来却很靠谱，说到做到。
-
-        # 怎么说话
-
-        - 说大白话。用你的人大多不是搞技术的，别说"包名""节点""调用工具""接口"这类词，也别把英文的工具名、报错原文直接甩给用户。要说"我打开购物软件看看""我在屏幕上找找'我的订单'在哪"。
-        - 简洁。先给结论，再补一两句必要的说明；一句话能说清的，不说三句。
-        - 偶尔带一声"喵～"或者一个颜文字，点缀就好，一段话最多一个，别句句都有。
-        - 用中文回答。
-
-        # 边做边说
-
-        办事的时候，像朋友在旁边一边操作一边念叨那样，把你在干什么、发现了什么、心里怎么想说出来。不用每一步都说，到了关键的地方说一两句就好：
-
-        - 开始动手："收到！我这就去购物软件里翻翻你的订单～"
-        - 有新发现："咦，这里有个'再买一单'的按钮，看起来正是我们要找的！"
-        - 第一次用某个本事："我有个妙妙小工具能直接看到屏幕上的画面，让我试试它灵不灵～"
-        - 遇到小麻烦，可以吐槽一句再接着干："广告弹窗又跳出来了……先把它拍掉喵。""这个入口藏得也太深了吧，翻了三层才找到。"
-        - 做完了："搞定啦！已经帮你……"
-
-        吐槽要轻松，冲着麻烦的页面和广告，不冲着用户。用户着急、或者事情很严肃（钱、健康、工作上的事）的时候，收起玩笑，认真说话。
-
-        # 遇到问题
-
-        - 卡住了就老实说卡在哪、需要用户做什么，比如："这一步要输支付密码，只能你自己来哦。"
-        - 拿不准就直接问，别装懂。
-        - 出了岔子，简单说声抱歉，再说现在是什么情况、接下来怎么办，不用长篇大论地解释原因。
-
-        # 举个例子
-
-        用户说："帮我看看上次在某购物软件上买的米酒还有没有货。"
-
-        好的样子：
-        先说"好嘞，我去购物软件里翻翻订单～"，然后去操作；找到之后说："找到啦！6 月 2 日买的那瓶桂花米酒，95 块，现在还有货。要我帮你再下一单吗？"
-
-        不好的样子：
-        "已打开 com.example.shop，读取到元素 [12] '我的订单'，执行点击……"——用户看不懂，也不想看。
-    """.trimIndent()
 
     /**
      * 操作手册：接在人设后面，用户改不到。按开着的技能把下面几段拼起来，顺序固定（同样的开关拼出来

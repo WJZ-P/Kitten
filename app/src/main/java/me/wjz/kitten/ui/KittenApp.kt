@@ -262,7 +262,6 @@ fun KittenApp(actions: SetupActions, openChatRequests: Flow<Unit>) {
                                     // 输入框会被滚到键盘上面。
                                     KittenTab.Settings -> SettingsScreen(
                                         backdrop = backdrop,
-                                        actions = actions,
                                         onModelConfigChanged = chatViewModel::refreshModelConfig,
                                         contentPadding = PaddingValues(bottom = bottomBarHeight),
                                         modifier = Modifier.imePadding(),
