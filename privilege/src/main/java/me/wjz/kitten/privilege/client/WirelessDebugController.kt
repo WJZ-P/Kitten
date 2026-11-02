@@ -57,6 +57,17 @@ class WirelessDebugController private constructor(private val appContext: Contex
     private val grantsRetried = AtomicBoolean(false)
 
     /**
+     * 配对过、还没连上时，自动重连是不是正在跑（或者马上就要跑）。对话页据此先不把配对引导摆出来：配对过的用户
+     * 每次冷启动都要先连一两秒，这时候摆出来就是白闪一下。
+     *
+     * 进程一起来、本地有密钥就是 true：第一次自动重连要等界面回到前台才发起（见 SettingsScreen），中间那一下
+     * 不能当成"连不上"。一条流程跑完（不管成没成）就回到 false；连上之后还要等特权进程交回 binder，那一段
+     * 看 [PrivilegeManager.state] 的 Connecting。
+     */
+    private val _reconnecting = MutableStateFlow(KittenAdbManager.hasKeyPair(appContext))
+    val reconnecting: StateFlow<Boolean> = _reconnecting.asStateFlow()
+
+    /**
      * 首次：用通知里收到的配对码完成配对，接着连接并启动。
      *
      * @param pairingPort 由 [AdbPairingService] 通过 mDNS 发现的配对端口，每次开弹窗都会变。
@@ -113,13 +124,16 @@ class WirelessDebugController private constructor(private val appContext: Contex
             } else {
                 Log.d(TAG, "特权进程已就绪且版本一致，无需自动连接")
             }
+            _reconnecting.value = false
             return
         }
         if (!KittenAdbManager.hasKeyPair(appContext)) {
             Log.d(TAG, "本地没有 ADB 密钥，说明从没配对过，跳过自动连接")
+            _reconnecting.value = false
             return
         }
         Log.i(TAG, "开始自动连接")
+        _reconnecting.value = true
         runFlow { connectAndLaunchInternal() }
         // 失败是常态：无线调试可能压根没开。这种情况不该在界面上报错吓人，
         // 退回"未连接"就行，用户想用自然会去点「开始配对」。
@@ -235,6 +249,7 @@ class WirelessDebugController private constructor(private val appContext: Contex
             _step.value = Step.Failed(t.message ?: t.javaClass.simpleName)
         } finally {
             inProgress.set(false)
+            _reconnecting.value = false
         }
     }
 

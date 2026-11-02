@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
@@ -111,11 +112,18 @@ import me.wjz.kitten.ui.theme.KittenTheme
  * 用户往上翻着看以前的消息时，新的字照样在底下冒，但不会把人拽下去；输入栏上方浮出一个
  * 玻璃小圆（[ScrollToLatestButton]），点了回到最底下。
  *
+ * ## 没连上增强模式时
+ *
+ * 消息列表换成配对引导（[PairingGate]），输入框禁用：没有特权进程，Kitten 什么都替你做不了。连上之后引导页
+ * 淡出、放大一点退场，列表晚一点淡进来。什么时候摆、什么时候收见 [rememberPairingGate]。
+ *
  * @param bottomInsets 输入栏下面要让出来的位置：平时是底部栏，键盘弹起时是键盘。
  * @param onDeleteMessage 删一条消息：它在 messages 里的位置，和那条消息本身（用来核对没删错）。
  * @param onSelectModel 在输入栏的模型菜单里选了哪一家（[ModelGroup.profileId]）的哪个模型。
  * @param onStop 回复期间点了输入栏上的停止。
  * @param onOpenSkill 点了任务卡片下面"已学习到新知识！"那一行：去设置里看学到的那个技能（它的 id）。
+ * @param onStartPairing 点了配对引导中间的大圆：挂上填配对码的通知，跳到「无线调试」。
+ * @param isCurrentTab 对话是不是当前 tab。不是的时候配对引导的外圈不转：看不见的东西不动。
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -131,8 +139,10 @@ fun ChatScreen(
     onSelectModel: (profileId: String, model: String) -> Unit,
     onStop: () -> Unit,
     onOpenSkill: (skillId: String) -> Unit,
+    onStartPairing: () -> Unit,
     bottomInsets: WindowInsets,
     modifier: Modifier = Modifier,
+    isCurrentTab: Boolean = true,
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -162,6 +172,8 @@ fun ChatScreen(
     // 全屏直播开着没有。副屏收掉了（任务办完）就跟着关。
     var watchingLive by remember { mutableStateOf(false) }
     LaunchedEffect(liveScreen) { if (liveScreen == null) watchingLive = false }
+    // 增强模式连没连上，见 rememberPairingGate。
+    val gate = rememberPairingGate()
 
     Box(modifier = modifier.fillMaxSize()) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -177,42 +189,68 @@ fun ChatScreen(
                     .weight(1f)
                     .layerBackdrop(listBackdrop),
             ) {
-                if (state.isEmpty) {
-                    EmptyHint(
-                        isModelConfigured = state.isModelConfigured,
-                        onOpenSettings = onOpenSettings,
-                        modifier = Modifier.padding(bottom = overlayHeight),
-                    )
-                } else {
-                    // 列表里记着的东西（长按菜单对着哪一条……）也跟着会话换新的。
-                    key(state.sessionId) {
-                        MessageList(
-                            listState = listState,
-                            messages = state.messages,
-                            streamingReply = state.streamingReply,
-                            streamingThinking = state.streamingThinking,
-                            streamingThinkingMillis = state.streamingThinkingMillis,
-                            isResponding = state.isResponding,
-                            agentProgress = state.agentProgress,
-                            pendingQuestion = state.pendingQuestion,
-                            reflections = reflections,
-                            onAnswerQuestion = onAnswerQuestion,
-                            backdrop = backdrop,
-                            bottomPadding = overlayHeight,
-                            onDeleteMessage = onDeleteMessage,
-                            onOpenImage = { viewingImage = it },
-                            onOpenSkill = onOpenSkill,
-                            liveScreen = liveScreen,
-                            onOpenLive = { watchingLive = true },
+                // 没连上增强模式时换成配对引导，见 rememberPairingGate。
+                // 写全名：外面套着 Column，不写的话编译器挑中 ColumnScope 版的 AnimatedVisibility，可在 Box 里调不到它。
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !gate.shown,
+                    enter = fadeIn(tween(GateFadeMillis, delayMillis = GateFadeMillis / 2)),
+                    exit = fadeOut(tween(GateFadeMillis / 2)),
+                ) {
+                    if (state.isEmpty) {
+                        EmptyHint(
+                            isModelConfigured = state.isModelConfigured,
+                            onOpenSettings = onOpenSettings,
+                            modifier = Modifier.padding(bottom = overlayHeight),
                         )
+                    } else {
+                        // 列表里记着的东西（长按菜单对着哪一条……）也跟着会话换新的。
+                        key(state.sessionId) {
+                            MessageList(
+                                listState = listState,
+                                messages = state.messages,
+                                streamingReply = state.streamingReply,
+                                streamingThinking = state.streamingThinking,
+                                streamingThinkingMillis = state.streamingThinkingMillis,
+                                isResponding = state.isResponding,
+                                agentProgress = state.agentProgress,
+                                pendingQuestion = state.pendingQuestion,
+                                reflections = reflections,
+                                onAnswerQuestion = onAnswerQuestion,
+                                backdrop = backdrop,
+                                bottomPadding = overlayHeight,
+                                onDeleteMessage = onDeleteMessage,
+                                onOpenImage = { viewingImage = it },
+                                onOpenSkill = onOpenSkill,
+                                liveScreen = liveScreen,
+                                onOpenLive = { watchingLive = true },
+                            )
+                        }
                     }
+                }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = gate.shown,
+                    enter = fadeIn(tween(GateFadeMillis)),
+                    exit = fadeOut(tween(GateFadeMillis)) + scaleOut(tween(GateFadeMillis), targetScale = GateExitScale),
+                ) {
+                    PairingGate(
+                        gate = gate,
+                        onPair = onStartPairing,
+                        animating = isCurrentTab,
+                        backdrop = backdrop,
+                        bottomPadding = overlayHeight,
+                    )
                 }
             }
         }
         ChatInputBar(
             backdrop = overBackdrop,
-            enabled = state.canSend,
-            hint = if (state.isModelConfigured) null else "请先在设置里配置模型",
+            // 没连上增强模式不让发：发了 Kitten 也办不了，见 PairingGate。
+            enabled = state.canSend && gate.ready,
+            hint = when {
+                !gate.ready -> if (gate.busy) "正在连接增强模式…" else "先连上增强模式才能开始哦～"
+                !state.isModelConfigured -> "请先在设置里配置模型"
+                else -> null
+            },
             onSend = onSend,
             onOpenImage = { viewingImage = it },
             responding = state.isResponding,
@@ -236,7 +274,7 @@ fun ChatScreen(
             },
         )
         ScrollToLatestButton(
-            visible = !state.isEmpty && awayFromLatest,
+            visible = !gate.shown && !state.isEmpty && awayFromLatest,
             onClick = { scope.launch { listState.animateScrollToItem(0) } },
             backdrop = overBackdrop,
             modifier = Modifier
@@ -1070,3 +1108,10 @@ private val ScrollToLatestSize = 40.dp
 
 /** 按钮离输入栏上沿多远。按钮的触摸区（48dp）比圆大一圈，看起来的间距比这个再大 4dp。 */
 private val ScrollToLatestGap = 4.dp
+
+/**
+ * 配对引导退场、消息列表淡进来各用多久，引导页退场时放大到多少。列表等引导页退到一半才开始进来，两边不叠在
+ * 一起糊成一片。
+ */
+private const val GateFadeMillis = 450
+private const val GateExitScale = 1.06f

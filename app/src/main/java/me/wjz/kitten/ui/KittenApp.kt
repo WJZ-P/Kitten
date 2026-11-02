@@ -240,7 +240,9 @@ fun KittenApp(actions: SetupActions, openChatRequests: Flow<Unit>) {
                                             skillToOpen = it
                                             currentTab = KittenTab.Settings
                                         },
+                                        onStartPairing = actions::startPairing,
                                         bottomInsets = aboveBarOrIme,
+                                        isCurrentTab = currentTab == KittenTab.Chat,
                                     )
 
                                     // 和设置页一样滚到栏后面，只在内容末尾留出栏的高度。点了正在办的那件事回到
