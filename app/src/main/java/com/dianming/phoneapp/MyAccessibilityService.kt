@@ -5,6 +5,8 @@ import android.content.Intent
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 
+// Yeah... Something magic!
+
 /**
  * 读取前台 App 的界面，并在上面执行操作。
  *
