@@ -2,6 +2,10 @@
 
 <img src="markdown/banner.webp" alt="Kitten：你还能有 Kitten 聪明？！" width="100%" />
 
+<a href="https://github.com/WJZ-P/Kitten">
+  <img src="markdown/icon.svg" alt="Kitten" width="150" height="150" />
+</a>
+
 **住在你手机里的人性化助手：说一句话，她替你打开 App、一步步点完、看完、办完。默认提供猫娘、鲸鱼娘(超级大肥鱼！)人设，也可以自定义任何你想要的人设！**
 
 她在后台另一块看不见的屏幕上干活，不抢你的屏幕；想看她在干什么，随时点开卡片围观她是怎么操作副屏的！
