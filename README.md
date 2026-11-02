@@ -17,17 +17,21 @@
 
 ### 「去淘宝找点零食」
 
-<!-- 在 GitHub 网页上编辑这个文件，把「淘宝找零食.mp4」拖到下面这一行的位置，GitHub 会换成一个视频链接，单独占一行就会显示成播放器 -->
-> 🎬 视频待上传：淘宝找零食.mp4
+https://github.com/user-attachments/assets/73726139-faeb-4b52-b086-64bdd84d105e
 
 <sub>在后台副屏上打开淘宝、搜索、翻结果，挑几样告诉你；对话里的任务卡片旁边一直在直播她那块屏幕</sub>
 
+### 「去微信上聊几句」
+
+https://github.com/user-attachments/assets/77123369-525d-48db-b7e3-ec75862815d7
+
+<sub>在后台副屏上打开微信，看完聊天记录，接着话题回几句</sub>
+
 ### 「去 QQ 群里水一会儿」
 
-<!-- 同上：把「QQ里水群.mp4」拖到下面这一行的位置 -->
-> 🎬 视频待上传：QQ里水群.mp4
+https://github.com/user-attachments/assets/1a5e03f8-8d3e-4475-b203-955b925b2105
 
-<sub>打开 QQ 群，看看大家在聊什么，接着话题聊几句</sub>
+<sub>打开 QQ 的置顶群，先瞄一眼大家刚聊到哪儿，再接着话题聊几句</sub>
 
 ## 为什么是 Kitten
 
