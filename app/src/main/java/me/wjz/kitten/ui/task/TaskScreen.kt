@@ -1,6 +1,7 @@
 package me.wjz.kitten.ui.task
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearEasing
@@ -47,10 +48,12 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.util.lerp
@@ -94,7 +97,11 @@ import me.wjz.kitten.ui.theme.KittenTheme
  *
  * 现在列的是 Kitten 排着的提醒（[ReminderStore]，"系统能力"里的 reminder 排的）：一条一张卡片，几点响、什么事、
  * 还有多久，点开看详情、能取消（见 [ReminderList]）。以后让 Kitten 每天定点去做的事（签到、打卡……）也放这里。
- * 一条都没有时放一张空卡片。
+ *
+ * ## 空的时候
+ *
+ * 哪一组空着就整组不画，连标题一起：一张写着"没有"的卡片占着地方，没什么好看的。两组都空时页面上只剩标题，
+ * 正中间一个颜文字加一句提示（[EmptyState]）。
  *
  * ## 玻璃
  *
@@ -148,50 +155,63 @@ private fun TaskList(
     modifier: Modifier,
     contentPadding: PaddingValues,
 ) {
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(contentPadding)
-            .padding(horizontal = PageGutter)
-            .padding(top = PageTopPadding, bottom = PageTopPadding),
-        verticalArrangement = Arrangement.spacedBy(SectionGap),
-    ) {
-        SettingsPageHeader(title = "任务", backdrop = backdrop)
+    val nothingRunning = running == null && reflecting.isEmpty()
+    Box(modifier = modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(contentPadding)
+                .padding(horizontal = PageGutter)
+                .padding(top = PageTopPadding, bottom = PageTopPadding),
+            verticalArrangement = Arrangement.spacedBy(SectionGap),
+        ) {
+            SettingsPageHeader(title = "任务", backdrop = backdrop)
 
-        Column {
-            SettingsGroupLabel("正在进行")
-            Column(
-                // 一张卡片办完收掉、复盘卡片冒出来，下面的"定时任务"跟着挪，不跳。
-                modifier = Modifier.animateContentSize(),
-                verticalArrangement = Arrangement.spacedBy(CardGap),
-            ) {
-                if (running == null && reflecting.isEmpty()) {
-                    EmptyCard(text = "现在没有在办的事～去对话里吩咐 Kitten 吧", backdrop = backdrop)
-                }
-                if (running != null) {
-                    key("running") {
-                        RunningTaskCard(task = running, backdrop = backdrop, onOpen = { onOpenTask(running.sessionId) })
+            if (!nothingRunning) {
+                Column {
+                    SettingsGroupLabel("正在进行")
+                    Column(
+                        // 一张卡片办完收掉、复盘卡片冒出来，下面的"定时任务"跟着挪，不跳。
+                        modifier = Modifier.animateContentSize(),
+                        verticalArrangement = Arrangement.spacedBy(CardGap),
+                    ) {
+                        if (running != null) {
+                            key("running") {
+                                RunningTaskCard(task = running, backdrop = backdrop, onOpen = { onOpenTask(running.sessionId) })
+                            }
+                        }
+                        reflecting.forEach { (anchor, reflection) ->
+                            key(anchor) { ReflectionCard(reflection = reflection, backdrop = backdrop) }
+                        }
                     }
                 }
-                reflecting.forEach { (anchor, reflection) ->
-                    key(anchor) { ReflectionCard(reflection = reflection, backdrop = backdrop) }
+            }
+
+            if (reminders.isNotEmpty()) {
+                Column {
+                    SettingsGroupLabel("定时任务")
+                    ReminderList(
+                        reminders = reminders,
+                        animating = LocalAnimating.current,
+                        onCancel = onCancelReminder,
+                        backdrop = backdrop,
+                    )
                 }
             }
         }
 
-        Column {
-            SettingsGroupLabel("定时任务")
-            if (reminders.isEmpty()) {
-                EmptyCard(text = "还没有定时任务～跟 Kitten 说一句「明早八点提醒我开会」试试", backdrop = backdrop)
-            } else {
-                ReminderList(
-                    reminders = reminders,
-                    animating = LocalAnimating.current,
-                    onCancel = onCancelReminder,
-                    backdrop = backdrop,
-                )
-            }
+        // 叠在滚动内容上面，不放进去：能滚的 Column 高度不设限，里面的东西没法居中。contentPadding 一起让开，
+        // 居中的是底部栏上面那块地方。
+        AnimatedVisibility(
+            visible = nothingRunning && reminders.isEmpty(),
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier
+                .align(Alignment.Center)
+                .padding(contentPadding),
+        ) {
+            EmptyState()
         }
     }
 }
@@ -361,20 +381,30 @@ private fun BreathingDot(color: Color) {
     )
 }
 
-/** 空着的时候那张卡片：一句淡淡的话。 */
+/**
+ * 两组都空着时页面正中那一块：一个摊手的颜文字，下面一行淡淡的提示。
+ *
+ * 颜文字从无障碍树里拿掉：读屏念出来是一串符号，只留下面那句话。
+ */
 @Composable
-private fun EmptyCard(text: String, backdrop: Backdrop) {
+private fun EmptyState() {
     val colors = KittenTheme.colors
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .chatCardGlass(backdrop, colors, frosted = LocalFrostedBackdrop.current)
-            .padding(ChatCardPadding),
+    Column(
+        modifier = Modifier.padding(horizontal = PageGutter),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(EmptyLineGap),
     ) {
         Text(
-            text = text,
+            text = "╮(－ω－)╭",
+            style = MaterialTheme.typography.headlineSmall,
+            color = colors.textSecondary,
+            modifier = Modifier.clearAndSetSemantics {},
+        )
+        Text(
+            text = "空空如也～让 Kitten 起一个定时任务吧～",
             style = MaterialTheme.typography.bodyMedium,
             color = colors.textTertiary,
+            textAlign = TextAlign.Center,
         )
     }
 }
@@ -389,6 +419,9 @@ private val SectionGap = 16.dp
 
 /** "正在进行"里卡片和卡片之间空多少。卡片带阴影，比设置里的分组挨得近一点也分得开。 */
 private val CardGap = 10.dp
+
+/** 空着时颜文字和提示之间空多少。 */
+private val EmptyLineGap = 8.dp
 
 /** 卡片上"最近说的一句"最多几行，和对话里的任务卡片一样。 */
 private const val LastSaidMaxLines = 2
