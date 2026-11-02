@@ -3,6 +3,10 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// 版本号只改这一处：versionName 和打包出来的文件名（见下面的 base）都跟着它。发版时 tag 写成 v 加上它，比如 v0.1.0；
+// defaultConfig 里的 versionCode 每发一版也要加 1，比旧的小的话系统不让覆盖安装。
+val kittenVersionName = "0.1.0"
+
 android {
     namespace = "me.wjz.kitten"
     compileSdk = 37
@@ -25,7 +29,7 @@ android {
         minSdk = 33
         targetSdk = 37
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = kittenVersionName
 
         // 原生库只带 arm64。Android 13 起的手机几乎都是 arm64，带上 32 位 arm、x86 那几份只是白白撑大包：
         // ML Kit 的识别模型每种架构约 4MB，conscrypt 也各带一份。代价是极少数只跑 32 位的入门机（部分 Android Go
@@ -37,7 +41,10 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // 开 R8：删掉没用到的代码和资源，不改名（见 proguard-rules.pro）。不开的话每个依赖库的所有类都原样
+            // 打进去，光代码就有 36MB。要留的东西见 proguard-rules.pro 和 privilege/consumer-rules.pro。
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
@@ -55,6 +62,11 @@ android {
         // 要 BuildConfig.DEBUG：release 包里不显示「开发者调试」（见 SettingsScreen 的 SettingsRoot）。
         buildConfig = true
     }
+}
+
+// 打包出来的文件叫 Kitten-v0.1.0-release.apk（debug 包是 -debug），一眼看得出是哪个版本，发 Release 时不用再改名。
+base {
+    archivesName = "Kitten-v$kittenVersionName"
 }
 
 dependencies {

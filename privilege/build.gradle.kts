@@ -11,6 +11,9 @@ android {
         // 对本模块而言最关键的是 API 31：BinderSender 只实现了 AttributionSource
         // 那条交回 binder 的路径。
         minSdk = 33
+
+        // 打 release 包时跟着 app 一起生效的 R8 规则：特权进程的入口、几个按名字找类的加密库。
+        consumerProguardFiles("consumer-rules.pro")
     }
 
     compileOptions {
