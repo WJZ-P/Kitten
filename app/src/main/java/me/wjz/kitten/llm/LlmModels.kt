@@ -30,11 +30,19 @@ sealed interface ChatMessage {
      *
      * @param reasoning 模型这一轮的内部推理块（Anthropic 的 thinking），见 [ReasoningBlock]。
      *   **只在一轮 Agent 任务的内存里传递，不落库**，原因见那边。
+     * @param thinking 模型说这段话之前想了些什么，纯文字：DeepSeek 这类 OpenAI 兼容服务的 `reasoning_content`，
+     *   或者 Claude 的 thinking 块里的字。界面上画成回复上面那块能展开的「思考过程」。和 [reasoning] 不是一回事：
+     *   那个是带签名的原始块，只活在一轮里；这个**落库**——DeepSeek 带工具时要求把之前每一轮的思考原样发回去
+     *   （见 OpenAiProvider 的 sendsReasoningBack），下次打开会话也得有。
+     * @param thinkingMillis 想了多久（毫秒），界面上"想了 N 秒"用。是界面量的（见 ChatViewModel），不发给模型；
+     *   不知道是 0。
      */
     data class Assistant(
         val text: String? = null,
         val toolCalls: List<ToolCall> = emptyList(),
         val reasoning: List<ReasoningBlock> = emptyList(),
+        val thinking: String? = null,
+        val thinkingMillis: Long = 0,
     ) : ChatMessage
 
     /**
@@ -136,6 +144,8 @@ data class ChatResponse(
     val usage: TokenUsage?,
     /** 这一轮的内部推理块，见 [ReasoningBlock]。只有 Anthropic 格式会有。 */
     val reasoning: List<ReasoningBlock> = emptyList(),
+    /** 这一轮想了些什么，纯文字，见 [ChatMessage.Assistant.thinking]。模型没想（或者不给看）是 null。 */
+    val thinking: String? = null,
 ) {
     /** 模型要求执行工具——Agent 循环要继续转。 */
     val needsToolExecution: Boolean

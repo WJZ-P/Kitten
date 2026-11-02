@@ -2,6 +2,7 @@ package me.wjz.kitten.ui.chat
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -182,6 +183,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 title = "",
                 messages = emptyList(),
                 streamingReply = null,
+                streamingThinking = null,
+                streamingThinkingMillis = 0,
                 agentProgress = null,
                 error = null,
             )
@@ -203,6 +206,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     title = session.title,
                     messages = session.messages,
                     streamingReply = null,
+                    streamingThinking = null,
+                    streamingThinkingMillis = 0,
                     agentProgress = null,
                     error = null,
                 )
@@ -348,15 +353,36 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            // 这一段回复已经冒出来、还没成为正式消息的字。用户中途喊停时把它留下来（见下面的 catch），
-            // 单独记一份而不是读界面状态：用户可能已经切到别的会话去了。
+            // 这一段回复已经冒出来、还没成为正式消息的字，和它之前想的字。用户中途喊停时把它留下来（见下面的
+            // catch），单独记一份而不是读界面状态：用户可能已经切到别的会话去了。
             var streamed = ""
+            var streamedThinking = ""
+            // 这一段想了多久，见 ThinkingClock。
+            val thinkingClock = ThinkingClock()
 
             // 新冒出来的一段字接到临时回复后面。用户切到了别的会话就不画。
             fun onTextDelta(delta: String) {
                 streamed += delta
+                // 开始说话了：想完了，想了多久从这一刻定下来。
+                thinkingClock.answered()
                 _uiState.update {
-                    if (it.sessionId != sessionId) it else it.copy(streamingReply = (it.streamingReply ?: "") + delta)
+                    if (it.sessionId != sessionId) {
+                        it
+                    } else {
+                        it.copy(
+                            streamingReply = (it.streamingReply ?: "") + delta,
+                            streamingThinkingMillis = thinkingClock.millis,
+                        )
+                    }
+                }
+            }
+
+            // 想的字同理，接到临时回复上面那块「思考过程」里。
+            fun onThinkingDelta(delta: String) {
+                streamedThinking += delta
+                thinkingClock.thinking()
+                _uiState.update {
+                    if (it.sessionId != sessionId) it else it.copy(streamingThinking = (it.streamingThinking ?: "") + delta)
                 }
             }
 
@@ -378,8 +404,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
             var firstCall = true
 
             // 发请求这件事交给这里，Agent 循环不用管配置和补 /v1。
-            val caller = ChatCaller { messages, tools, onDelta ->
-                var result = config.createProvider().chat(systemPrompt, messages, tools, onDelta)
+            val caller = ChatCaller { messages, tools, onDelta, onThinking ->
+                var result = config.createProvider().chat(systemPrompt, messages, tools, onDelta, onThinking)
                 // 地址像是少拼了 /v1：补上试一下，通了就改掉设置、重发。只在第一次调用时试——
                 // 后面几步地址已经是修好的了，再失败就是别的原因。
                 val failed = result as? LlmResult.Failed
@@ -388,10 +414,12 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                         LlmConfigStore.updateActiveBaseUrl(getApplication(), repaired)
                         config = config.copy(baseUrl = repaired)
                         repairedUrl = repaired
-                        // 重发之前把已经冒出来的半截字清掉，不然会接在后面重复一遍。
+                        // 重发之前把已经冒出来的半截字（和想的字）清掉，不然会接在后面重复一遍。
                         streamed = ""
-                        _uiState.update { it.copy(streamingReply = null) }
-                        result = config.createProvider().chat(systemPrompt, messages, tools, onDelta)
+                        streamedThinking = ""
+                        thinkingClock.reset()
+                        _uiState.update { it.copy(streamingReply = null, streamingThinking = null, streamingThinkingMillis = 0) }
+                        result = config.createProvider().chat(systemPrompt, messages, tools, onDelta, onThinking)
                     }
                 }
                 firstCall = false
@@ -407,9 +435,20 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     caller = caller,
                     history = history,
                     onTextDelta = ::onTextDelta,
-                    onMessage = { message ->
+                    onThinkingDelta = ::onThinkingDelta,
+                    onMessage = { produced ->
+                        // 想了多久是这里量的（模型那边不知道用户等了多久），记到这条回复上。
+                        val message = if (produced is ChatMessage.Assistant && produced.thinking != null) {
+                            produced.copy(thinkingMillis = thinkingClock.millis)
+                        } else {
+                            produced
+                        }
                         // 冒出来的字已经变成正式消息了，下一段从头记。
-                        if (message is ChatMessage.Assistant) streamed = ""
+                        if (message is ChatMessage.Assistant) {
+                            streamed = ""
+                            streamedThinking = ""
+                            thinkingClock.reset()
+                        }
                         // 模型说完一段话，常驻通知的正文换成它，用户不在 Kitten 里也看得到。
                         (message as? ChatMessage.Assistant)?.text?.trim()?.takeIf { it.isNotEmpty() }
                             ?.let(AgentTaskHandle::say)
@@ -431,6 +470,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                                     // 临时回复和真正的消息在同一次更新里交接，界面上不会空一下再冒出来。
                                     messages = it.messages + stored,
                                     streamingReply = null,
+                                    streamingThinking = null,
+                                    streamingThinkingMillis = 0,
                                 )
                             }
                         }
@@ -453,10 +494,23 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 val partial = streamed.trim()
                 if (partial.isNotEmpty()) {
                     withContext(NonCancellable) {
-                        val stored = ChatMessage.Assistant(text = partial)
+                        val stored = ChatMessage.Assistant(
+                            text = partial,
+                            thinking = streamedThinking.takeIf { it.isNotBlank() },
+                            thinkingMillis = thinkingClock.millis,
+                        )
                         repository.appendMessage(sessionId, stored)
                         _uiState.update {
-                            if (it.sessionId != sessionId) it else it.copy(messages = it.messages + stored, streamingReply = null)
+                            if (it.sessionId != sessionId) {
+                                it
+                            } else {
+                                it.copy(
+                                    messages = it.messages + stored,
+                                    streamingReply = null,
+                                    streamingThinking = null,
+                                    streamingThinkingMillis = 0,
+                                )
+                            }
                         }
                     }
                 }
@@ -492,6 +546,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     isResponding = false,
                     // 失败时冒出来的那半截字一起丢掉，它没有落库。
                     streamingReply = null,
+                    streamingThinking = null,
+                    streamingThinkingMillis = 0,
                     agentProgress = null,
                     error = failure,
                     notice = repaired?.takeIf { failure == null }?.let { url -> "API 地址少了 /v1，已经自动补上：$url" },
@@ -508,6 +564,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(
                     isResponding = false,
                     streamingReply = null,
+                    streamingThinking = null,
+                    streamingThinkingMillis = 0,
                     agentProgress = null,
                     pendingQuestion = null,
                 )
@@ -634,6 +692,8 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
      *
      * 两件事：thinking 块不落库（它绑定着产生它的那段历史，而用户可以删消息，留着迟早失效，
      * 见 [me.wjz.kitten.llm.ReasoningBlock]）；超长的工具结果截短（见 [MAX_STORED_TOOL_RESULT]）。
+     * 思考过程的字（[ChatMessage.Assistant.thinking]）照样留着、不截短：它不带签名，删了消息也不会失效，
+     * 而 DeepSeek 要求原样发回去。
      *
      * 界面状态里存的也是这一份，和下次从数据库读出来的保持一致——不然同一个会话"这次"和
      * "下次"发给模型的内容会不一样，出了问题很难查。
@@ -677,5 +737,39 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
          * 对今天的问题没有意义。所以落库时截短，正在跑的那一轮用的是全量的那份。
          */
         const val MAX_STORED_TOOL_RESULT = 400
+    }
+}
+
+/**
+ * 量一段回复之前想了多久：第一段想的字冒出来开始算，开始说话时停。只调了工具、一句话没说的那一步，
+ * 算到这一步说完（这时候问 [millis]）。
+ *
+ * 在界面这边量，不让模型那边量：要的是用户看着"正在思考…"等了多久。
+ */
+private class ThinkingClock {
+    private var startedAt = 0L
+    private var endedAt = 0L
+
+    /** 又冒出一段想的字。 */
+    fun thinking() {
+        if (startedAt == 0L) startedAt = SystemClock.elapsedRealtime()
+    }
+
+    /** 开始说话了。没想过的话什么都不记。 */
+    fun answered() {
+        if (startedAt != 0L && endedAt == 0L) endedAt = SystemClock.elapsedRealtime()
+    }
+
+    /** 想了多少毫秒，没想过是 0；还在想的话算到现在。 */
+    val millis: Long
+        get() = when {
+            startedAt == 0L -> 0L
+            endedAt == 0L -> SystemClock.elapsedRealtime() - startedAt
+            else -> endedAt - startedAt
+        }
+
+    fun reset() {
+        startedAt = 0L
+        endedAt = 0L
     }
 }

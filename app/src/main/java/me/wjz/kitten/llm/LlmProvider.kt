@@ -43,6 +43,8 @@ interface LlmProvider {
      * @param onTextDelta 传了就走流式：模型每生成一小段字就调一次，参数是新冒出来的那一段，
      *        把它们按顺序接起来就是最终回复的文字。在调用方的协程里调用。最后照样返回完整的
      *        结果，失败的处理和不传时一样——只是失败前可能已经交出过一些字了。
+     * @param onThinkingDelta 流式时模型想的字（见 [ChatMessage.Assistant.thinking]）冒出来一段就调一次，和
+     *        [onTextDelta] 一样。只在流式时有用；模型不想、或者这家不给看，就一次都不调。
      * @return 失败不抛异常——网络错误、限流、key 失效都是预期内的情况，
      *         调用方需要据此分流（重试 / 提示用户改配置 / 放弃）。
      */
@@ -51,6 +53,7 @@ interface LlmProvider {
         messages: List<ChatMessage>,
         tools: List<ToolSpec> = emptyList(),
         onTextDelta: ((String) -> Unit)? = null,
+        onThinkingDelta: ((String) -> Unit)? = null,
     ): LlmResult
 
     /**

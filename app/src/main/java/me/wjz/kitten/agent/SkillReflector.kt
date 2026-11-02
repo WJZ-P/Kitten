@@ -195,7 +195,7 @@ object SkillReflector {
                 SaveFlowTool(context, trace) { touched[it.id] = it },
             ),
         )
-        val caller = ChatCaller { messages, tools, onDelta ->
+        val caller = ChatCaller { messages, tools, onDelta, _ ->
             config.createProvider().chat(PROMPT, messages, tools, onDelta).also { result ->
                 (result as? LlmResult.Ok)?.response?.usage?.let {
                     TokenStatsStore.record(context, it, model = config.model)

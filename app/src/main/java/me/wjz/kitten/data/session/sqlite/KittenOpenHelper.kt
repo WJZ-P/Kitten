@@ -83,6 +83,8 @@ internal class KittenOpenHelper(private val context: Context) :
         const val TOOL_CALL_ID = "tool_call_id"
         const val TOOL_NAME = "tool_name"
         const val IMAGES = "images"
+        const val THINKING = "thinking"
+        const val THINKING_MILLIS = "thinking_millis"
     }
 
     private companion object {
@@ -92,8 +94,9 @@ internal class KittenOpenHelper(private val context: Context) :
         /**
          * - v1：只有文字。
          * - v2：用户消息可以带图片（[Columns.IMAGES]）。
+         * - v3：模型的回复带着思考过程和想了多久（[Columns.THINKING]、[Columns.THINKING_MILLIS]）。
          */
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 3
 
         val CREATE_SESSIONS = """
             CREATE TABLE ${Tables.SESSIONS} (
@@ -126,6 +129,8 @@ internal class KittenOpenHelper(private val context: Context) :
                 ${Columns.TOOL_CALL_ID} TEXT,
                 ${Columns.TOOL_NAME} TEXT,
                 ${Columns.IMAGES} TEXT,
+                ${Columns.THINKING} TEXT,
+                ${Columns.THINKING_MILLIS} INTEGER,
                 ${Columns.CREATED_AT} INTEGER NOT NULL,
                 FOREIGN KEY (${Columns.SESSION_ID})
                     REFERENCES ${Tables.SESSIONS}(${Columns.ID}) ON DELETE CASCADE

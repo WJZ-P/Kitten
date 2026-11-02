@@ -22,17 +22,43 @@ import org.json.JSONObject
  * - `arguments` 返回的不是合法 JSON（少引号、带 markdown 代码块包裹）。
  *
  * 前三个只能实测，最后一个在 [ToolCall.argumentsJson] 里兜了一道。
+ *
+ * ## 思考过程
+ *
+ * 会想的模型（DeepSeek、通义、智谱、Kimi…）把想的字放在和 content 平级的 `reasoning_content` 里，流式时
+ * 在 delta 里一段段给，见 [reasoningText]。收下来存进 [ChatMessage.Assistant.thinking]，界面上能展开看。
+ *
+ * 发回去只对 DeepSeek，见 [sendsReasoningBack]。
  */
 class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
 
     override val displayName: String
         get() = if (config.format == LlmFormat.OPENAI) "OpenAI" else "OpenAI 兼容"
 
+    /**
+     * 历史里模型的每一条回复都带上 `reasoning_content`（想过的原样给，没有的给空串）。只对 DeepSeek 这么做。
+     *
+     * DeepSeek 的思考模式（现在默认开着）规定：请求带了 tools，之前每一轮的 reasoning_content 都要原样发回去，
+     * 哪怕那一轮没调工具；不发就是 400。Kitten 每次都带 tools，所以必须发。别家模型说的、提醒写进来的那几条
+     * 没有思考：官方文档没说这种怎么办，社区实测是带工具调用的那条缺这个字段照样 400、给空串能过，所以干脆
+     * 每条都补，没有的给空串。
+     *
+     * 认 DeepSeek 看模型名或者地址里有没有 "deepseek"：官方接口、第三方托管的 DeepSeek 模型（名字里都带着
+     * 它）都算上。
+     *
+     * 别家先不发：没确认过它们要不要（Kitten 以前一直不发）；而有的服务对认不得的字段直接 400——这段对话中途
+     * 从 DeepSeek 切到那家，历史里带着的思考就成了发不出去的东西。OpenAI 官方本来就不给思考，不会有。
+     */
+    private val sendsReasoningBack: Boolean
+        get() = config.format == LlmFormat.OPENAI_COMPATIBLE &&
+            (DEEPSEEK in config.model.lowercase() || DEEPSEEK in config.baseUrl.lowercase())
+
     override suspend fun chat(
         system: String,
         messages: List<ChatMessage>,
         tools: List<ToolSpec>,
         onTextDelta: ((String) -> Unit)?,
+        onThinkingDelta: ((String) -> Unit)?,
     ): LlmResult {
         if (!config.isConfigured) return LlmResult.Failed(LlmError.NotConfigured)
 
@@ -54,14 +80,14 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
         if (onTextDelta != null) {
             // 流式时默认不给用量，要显式要一下，不然看不到缓存命中了多少（见 usageOf）。
             body.put("stream_options", JSONObject().put("include_usage", true))
-            val result = chatStreaming(body, headers, onTextDelta)
+            val result = chatStreaming(body, headers, onTextDelta, onThinkingDelta)
             // 个别兼容服务不认这个字段、直接 400：去掉它再试一次。宁可看不到用量，也别让对话发不出去。
             // 400 也可能是别的原因，那样会白多发一次，再失败就照常报错。
             val code = ((result as? LlmResult.Failed)?.error as? LlmError.ServerError)?.code
             if (code == 400 || code == 422) {
                 Log.w(TAG, "流式请求被拒（$code），去掉 stream_options 再试一次")
                 body.remove("stream_options")
-                return chatStreaming(body, headers, onTextDelta)
+                return chatStreaming(body, headers, onTextDelta, onThinkingDelta)
             }
             return result
         }
@@ -93,7 +119,8 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
     /**
      * 流式。每一块是 `data: {"choices":[{"delta":{...}}]}`，最后一条是 `data: [DONE]`：
      *
-     * - 文字在 delta.content 里，一段段接起来；
+     * - 文字在 delta.content 里，一段段接起来；想的字在 delta.reasoning_content 里，同样接（见 [reasoningText]），
+     *   一般先想完再说；
      * - 工具调用也是拆开给的：delta.tool_calls[] 带着 index，第一块给 id 和名字，后面的块只给
      *   arguments 的一截，按 index 拼回去；
      * - finish_reason 在最后一块里；服务端在流里报错时，那一块是 `{"error": {...}}`。
@@ -102,9 +129,11 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
         body: JSONObject,
         headers: Headers,
         onTextDelta: (String) -> Unit,
+        onThinkingDelta: ((String) -> Unit)?,
     ): LlmResult {
         body.put("stream", true)
         val text = StringBuilder()
+        val thinking = StringBuilder()
         val calls = sortedMapOf<Int, PartialToolCall>()
         var finishReason: String? = null
         var usage: TokenUsage? = null
@@ -117,7 +146,10 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
                     is StreamChunk.Whole -> {
                         // 服务端不支持流式，回了一整个：按非流式解析，字一次全交出去。
                         val result = parse(chunk.json)
-                        (result as? LlmResult.Ok)?.response?.text?.let(onTextDelta)
+                        (result as? LlmResult.Ok)?.response?.let { response ->
+                            response.thinking?.let { onThinkingDelta?.invoke(it) }
+                            response.text?.let(onTextDelta)
+                        }
                         whole = result
                     }
 
@@ -135,6 +167,10 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
                         val choice = json.optJSONArray("choices")?.optJSONObject(0) ?: return@collect
                         choice.optStringOrNull("finish_reason")?.takeIf { it.isNotBlank() }?.let { finishReason = it }
                         val delta = choice.optJSONObject("delta") ?: return@collect
+                        delta.reasoningText()?.let {
+                            thinking.append(it)
+                            onThinkingDelta?.invoke(it)
+                        }
                         delta.optStringOrNull("content")?.takeIf { it.isNotEmpty() }?.let {
                             text.append(it)
                             onTextDelta(it)
@@ -174,9 +210,24 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
             Log.w(TAG, "模型既没说话也没调工具（流式），finish_reason=$finishReason")
         }
         return LlmResult.Ok(
-            ChatResponse(text = finalText, toolCalls = toolCalls, stopReason = finishReason, usage = usage),
+            ChatResponse(
+                text = finalText,
+                toolCalls = toolCalls,
+                stopReason = finishReason,
+                usage = usage,
+                thinking = thinking.toString().takeIf { it.isNotBlank() },
+            ),
         )
     }
+
+    /**
+     * 一条消息（或流式的一块 delta）里想的字，没有是 null。
+     *
+     * DeepSeek、通义、智谱、Kimi 叫 `reasoning_content`；OpenRouter、新一些的 vLLM 叫 `reasoning`。后者只认字符串：
+     * 有的服务同名字段放的是一个对象（推理的配置、摘要之类），那不是要显示的字。
+     */
+    private fun JSONObject.reasoningText(): String? =
+        (optStringOrNull("reasoning_content") ?: (opt("reasoning") as? String))?.takeIf { it.isNotEmpty() }
 
     /** 流式时一次工具调用的半成品：id、名字先到，参数一截截地接。 */
     private class PartialToolCall {
@@ -209,6 +260,7 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
             if (system.isNotBlank()) {
                 put(JSONObject().put("role", "system").put("content", system))
             }
+            val withReasoning = sendsReasoningBack
             messages.forEach { message ->
                 when (message) {
                     is ChatMessage.User ->
@@ -220,6 +272,8 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
                             // content 为 null 是合法的（纯工具调用那一轮），但有些兼容端点
                             // 不接受缺字段，统一给空串更稳。
                             put("content", message.text ?: "")
+                            // 见 sendsReasoningBack：没想过的也要有这个字段。
+                            if (withReasoning) put("reasoning_content", message.thinking.orEmpty())
                             if (message.toolCalls.isNotEmpty()) {
                                 put("tool_calls", JSONArray().apply {
                                     message.toolCalls.forEach { call ->
@@ -347,6 +401,7 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
                 toolCalls = toolCalls,
                 stopReason = choice.optString("finish_reason").takeIf { it.isNotBlank() },
                 usage = json.optJSONObject("usage")?.let(::usageOf),
+                thinking = message.reasoningText()?.takeIf { it.isNotBlank() },
             ),
         )
     }
@@ -354,5 +409,8 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
     private companion object {
         const val TAG = "KittenLlm"
         const val DEFAULT_BASE_URL = "https://api.openai.com/v1"
+
+        /** 认 DeepSeek 用的那个词，见 [sendsReasoningBack]。小写比。 */
+        const val DEEPSEEK = "deepseek"
     }
 }

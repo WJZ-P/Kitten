@@ -48,6 +48,9 @@ internal object MessageMapper {
                 // 没有工具调用时存 null 而不是 "[]"：读回来时少一次解析，
                 // 而且 null 在 SQLite 里不占空间。
                 put(Columns.TOOL_CALLS, message.toolCalls.takeIf { it.isNotEmpty() }?.toJson())
+                // 思考过程整段原样存，不截短：DeepSeek 要求原样发回去（见 OpenAiProvider 的 sendsReasoningBack）。
+                put(Columns.THINKING, message.thinking)
+                put(Columns.THINKING_MILLIS, message.thinkingMillis)
             }
 
             is ChatMessage.ToolResult -> {
@@ -79,6 +82,8 @@ internal object MessageMapper {
             ROLE_ASSISTANT -> ChatMessage.Assistant(
                 text = content,
                 toolCalls = cursor.getStringOrNull(Columns.TOOL_CALLS)?.toToolCalls().orEmpty(),
+                thinking = cursor.getStringOrNull(Columns.THINKING),
+                thinkingMillis = cursor.getLongOrZero(Columns.THINKING_MILLIS),
             )
 
             ROLE_TOOL -> {

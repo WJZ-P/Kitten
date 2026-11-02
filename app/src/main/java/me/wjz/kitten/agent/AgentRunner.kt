@@ -28,13 +28,14 @@ sealed interface AgentProgress {
 /**
  * 发一次请求。由调用方提供，这样补 /v1、切配置这些事不用塞进循环里。
  *
- * [onTextDelta] 透传给流式：模型边说边往外冒字。
+ * [onTextDelta]、[onThinkingDelta] 透传给流式：模型边想边说，往外冒字。
  */
 fun interface ChatCaller {
     suspend fun chat(
         messages: List<ChatMessage>,
         tools: List<ToolSpec>,
         onTextDelta: (String) -> Unit,
+        onThinkingDelta: (String) -> Unit,
     ): LlmResult
 }
 
@@ -44,8 +45,9 @@ fun interface ChatCaller {
  * ## thinking 块是什么、在哪
  *
  * Claude 开了思考时，每次回复里除了正文（界面上那个气泡）和工具调用，还有一段 thinking 块：
- * 模型自己的推理过程，带着服务端的签名。它**不在界面上显示**，用户看不到、也删不到——气泡里
- * 只有正文，见 MessageBubble。它存在的唯一意义是发回给模型，让下一步接着这段推理往下想。
+ * 模型自己的推理过程，带着服务端的签名。这个带签名的块本身用户看不到、也删不到，它存在的意义是发回给
+ * 模型，让下一步接着这段推理往下想。里面的字另抄了一份（[ChatMessage.Assistant.thinking]），界面上回复
+ * 上面那块「思考过程」画的是那一份，和签名无关。
  *
  * 麻烦在于签名**绑定在"它产生时看到的那段历史"上**：之前的消息、系统提示词、工具列表，改了
  * 任何一处，后面每个 thinking 块的签名就失效，下一次请求直接 400。
@@ -76,6 +78,7 @@ class AgentRunner(private val registry: ToolRegistry) {
      * 跑完一轮。
      *
      * @param history 这一轮开始时的历史，已经包含用户刚发的那条。
+     * @param onThinkingDelta 模型想的字冒出来一段就调一次（见 [ChatMessage.Assistant.thinking]），和 onTextDelta 一样。
      * @param onMessage 每产生一条消息（模型的回复、工具的结果）就回调一次，调用方据此更新
      *        界面和落库。挂起函数：落库是 IO，让调用方自己决定在哪个线程做。
      */
@@ -83,6 +86,7 @@ class AgentRunner(private val registry: ToolRegistry) {
         caller: ChatCaller,
         history: List<ChatMessage>,
         onTextDelta: (String) -> Unit,
+        onThinkingDelta: (String) -> Unit = {},
         onMessage: suspend (ChatMessage) -> Unit,
         onProgress: (AgentProgress) -> Unit,
     ): AgentResult {
@@ -92,7 +96,7 @@ class AgentRunner(private val registry: ToolRegistry) {
         // 没有上限，见类注释。出口只有三个：模型说完了、模型调用失败、协程被取消（用户喊停）。
         while (true) {
             onProgress(AgentProgress.Thinking(step))
-            val result = caller.chat(working, registry.specs, onTextDelta)
+            val result = caller.chat(working, registry.specs, onTextDelta, onThinkingDelta)
             val response = when (result) {
                 is LlmResult.Failed -> return AgentResult.Failed(result.error)
                 is LlmResult.Ok -> result.response
@@ -105,6 +109,7 @@ class AgentRunner(private val registry: ToolRegistry) {
                 text = response.text,
                 toolCalls = response.toolCalls,
                 reasoning = response.reasoning,
+                thinking = response.thinking,
             )
             working += reply
             onMessage(reply)

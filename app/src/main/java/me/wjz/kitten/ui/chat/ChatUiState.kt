@@ -36,6 +36,16 @@ data class ChatUiState(
     val streamingReply: String? = null,
 
     /**
+     * 正在流式生成的那条回复之前，模型已经想出来的字（见 [ChatMessage.Assistant.thinking]）。没在想、或者
+     * 这个模型不想时是 null。和 [streamingReply] 一起画成那条临时的回复：还没开始说话时是"正在思考…"，
+     * 说了就收起来。
+     */
+    val streamingThinking: String? = null,
+
+    /** 上面那段想了多久（毫秒）：开始说话时定下，还在想的时候是 0。 */
+    val streamingThinkingMillis: Long = 0,
+
+    /**
      * Agent 正在做的那一步，一句人话（"打开 com.taobao.taobao""读取屏幕内容"）。不在执行
      * 工具时为 null。
      *

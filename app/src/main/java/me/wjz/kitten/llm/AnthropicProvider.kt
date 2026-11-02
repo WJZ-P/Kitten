@@ -51,6 +51,7 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
         messages: List<ChatMessage>,
         tools: List<ToolSpec>,
         onTextDelta: ((String) -> Unit)?,
+        onThinkingDelta: ((String) -> Unit)?,
     ): LlmResult {
         if (!config.isConfigured) return LlmResult.Failed(LlmError.NotConfigured)
 
@@ -74,7 +75,7 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
             .add("Content-Type", "application/json")
             .build()
 
-        if (onTextDelta != null) return chatStreaming(body, headers, onTextDelta)
+        if (onTextDelta != null) return chatStreaming(body, headers, onTextDelta, onThinkingDelta)
 
         val result = HttpTransport.postJson(endpoint(), headers, body)
         val json = result.getOrElse { return result.toLlmFailure() }
@@ -98,6 +99,7 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
         body: JSONObject,
         headers: Headers,
         onTextDelta: (String) -> Unit,
+        onThinkingDelta: ((String) -> Unit)?,
     ): LlmResult {
         body.put("stream", true)
         val text = StringBuilder()
@@ -117,7 +119,10 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                     is StreamChunk.Whole -> {
                         // 中转站不支持流式，回了一整个：按非流式解析，字一次全交出去。
                         val result = parse(chunk.json)
-                        (result as? LlmResult.Ok)?.response?.text?.let(onTextDelta)
+                        (result as? LlmResult.Ok)?.response?.let { response ->
+                            response.thinking?.let { onThinkingDelta?.invoke(it) }
+                            response.text?.let(onTextDelta)
+                        }
                         whole = result
                     }
 
@@ -139,9 +144,14 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                                     "tool_use" -> calls[json.optInt("index")] =
                                         PartialToolCall(id = block.optString("id"), name = block.optString("name"))
 
-                                    // thinking 块的壳先收着，内容和签名跟在后面的 delta 里。
-                                    "thinking", "redacted_thinking" ->
+                                    // thinking 块的壳先收着，内容和签名跟在后面的 delta 里。前面已经想过一段的话，
+                                    // 交给界面的字先隔一个空行，和最后返回的 thinking 一样。
+                                    "thinking", "redacted_thinking" -> {
+                                        if (thinking.values.any { it.thinking.isNotBlank() }) {
+                                            onThinkingDelta?.invoke(THINKING_SEPARATOR)
+                                        }
                                         thinking[json.optInt("index")] = PartialThinking(block)
+                                    }
                                 }
                             }
 
@@ -156,9 +166,11 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                                     "input_json_delta" ->
                                         calls[json.optInt("index")]?.arguments?.append(delta.optString("partial_json"))
 
-                                    // 推理的正文和签名分两种 delta 来，都往同一个块上攒。
-                                    "thinking_delta" ->
-                                        thinking[json.optInt("index")]?.thinking?.append(delta.optString("thinking"))
+                                    // 推理的正文和签名分两种 delta 来，都往同一个块上攒。正文另外交给界面看。
+                                    "thinking_delta" -> delta.optString("thinking").takeIf { it.isNotEmpty() }?.let {
+                                        thinking[json.optInt("index")]?.thinking?.append(it)
+                                        onThinkingDelta?.invoke(it)
+                                    }
 
                                     "signature_delta" ->
                                         thinking[json.optInt("index")]?.signature?.append(delta.optString("signature"))
@@ -202,6 +214,8 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                 stopReason = stopReason,
                 usage = usage,
                 reasoning = thinking.values.map { it.build() },
+                thinking = thinking.values.map { it.thinking }.filter { it.isNotBlank() }
+                    .joinToString(THINKING_SEPARATOR).takeIf { it.isNotBlank() },
             ),
         )
     }
@@ -389,12 +403,16 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
         val texts = mutableListOf<String>()
         val toolCalls = mutableListOf<ToolCall>()
         val reasoning = mutableListOf<ReasoningBlock>()
+        val thoughts = mutableListOf<String>()
         for (i in 0 until content.length()) {
             val block = content.optJSONObject(i) ?: continue
             when (block.optString("type")) {
                 "text" -> block.optString("text").takeIf { it.isNotBlank() }?.let(texts::add)
-                // 原样收着，下一轮原样送回去。
-                "thinking", "redacted_thinking" -> reasoning += ReasoningBlock(block.toString())
+                // 原样收着，下一轮原样送回去；里面的字另抄一份给界面看（redacted 的是密文，没有字）。
+                "thinking", "redacted_thinking" -> {
+                    reasoning += ReasoningBlock(block.toString())
+                    block.optStringOrNull("thinking")?.takeIf { it.isNotBlank() }?.let(thoughts::add)
+                }
                 "tool_use" -> toolCalls += ToolCall(
                     id = block.optString("id"),
                     name = block.optString("name"),
@@ -415,6 +433,7 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
                 stopReason = json.optString("stop_reason").takeIf { it.isNotBlank() },
                 usage = json.optJSONObject("usage")?.let(::usageOf),
                 reasoning = reasoning,
+                thinking = thoughts.joinToString(THINKING_SEPARATOR).takeIf { it.isNotBlank() },
             ),
         )
     }
@@ -482,5 +501,8 @@ class AnthropicProvider(private val config: LlmConfig) : LlmProvider {
 
         /** 模型列表一页最多要多少个（接口允许的上限是 1000）。 */
         const val MODELS_PAGE_LIMIT = 1000
+
+        /** 一次回复里有好几个 thinking 块（边想边调工具）时，给界面看的字用空行隔开。 */
+        const val THINKING_SEPARATOR = "\n\n"
     }
 }

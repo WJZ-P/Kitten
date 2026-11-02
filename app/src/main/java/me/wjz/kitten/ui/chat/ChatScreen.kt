@@ -190,6 +190,8 @@ fun ChatScreen(
                             listState = listState,
                             messages = state.messages,
                             streamingReply = state.streamingReply,
+                            streamingThinking = state.streamingThinking,
+                            streamingThinkingMillis = state.streamingThinkingMillis,
                             isResponding = state.isResponding,
                             agentProgress = state.agentProgress,
                             pendingQuestion = state.pendingQuestion,
@@ -314,7 +316,8 @@ private fun ScrollToLatestButton(
  *
  * 每一项的 key 是它在对话里的序号（从 0 数起），发消息、收回复都是往后加，前面的不会变。正在
  * 生成的那条排在 messages.size 这个序号上，生成完的正式消息也是这个序号：对列表来说是同一项，
- * 气泡和里面没冒完的字都接着来，不会闪一下。还没冒出第一个字时显示"正在思考…"。工具清单的 key
+ * 气泡和里面没冒完的字都接着来，不会闪一下。还没冒出第一个字时显示"正在思考…"；模型会想的话，想的字
+ * 先冒出来，那条临时的回复就先出现，上面是一块正在想的「思考过程」（[ThinkingBlock]）。工具清单的 key
  * 见 [ChatItem.Tools]。
  *
  * ## 长按菜单
@@ -327,6 +330,8 @@ private fun MessageList(
     listState: LazyListState,
     messages: List<ChatMessage>,
     streamingReply: String?,
+    streamingThinking: String?,
+    streamingThinkingMillis: Long,
     isResponding: Boolean,
     agentProgress: String?,
     pendingQuestion: AgentQuestion?,
@@ -345,9 +350,17 @@ private fun MessageList(
     val menu = rememberGlassContextMenuState()
     // 长按的是哪一条。菜单收起后也留着：收起的动画还在放，菜单里的东西不能跟着变。
     var menuTarget by remember { mutableStateOf<MenuTarget?>(null) }
+    // 正在生成的那条：冒出来的字和它之前想的字。两样都还没有时是 null。
+    val draft = remember(streamingReply, streamingThinking, streamingThinkingMillis) {
+        if (streamingReply == null && streamingThinking == null) {
+            null
+        } else {
+            ChatMessage.Assistant(text = streamingReply, thinking = streamingThinking, thinkingMillis = streamingThinkingMillis)
+        }
+    }
     // 要画的东西：气泡和工具清单，见 buildChatItems。
-    val shown = remember(messages, streamingReply, isResponding, reflections) {
-        buildChatItems(messages, streamingReply, isResponding, reflections)
+    val shown = remember(messages, draft, isResponding, reflections) {
+        buildChatItems(messages, draft, isResponding, reflections)
     }
     // 正在看哪个任务的完整过程（任务卡片的 key），没在看是 null。见 TaskDetailDialog。
     var openTaskKey by remember { mutableStateOf<Any?>(null) }
@@ -359,7 +372,8 @@ private fun MessageList(
     val taskRunning = (shown.lastOrNull() as? ChatItem.Task)?.task?.status == TaskStatus.Running
     // 等用户回答时不显示"正在思考"：它没在想，就是在等，卡片本身已经说清楚了。正在执行工具时
     // 也不显示：清单里那一行的圆点正闪着，已经说了在干什么。
-    val showTyping = isResponding && streamingReply == null && pendingQuestion == null && agentProgress == null &&
+    // 已经在想了也不显示：那条临时回复上面的「思考过程」就是它。
+    val showTyping = isResponding && draft == null && pendingQuestion == null && agentProgress == null &&
         !taskRunning
     // 括号不能省：Kotlin 里 `a + if (x) 1 else 0 + if (y) 1 else 0` 会把后半截算进 else 分支。
     val itemCount = shown.size + (if (showTyping) 1 else 0) + (if (pendingQuestion != null) 1 else 0)
@@ -582,8 +596,8 @@ private class TaskBuilder(
  * - 问用户的问题（ask_user）不进清单，单独一张问答卡片：问了什么、用户答了什么，不用点开清单
  *   去翻。还在等回答的不画，底下压着的提问卡片就是它；参数坏了、报了错的照常是清单里的一行。
  * - 既没说话也没调工具的空壳不画——异常响应会产生这种。
- * - 正在生成的那条排在最后，序号是 messages.size：生成完的正式消息也落在这个序号上，对列表来说
- *   是同一项，交接时不闪。
+ * - 正在生成的那条（[draft]）排在最后，序号是 messages.size：生成完的正式消息也落在这个序号上，对列表来说
+ *   是同一项，交接时不闪。只想不说、接着调了工具的那一步，想完它就不见了：正式消息里没有字，不成一项。
  *
  * ## 任务卡片
  *
@@ -612,7 +626,7 @@ private class TaskBuilder(
  */
 private fun buildChatItems(
     messages: List<ChatMessage>,
-    streamingReply: String?,
+    draft: ChatMessage.Assistant?,
     isResponding: Boolean,
     reflections: Map<String, Reflection>,
 ): List<ChatItem> {
@@ -746,11 +760,12 @@ private fun buildChatItems(
         val running = isResponding && openTask.index >= runStart
         items += openTask.build(
             status = if (running) TaskStatus.Running else TaskStatus.Stopped,
-            streamingText = if (running) streamingReply else null,
+            // 卡片里只放说的话：想的字不进卡片，卡片上本来就写着"正在思考…"。
+            streamingText = if (running) draft?.text else null,
             reflections = reflections,
         )
-    } else if (streamingReply != null) {
-        items += ChatItem.Bubble(messages.size, ChatMessage.Assistant(text = streamingReply))
+    } else if (draft != null) {
+        items += ChatItem.Bubble(messages.size, draft)
     }
     return items
 }

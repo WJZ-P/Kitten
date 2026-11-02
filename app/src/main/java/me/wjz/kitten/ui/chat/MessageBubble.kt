@@ -253,6 +253,9 @@ private const val PressedDim = 0.35f
  *
  * 字往里缩 [ReplyInset]，和工具清单那一行的字左边对齐，一路看下来是一条线。
  *
+ * 模型说之前想过的话（[ChatMessage.Assistant.thinking]），上面先是一块能展开的「思考过程」（[ThinkingBlock]）。
+ * 正在生成的那条还没开始说话时只有这一块，它就是那句"正在思考…"。
+ *
  * ## 长按
  *
  * 和气泡一样能长按弹菜单（复制、删除）。没有气泡可以鼓，换成垫一层淡天依蓝：按下就浮出来，滑走或者
@@ -267,8 +270,10 @@ private fun AssistantMessage(
     streaming: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    // 只画说的话。thinking 块（ChatMessage.Assistant.reasoning）不在界面上出现，调的工具在外面的清单里。
-    val text = message.text?.takeIf { it.isNotBlank() } ?: return
+    // 画说的话和说之前想的字。带签名的 thinking 块（ChatMessage.Assistant.reasoning）不画，调的工具在外面的清单里。
+    val text = message.text?.takeIf { it.isNotBlank() }
+    val thinking = message.thinking?.takeIf { it.isNotBlank() }
+    if (text == null && thinking == null) return
     val colors = KittenTheme.colors
     val press = rememberGlassPressState()
     val currentOnLongPress by rememberUpdatedState(onLongPress)
@@ -280,46 +285,54 @@ private fun AssistantMessage(
         label = "replyLift",
     )
 
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .then(
-                if (onLongPress != null) {
-                    Modifier
-                        .onPlaced { anchor.coordinates = it }
-                        .semantics {
-                            // 读屏用户没法长按到某个点，菜单从这一条的正中间弹出来。
-                            onLongClick(label = "更多操作") {
-                                currentOnLongPress?.invoke(anchor.centerInWindow())
-                                true
+    Column(modifier = modifier.fillMaxWidth()) {
+        if (thinking != null) {
+            // 还没开始说话，就是还在想。
+            ThinkingBlock(thinking = thinking, millis = message.thinkingMillis, live = streaming && text == null)
+        }
+        if (text == null) return@Column
+        // 长按的底色只垫在正文底下：「思考过程」自己能点，长按那一块不弹菜单。
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (onLongPress != null) {
+                        Modifier
+                            .onPlaced { anchor.coordinates = it }
+                            .semantics {
+                                // 读屏用户没法长按到某个点，菜单从这一条的正中间弹出来。
+                                onLongClick(label = "更多操作") {
+                                    currentOnLongPress?.invoke(anchor.centerInWindow())
+                                    true
+                                }
                             }
-                        }
-                        .pointerInput(press) {
-                            detectGlassPress(
-                                state = press,
-                                onLongPress = { currentOnLongPress?.invoke(anchor.toWindow(it)) },
-                                onClick = {},
-                            )
-                        }
-                } else {
-                    Modifier
-                },
-            )
-            .drawBehind {
-                val shown = max(press.pressProgress, lift).coerceIn(0f, 1f)
-                if (shown > 0f) {
-                    drawRoundRect(
-                        color = colors.sliderIdle,
-                        cornerRadius = CornerRadius(ReplyHighlightRadius.toPx()),
-                        alpha = shown,
-                    )
+                            .pointerInput(press) {
+                                detectGlassPress(
+                                    state = press,
+                                    onLongPress = { currentOnLongPress?.invoke(anchor.toWindow(it)) },
+                                    onClick = {},
+                                )
+                            }
+                    } else {
+                        Modifier
+                    },
+                )
+                .drawBehind {
+                    val shown = max(press.pressProgress, lift).coerceIn(0f, 1f)
+                    if (shown > 0f) {
+                        drawRoundRect(
+                            color = colors.sliderIdle,
+                            cornerRadius = CornerRadius(ReplyHighlightRadius.toPx()),
+                            alpha = shown,
+                        )
+                    }
                 }
-            }
-            .padding(horizontal = ReplyInset, vertical = ReplyPaddingVertical),
-    ) {
-        // 历史消息也走它，只是直接整段显示：生成完的回复换成正式消息时还是同一个组件，没冒完的字
-        // 接着冒，不会一下子全跳出来。
-        ChatMarkdown(text = text, streaming = streaming)
+                .padding(horizontal = ReplyInset, vertical = ReplyPaddingVertical),
+        ) {
+            // 历史消息也走它，只是直接整段显示：生成完的回复换成正式消息时还是同一个组件，没冒完的字
+            // 接着冒，不会一下子全跳出来。
+            ChatMarkdown(text = text, streaming = streaming)
+        }
     }
 }
 
