@@ -1,6 +1,10 @@
 <div align="center">
 
-# Kitten 🐾
+<a href="https://github.com/WJZ-P/Kitten">
+  <img src="markdown/icon.svg" alt="Kitten" width="150" height="150" />
+</a>
+
+# Kitten
 
 **住在你手机里的猫娘助手：说一句话，她替你打开 App、一步步点完、看完、办完。**
 
@@ -11,21 +15,27 @@
 <img src="https://img.shields.io/badge/Kotlin-Jetpack%20Compose-7f52ff?logo=kotlin&logoColor=white" alt="Kotlin" />
 <a href="https://github.com/WJZ-P/Kitten/stargazers"><img src="https://img.shields.io/github/stars/WJZ-P/Kitten?style=flat&logo=github&label=Star" alt="stars" /></a>
 
+<a href="#看她干活">看她干活</a>
+·
+<a href="https://github.com/WJZ-P/Kitten/issues">报告 Bug</a>
+·
+<a href="https://github.com/WJZ-P/Kitten/issues">提出新特性</a>
+
 </div>
 
 ## 看她干活
 
 ### 「去淘宝找点零食」
 
-https://github.com/user-attachments/assets/73726139-faeb-4b52-b086-64bdd84d105e
+https://github.com/user-attachments/assets/77123369-525d-48db-b7e3-ec75862815d7
 
 <sub>在后台副屏上打开淘宝、搜索、翻结果，挑几样告诉你；对话里的任务卡片旁边一直在直播她那块屏幕</sub>
 
-### 「去微信上聊几句」
+### 「去微信的文件传输助手随便发点东西」
 
-https://github.com/user-attachments/assets/77123369-525d-48db-b7e3-ec75862815d7
+https://github.com/user-attachments/assets/73726139-faeb-4b52-b086-64bdd84d105e
 
-<sub>在后台副屏上打开微信，看完聊天记录，接着话题回几句</sub>
+<sub>用之前存下的自动流程打开微信的文件传输助手，发一条消息</sub>
 
 ### 「去 QQ 群里水一会儿」
 
@@ -115,3 +125,13 @@ https://github.com/user-attachments/assets/1a5e03f8-8d3e-4475-b203-955b925b2105
 ## 许可证
 
 [AGPL-3.0](LICENSE)
+
+## 如果你喜欢 Kitten，请给她点个 ⭐ 吧 (๑>◡<๑)！
+
+## ⭐ Star 历史
+
+[![Stargazers over time](https://starchart.cc/WJZ-P/Kitten.svg?variant=adaptive)](https://starchart.cc/WJZ-P/Kitten)
+
+## 友情链接
+
+- [LINUX DO](https://linux.do/)

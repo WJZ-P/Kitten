@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="18 18 72 72" width="512" height="512">
+  <!-- README 用的 App 图标，和 app/src/main/res/drawable/ic_launcher_*.xml 是同一份：裁到桌面上看得到的中间 72×72，
+       加上圆角方形遮罩（圆角画进图里：GitHub 会滤掉 img 上的 style，border-radius 不生效）。改了图标记得一起改这里。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="108" y2="108" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#66CCFF"/>
+      <stop offset="1" stop-color="#3FA9EB"/>
+    </linearGradient>
+    <clipPath id="squircle">
+      <rect x="18" y="18" width="72" height="72" rx="20"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#squircle)">
+    <rect width="108" height="108" fill="url(#bg)"/>
+    <g transform="translate(54 54) scale(0.85) translate(-54 -54)" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M26,46 C26,37 29.5,28 34,26.6 C37.5,25.6 43.5,32 47,37.5 Q54,35.5 61,37.5 C64.5,32 70.5,25.6 74,26.6 C78.5,28 82,37 82,46 L82,65 A16,16 0 0,1 66,81 L42,81 A16,16 0 0,1 26,65 Z" stroke-width="4.706"/>
+      <path d="M40.5,51 L40.5,58 M67.5,51 L67.5,58" stroke-width="6.845"/>
+      <path d="M48.25,66.5 Q51.125,71.75 54,67.75 Q56.875,71.75 59.75,66.5" stroke-width="2.941"/>
+    </g>
+  </g>
+</svg>
