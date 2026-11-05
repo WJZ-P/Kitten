@@ -56,6 +56,7 @@ import me.wjz.kitten.llm.LlmPreset
 import me.wjz.kitten.llm.LlmProfile
 import me.wjz.kitten.llm.LlmProfiles
 import me.wjz.kitten.llm.ModelListResult
+import me.wjz.kitten.llm.ReasoningEffortOption
 import me.wjz.kitten.llm.createProvider
 import me.wjz.kitten.ui.component.GlassButton
 import me.wjz.kitten.ui.component.GlassButtonStyle
@@ -435,6 +436,12 @@ private fun ModelConfigForm(
             backdrop = backdrop,
         )
 
+        ReasoningEffortPicker(
+            effort = config.reasoningEffort,
+            onEffortChange = { onConfigChange(config.copy(reasoningEffort = it)) },
+            backdrop = backdrop,
+        )
+
         GlassButton(
             text = "保 存",
             onClick = onSave,
@@ -652,3 +659,38 @@ private fun FormatPicker(
 private const val FormatPressedScale = 1.05f
 
 private val LlmFormat.isAnthropic: Boolean get() = this == LlmFormat.ANTHROPIC
+
+/**
+ * 选思考强度：针对 DeepSeek-R1、OpenAI o1/o3、通义等支持 reasoning_effort 的模型。
+ *
+ * 在 Agent 自动化场景中，过长的思考链不仅响应迟缓，而且容易耗尽默认的 2048 maxTokens
+ * 导致操作截断；提供关闭（none）与低/中/高选项，也能保持"默认"让服务商自行决定。
+ */
+@Composable
+private fun ReasoningEffortPicker(
+    effort: String,
+    onEffortChange: (String) -> Unit,
+    backdrop: Backdrop,
+) {
+    val colors = KittenTheme.colors
+    val selectedOption = ReasoningEffortOption.ALL.firstOrNull { it.value == effort }
+        ?: ReasoningEffortOption.DEFAULT
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        GlassDropdown(
+            items = ReasoningEffortOption.ALL,
+            selected = selectedOption,
+            onSelect = { onEffortChange(it.value) },
+            itemLabel = { it.label },
+            label = "思考强度（Thinking）",
+            backdrop = backdrop,
+            placeholder = "默认（服务商决定）",
+        )
+        Text(
+            text = "调节模型的思考深度。手机 Agent 场景推荐使用「低」或「关闭思考」以降低响应延迟。",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.textTertiary,
+        )
+    }
+}
+

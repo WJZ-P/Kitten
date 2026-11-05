@@ -153,6 +153,7 @@ object LlmConfigStore {
         put("apiKey", apiKey)
         put("model", model)
         put("models", JSONArray(models))
+        put("reasoningEffort", reasoningEffort)
     }
 
     /** 解析不了的那一家直接跳过，不让一条坏数据把整个列表拖垮。 */
@@ -166,6 +167,7 @@ object LlmConfigStore {
             apiKey = optString("apiKey"),
             models = (0 until modelsArray.length()).map { modelsArray.getString(it) },
             model = optString("model"),
+            reasoningEffort = optString("reasoningEffort", "default").ifBlank { "default" },
         )
     }.getOrNull()
 }
