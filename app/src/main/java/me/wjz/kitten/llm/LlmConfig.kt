@@ -24,6 +24,11 @@ data class LlmConfig(
     val model: String = "",
     val maxTokens: Int = 2048,
     val temperature: Double = 0.2,
+    /**
+     * 思考强度（针对 OpenAI o1/o3、DeepSeek、通义等支持 reasoning_effort 的模型）。
+     * 常用值："default"（不显式传，由服务商决定）、"none"（关闭思考）、"low"、"medium"、"high"。
+     */
+    val reasoningEffort: String = "default",
 ) {
     val isConfigured: Boolean
         get() = apiKey.isNotBlank() && model.isNotBlank()
@@ -46,6 +51,7 @@ data class LlmProfile(
     val apiKey: String = "",
     val models: List<String> = emptyList(),
     val model: String = "",
+    val reasoningEffort: String = "default",
 ) {
     val isConfigured: Boolean
         get() = apiKey.isNotBlank() && model.isNotBlank()
@@ -72,7 +78,7 @@ data class LlmProfile(
             ?: "自定义服务"
 
     fun toConfig(maxTokens: Int, temperature: Double): LlmConfig =
-        LlmConfig(format, baseUrl, apiKey, model, maxTokens, temperature)
+        LlmConfig(format, baseUrl, apiKey, model, maxTokens, temperature, reasoningEffort)
 
     companion object {
         fun create(): LlmProfile = LlmProfile(id = UUID.randomUUID().toString())
@@ -124,3 +130,25 @@ data class LlmPreset(
         )
     }
 }
+
+/**
+ * 思考强度预设选项。
+ *
+ * @param value 传给 API 的原始参数值。default 表示不传，由服务端自行决定。
+ * @param label 界面上显示的友好中文名称。
+ */
+data class ReasoningEffortOption(
+    val value: String,
+    val label: String,
+) {
+    companion object {
+        val DEFAULT = ReasoningEffortOption("default", "默认（服务商决定）")
+        val NONE = ReasoningEffortOption("none", "关闭思考（none）")
+        val LOW = ReasoningEffortOption("low", "低思考强度（low）")
+        val MEDIUM = ReasoningEffortOption("medium", "中思考强度（medium）")
+        val HIGH = ReasoningEffortOption("high", "高思考强度（high）")
+
+        val ALL = listOf(DEFAULT, NONE, LOW, MEDIUM, HIGH)
+    }
+}
+

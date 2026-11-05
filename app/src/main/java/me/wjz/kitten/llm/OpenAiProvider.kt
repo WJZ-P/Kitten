@@ -68,6 +68,9 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
                 put("model", config.model)
                 put("max_tokens", config.maxTokens)
                 put("temperature", config.temperature)
+                if (config.reasoningEffort.isNotBlank() && config.reasoningEffort != "default") {
+                    put("reasoning_effort", config.reasoningEffort)
+                }
                 put("messages", buildMessages(system, messages))
                 if (tools.isNotEmpty()) put("tools", buildTools(tools))
             }
@@ -87,7 +90,14 @@ class OpenAiProvider(private val config: LlmConfig) : LlmProvider {
             if (code == 400 || code == 422) {
                 Log.w(TAG, "流式请求被拒（$code），去掉 stream_options 再试一次")
                 body.remove("stream_options")
-                return chatStreaming(body, headers, onTextDelta, onThinkingDelta)
+                val retryResult = chatStreaming(body, headers, onTextDelta, onThinkingDelta)
+                val retryCode = ((retryResult as? LlmResult.Failed)?.error as? LlmError.ServerError)?.code
+                if ((retryCode == 400 || retryCode == 422) && body.has("reasoning_effort")) {
+                    Log.w(TAG, "再次被拒（$retryCode），去掉 reasoning_effort 再试一次")
+                    body.remove("reasoning_effort")
+                    return chatStreaming(body, headers, onTextDelta, onThinkingDelta)
+                }
+                return retryResult
             }
             return result
         }
